@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Prompt', sans-serif;
+      background: linear-gradient(135deg, #002e52 0%, #005088 100%);
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .login-box {
+      background: white;
+      width: 380px;
+      max-width: 100%;
+      border-radius: 16px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+      padding: 36px 32px;
+    }
+    .login-logo { text-align: center; margin-bottom: 24px; }
+    .login-logo .icon { font-size: 44px; display: block; margin-bottom: 8px; }
+    .login-logo .title { font-size: 18px; font-weight: 600; color: #002e52; }
+    .login-logo .sub { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 6px; }
+    .form-control {
+      width: 100%; padding: 11px 13px; border: 1px solid #cbd5e1; border-radius: 8px;
+      font-family: 'Prompt', sans-serif; font-size: 14px; outline: none; transition: 0.15s;
+    }
+    .form-control:focus { border-color: #005088; box-shadow: 0 0 0 3px rgba(0,80,136,0.12); }
+
+    .otp-input { text-align: center; letter-spacing: 6px; font-size: 18px; font-weight: 600; }
+
+    .btn-login {
+      width: 100%; background: #005088; color: white; border: none; padding: 12px;
+      border-radius: 8px; font-family: 'Prompt', sans-serif; font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: 0.2s; margin-top: 6px;
+    }
+    .btn-login:hover { background: #002e52; }
+    .btn-login:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    .link-row { text-align: center; margin-top: 16px; }
+    .link-row a { color: #005088; font-size: 13px; text-decoration: none; cursor: pointer; }
+    .link-row a:hover { text-decoration: underline; }
+
+    .alert {
+      padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px;
+      display: none; text-align: center;
+    }
+    .alert.show { display: block; }
+    .alert.error   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .alert.success { background: #dcfce7; color: #065f46; border: 1px solid #86efac; }
+
+    .otp-hint { font-size: 12px; color: #94a3b8; text-align: center; margin-bottom: 16px; }
+
+    .back-link { font-size: 13px; color: #64748b; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin-bottom: 16px; }
+    .back-link:hover { color: #005088; }
+
+    .spinner {
+      display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 6px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+        .view { display: none; }
+    .view.active { display: block; }
+
+    /* ★ NEW: ปรับสไตล์ SweetAlert2 ให้เข้ากับธีม gradient ของระบบ */
+    .swal2-popup.swy-popup {
+      border-radius: 18px !important;
+      font-family: 'Prompt', sans-serif !important;
+      padding-bottom: 28px !important;
+    }
+    .swy-icon-success {
+      background: linear-gradient(135deg, #002e52 0%, #005088 100%) !important;
+      border-color: transparent !important;
+    }
+    .swy-icon-success .swal2-success-ring { border-color: rgba(255,255,255,0.35) !important; }
+    .swy-icon-success [class^='swal2-success-line'] { background-color: #ffffff !important; }
+    .swy-title { color: #002e52 !important; font-weight: 600 !important; font-size: 20px !important; }
+    .swy-html { color: #64748b !important; font-family: 'Prompt', sans-serif !important; font-size: 13px !important; }
+    .swy-confirm-btn {
+      background: linear-gradient(135deg, #002e52 0%, #005088 100%) !important;
+      border-radius: 8px !important;
+      font-family: 'Prompt', sans-serif !important;
+      font-weight: 600 !important;
+      padding: 10px 28px !important;
+      box-shadow: 0 4px 14px rgba(0,80,136,0.35) !important;
+    }
+    .swy-cancel-btn {
+      background: #e2e8f0 !important;
+      color: #475569 !important;
+      border-radius: 8px !important;
+      font-family: 'Prompt', sans-serif !important;
+      font-weight: 600 !important;
+      padding: 10px 24px !important;
+      box-shadow: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="login-box">
+    <div class="login-logo">
+      <span class="icon">🏪</span>
+      <div class="title">SYY Shop Control</div>
+      <div class="sub">ระบบจัดการสินค้าคงคลัง</div>
+    </div>
+
+    <!-- ═══ VIEW 1: กรอก username/password ═══ -->
+    <div class="view active" id="viewLogin">
+      <div id="loginAlert" class="alert"></div>
+      <form id="loginForm" onsubmit="doLogin(event)">
+        <div class="form-group">
+          <label>ชื่อผู้ใช้</label>
+          <input type="text" id="inpUsername" class="form-control" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label>รหัสผ่าน</label>
+          <input type="password" id="inpPassword" class="form-control" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn-login" id="btnLogin">เข้าสู่ระบบ</button>
+      </form>
+      <div class="link-row">
+        <a onclick="showView('viewForgot')">ลืมรหัสผ่าน?</a>
+      </div>
+    </div>
+
+    <!-- ═══ VIEW 2: กรอก OTP ═══ -->
+    <div class="view" id="viewOtp">
+      <div class="back-link" onclick="showView('viewLogin')">← กลับ</div>
+      <div id="otpAlert" class="alert"></div>
+      <div class="otp-hint">กรุณากรอกรหัส 6 หลักจากแอป Authenticator<br>หรือใช้ Recovery Code หากมือถือหาย</div>
+      <form id="otpForm" onsubmit="doLoginWithOtp(event)">
+        <div class="form-group">
+          <label>รหัส OTP / Recovery Code</label>
+          <input type="text" id="inpOtp" class="form-control otp-input" maxlength="10" autocomplete="one-time-code" required>
+        </div>
+        <button type="submit" class="btn-login" id="btnOtp">ยืนยัน</button>
+      </form>
+    </div>
+
+    <!-- ═══ VIEW: ตั้งรหัสผ่านใหม่จากลิงก์อีเมล (ลืมรหัสผ่าน / admin รีเซ็ต) ═══ -->
+    <div class="view" id="viewResetFromEmail">
+      <div id="resetFromEmailAlert" class="alert"></div>
+      <div class="otp-hint" id="resetUsernameDisplay">🔒 กำลังตรวจสอบลิงก์...</div>
+      <form id="resetFromEmailForm" onsubmit="doResetFromEmail(event)" style="display:none;">
+        <div class="form-group">
+          <label>New Password</label>
+          <input type="password" id="inpResetNewPassword" class="form-control" autocomplete="new-password" required>
+        </div>
+        <div class="form-group">
+          <label>Confirm Password</label>
+          <input type="password" id="inpResetConfirmPassword" class="form-control" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="btn-login" id="btnResetFromEmail">ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ</button>
+      </form>
+    </div>
+
+    <!-- ═══ VIEW 3: ลืมรหัสผ่าน — กรอกอีเมล ═══ -->
+    <div class="view" id="viewForgot">
+      <div class="back-link" onclick="showView('viewLogin')">← กลับไปเข้าสู่ระบบ</div>
+      <div id="forgotAlert" class="alert"></div>
+      <div class="otp-hint">กรอกอีเมลที่ผูกไว้กับบัญชีของคุณ ระบบจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ไปให้</div>
+      <form id="forgotForm" onsubmit="doForgotPassword(event)">
+        <div class="form-group">
+          <label>อีเมล</label>
+          <input type="email" id="inpForgotEmail" class="form-control" autocomplete="email" required>
+        </div>
+        <button type="submit" class="btn-login" id="btnForgot">ส่งลิงก์ตั้งรหัสผ่านใหม่</button>
+      </form>
+    </div>
+
+    <!-- ═══ VIEW 4: บังคับเปลี่ยนรหัสผ่าน (ครั้งแรก/ครบ 90 วัน) — ★ FIX: ย้ายมาอยู่ใน .login-box ★ -->
+    <div class="view" id="viewForcePassword">
+      <div id="forceAlert" class="alert"></div>
+      <div class="otp-hint">
+        🔒 เพื่อความปลอดภัย กรุณาตั้งรหัสผ่านใหม่ก่อนเข้าใช้งาน<br>
+        (รหัสผ่านหมดอายุ หรือเป็นการเข้าใช้งานครั้งแรก)
+      </div>
+      <form id="forcePasswordForm" onsubmit="doForceChangePassword(event)">
+        <div class="form-group">
+          <label>รหัสผ่านใหม่</label>
+          <input type="password" id="inpForceNewPassword" class="form-control" autocomplete="new-password" required>
+        </div>
+        <div class="form-group">
+          <label>ยืนยันรหัสผ่านใหม่</label>
+          <input type="password" id="inpForceConfirmPassword" class="form-control" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="btn-login" id="btnForcePassword">ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ</button>
+      </form>
+    </div>
+  </div>
+
+<script>
+  var WEB_APP_URL      = "<?= webAppUrl ?>";
+  var RESET_MODE       = "<?= resetMode ?>";
+  var RESET_TOKEN      = "<?= resetToken ?>";
+  var pendingUsername  = "";
+  var pendingPassword  = "";
+  var pendingTempToken = "";
+
+  // ★ NEW: แสดง popup ยืนยันเข้าสู่ระบบสำเร็จแบบสวยงาม ก่อน redirect ไปหน้าหลัก
+  //   ใช้ setTimeout สั้นๆ ให้ผู้ใช้เห็น popup ก่อนเปลี่ยนหน้า (ไม่กระทบกับข้อจำกัด sandboxed navigation
+  //   เพราะ redirect เกิดจาก event ของปุ่ม "ตกลง" ใน popup ซึ่งนับเป็น user gesture)
+  function showLoginSuccessThenRedirect(token) {
+    Swal.fire({
+      icon              : 'success',
+      title             : 'เข้าสู่ระบบสำเร็จ',
+      html              : 'กำลังพาคุณไปยังหน้าหลัก...',
+      confirmButtonText : 'เข้าสู่ระบบ',
+      allowOutsideClick : false,
+      allowEscapeKey    : false,
+      timer             : 1400,
+      timerProgressBar  : true,
+      customClass: {
+        popup         : 'swy-popup',
+        icon          : 'swy-icon-success',
+        title         : 'swy-title',
+        htmlContainer : 'swy-html',
+        confirmButton : 'swy-confirm-btn'
+      },
+      buttonsStyling: false
+    }).then(function() {
+      redirectToHome(token);
+    });
+  }
+
+  // ★ NEW: escape ก่อนใส่ innerHTML กัน XSS (defense in depth)
+  function escHtml(str) {
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function showView(viewId) {
+    document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+    document.getElementById(viewId).classList.add('active');
+    // ★ FIX: เพิ่ม forceAlert, resetFromEmailAlert เข้าไปด้วย เดิมไม่เคลียร์ทำให้ error เก่าค้าง
+    ['loginAlert', 'otpAlert', 'forgotAlert', 'forceAlert', 'resetFromEmailAlert'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.className = 'alert';
+      el.innerText = '';
+    });
+  }
+
+  function redirectToHome(token) {
+    window.top.location.href = WEB_APP_URL + '?page=home&token=' + encodeURIComponent(token) + '&ua=' + encodeURIComponent(navigator.userAgent);
+  }
+
+  // ตรวจสอบ token จากลิงก์อีเมลทันทีตอนโหลดหน้า (ถ้ามี)
+  if (RESET_MODE === "reset" && RESET_TOKEN) {
+    showView('viewResetFromEmail');
+    google.script.run
+      .withSuccessHandler(function(res) {
+        var display = document.getElementById('resetUsernameDisplay');
+        var form    = document.getElementById('resetFromEmailForm');
+        if (res.success) {
+          display.innerHTML = 'ชื่อผู้ใช้: <b>' + escHtml(res.username) + '</b><br>กรุณาตั้งรหัสผ่านใหม่ด้านล่าง';
+          form.style.display = 'block';
+        } else {
+          display.innerText = '❌ ' + res.message;
+        }
+      })
+      .withFailureHandler(function(err) {
+        document.getElementById('resetUsernameDisplay').innerText = '❌ เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+      })
+      .authVerifyResetToken(RESET_TOKEN);
+  }
+
+  function doLogin(e) {
+    e.preventDefault();
+    var username = document.getElementById('inpUsername').value.trim();
+    var password = document.getElementById('inpPassword').value;
+    var alertEl  = document.getElementById('loginAlert');
+    var btn      = document.getElementById('btnLogin');
+
+    alertEl.className = 'alert';
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="spinner"></span>กำลังตรวจสอบ...';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled  = false;
+        btn.innerText = 'เข้าสู่ระบบ';
+
+        if (res.success) { showLoginSuccessThenRedirect(res.token); return; }
+        if (res.needPasswordChange) {
+          pendingTempToken = res.tempToken;
+          showView('viewForcePassword');
+          return;
+        }
+        if (res.needOtp) {
+          pendingUsername = username;
+          pendingPassword = password;
+          showView('viewOtp');
+          return;
+        }
+        alertEl.className = 'alert error show';
+        alertEl.innerText = res.message || 'เข้าสู่ระบบไม่สำเร็จ';
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled  = false;
+        btn.innerText = 'เข้าสู่ระบบ';
+        alertEl.className = 'alert error show';
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+      })
+      .authLogin(username, password, undefined, navigator.userAgent);
+  }
+
+  function doLoginWithOtp(e) {
+    e.preventDefault();
+    var otp     = document.getElementById('inpOtp').value.trim();
+    var alertEl = document.getElementById('otpAlert');
+    var btn     = document.getElementById('btnOtp');
+
+    alertEl.className = 'alert';
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="spinner"></span>กำลังตรวจสอบ...';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled  = false;
+        btn.innerText = 'ยืนยัน';
+
+if (res.success) { showLoginSuccessThenRedirect(res.token); return; }
+        if (res.needPasswordChange) {
+          pendingTempToken = res.tempToken;
+          showView('viewForcePassword');
+          return;
+        }
+        alertEl.className = 'alert error show';
+        alertEl.innerText = res.message || 'รหัส OTP ไม่ถูกต้อง';
+        document.getElementById('inpOtp').value = '';
+        document.getElementById('inpOtp').focus();
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled  = false;
+        btn.innerText = 'ยืนยัน';
+        alertEl.className = 'alert error show';
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+      })
+      .authLogin(pendingUsername, pendingPassword, otp, navigator.userAgent);
+  }
+
+  function doForgotPassword(e) {
+    e.preventDefault();
+    var email   = document.getElementById('inpForgotEmail').value.trim();
+    var alertEl = document.getElementById('forgotAlert');
+    var btn     = document.getElementById('btnForgot');
+
+    alertEl.className = 'alert';
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="spinner"></span>กำลังส่ง...';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled  = false;
+        btn.innerText = 'ส่งลิงก์ตั้งรหัสผ่านใหม่';
+        alertEl.className = 'alert show ' + (res.success ? 'success' : 'error');
+        alertEl.innerText = res.message;
+        if (res.success) document.getElementById('inpForgotEmail').value = '';
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled  = false;
+        btn.innerText = 'ส่งลิงก์ตั้งรหัสผ่านใหม่';
+        alertEl.className = 'alert error show';
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+      })
+      .authForgotPassword(email);
+  }
+
+  function doForceChangePassword(e) {
+    e.preventDefault();
+    var newPw     = document.getElementById('inpForceNewPassword').value;
+    var confirmPw = document.getElementById('inpForceConfirmPassword').value;
+    var alertEl   = document.getElementById('forceAlert');
+    var btn       = document.getElementById('btnForcePassword');
+
+    alertEl.className = 'alert';
+
+    if (!newPw || newPw.length < 8) {
+      alertEl.className = 'alert error show';
+      alertEl.innerText = 'รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร';
+      return;
+    }
+    if (newPw !== confirmPw) {
+      alertEl.className = 'alert error show';
+      alertEl.innerText = 'รหัสผ่านใหม่และการยืนยันไม่ตรงกัน';
+      return;
+    }
+
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="spinner"></span>กำลังบันทึก...';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled  = false;
+        btn.innerText = 'ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ';
+
+        if (res.success) {
+          showLoginSuccessThenRedirect(res.token);
+          return;
+        }
+        alertEl.className = 'alert error show';
+        alertEl.innerText = res.message || 'ตั้งรหัสผ่านใหม่ไม่สำเร็จ';
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled  = false;
+        btn.innerText = 'ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ';
+        alertEl.className = 'alert error show';
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+      })
+      .authChangePasswordForced(pendingTempToken, newPw, navigator.userAgent);
+  }
+  // ★ FIX: ลบ syntax error (return/} เกิน) ที่ทำให้ฟังก์ชันนี้พังไปก่อนหน้า
+  function doResetFromEmail(e) {
+    e.preventDefault();
+    var newPw     = document.getElementById('inpResetNewPassword').value;
+    var confirmPw = document.getElementById('inpResetConfirmPassword').value;
+    var alertEl   = document.getElementById('resetFromEmailAlert');
+    var btn       = document.getElementById('btnResetFromEmail');
+
+    alertEl.className = 'alert';
+
+    if (!newPw || newPw.length < 8) {
+      alertEl.className = 'alert error show';
+      alertEl.innerText = 'รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร';
+      return;
+    }
+    if (newPw !== confirmPw) {
+      alertEl.className = 'alert error show';
+      alertEl.innerText = 'รหัสผ่านใหม่และการยืนยันไม่ตรงกัน';
+      return;
+    }
+
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="spinner"></span>กำลังบันทึก...';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled  = false;
+        btn.innerText = 'ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ';
+
+        if (res.success) {
+          alertEl.className = 'alert success show';
+          alertEl.innerText = res.message;
+          window.top.location.href = WEB_APP_URL + '?page=login';
+          return;
+        }
+        alertEl.className = 'alert error show';
+        alertEl.innerText = res.message || 'ตั้งรหัสผ่านใหม่ไม่สำเร็จ';
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled  = false;
+        btn.innerText = 'ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ';
+        alertEl.className = 'alert error show';
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+      })
+      .authResetPassword(RESET_TOKEN, newPw);
+  }
+</script>
+</body>
+</html>

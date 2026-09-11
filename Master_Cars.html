@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    :root { 
+      --primary: #005088; 
+      --primary-dark: #002e52;
+      --bg: #f8fafc; 
+      --danger: #dc2626;
+      --danger-hover: #b91c1c;
+    }
+    
+    body { 
+      font-family: 'Prompt', sans-serif; 
+      background-color: var(--bg); 
+      margin: 0; 
+      padding: 20px; 
+    }
+
+    .app-container { 
+      max-width: 1250px; 
+      margin: 0 auto; 
+      width: 100%; 
+      box-sizing: border-box; 
+    }
+
+    .header-section { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      margin-bottom: 20px; 
+      flex-wrap: wrap; 
+      gap: 12px; 
+    }
+
+    h2 { 
+      margin: 0; 
+      color: var(--primary); 
+      font-size: 20px; 
+      white-space: nowrap; 
+    }
+
+    .btn-add { 
+      background: var(--primary); 
+      color: white; 
+      border: none; 
+      padding: 10px 18px; 
+      border-radius: 8px; 
+      cursor: pointer; 
+      font-weight: 600; 
+      font-family: 'Prompt', sans-serif; 
+      font-size: 14px; 
+      display: flex; 
+      align-items: center; 
+      gap: 8px; 
+      white-space: nowrap; 
+      transition: background 0.2s;
+    }
+    .btn-add:hover { 
+      background: var(--primary-dark); 
+    }
+
+    .card { 
+      background: white; 
+      padding: 20px; 
+      border-radius: 12px; 
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); 
+      border: 1px solid #e2e8f0; 
+      display: flex; 
+      flex-direction: column; 
+    }
+
+    .card-toolbar { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      margin-bottom: 12px; 
+      flex-wrap: wrap; 
+      gap: 10px; 
+    }
+
+    .filter-group {
+      display: flex;
+      gap: 10px;
+      flex: 1;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .table-search-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-family: 'Prompt', sans-serif;
+      font-size: 13px;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    .table-search-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(0,80,136,0.15);
+    }
+
+    .record-count { 
+      font-size: 12px; 
+      color: #64748b; 
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .table-container { 
+      max-height: 65vh; 
+      overflow: auto; 
+      border: 1px solid #eef2f5; 
+      border-radius: 10px; 
+    }
+
+    table { 
+      width: 100%; 
+      border-collapse: separate;  /* ★ FIX: collapse ทำให้ position:sticky บน th ใช้ไม่ได้ตามข้อจำกัดเบราว์เซอร์ */
+      border-spacing: 0; 
+      font-size: 14px; 
+      white-space: nowrap;
+    }
+
+    th { 
+      text-align: left; 
+      padding: 12px 14px; 
+      background: var(--primary); 
+      color: #ffffff; 
+      font-weight: 600; 
+      position: sticky; 
+      top: 0; 
+      z-index: 20; 
+      white-space: nowrap; 
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.2s;
+    }
+
+    /* ★ คอลัมน์ "จัดการ" ติดขวาเสมอตอน scroll แนวนอน */
+    .col-sticky-right {
+      position: sticky;
+      right: 0;
+      z-index: 15;
+      background: #ffffff;
+      box-shadow: -2px 0 4px rgba(0,0,0,0.04);
+      cursor: default;      /* ไม่ใช่ปุ่ม sort เหมือน th อื่น */
+    }
+    th.col-sticky-right {
+      z-index: 25;
+      background: var(--primary);
+    }
+
+    th:hover {
+      background: var(--primary-dark);
+    }
+
+    td { 
+      padding: 12px 14px; 
+      border-bottom: 1px solid #f1f5f9; 
+      color: #334155; 
+      vertical-align: middle; 
+      transition: background-color 0.15s ease, color 0.15s ease;
+    }
+
+    tr:last-child td { 
+      border-bottom: none; 
+    }
+
+    tr:hover td { 
+      background-color: #93c5fd !important; 
+      color: #00284d !important; 
+    }
+
+    tr:hover td:first-child { 
+      border-left: 5px solid var(--primary); 
+    }
+
+    tr:hover .btn-edit-icon,
+    tr:hover .btn-delete-icon { 
+      transform: scale(1.15); 
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+
+    tr:hover .btn-edit-icon {
+      background: var(--primary); 
+      color: white; 
+    }
+
+    tr:hover .btn-delete-icon {
+      background: var(--danger); 
+      color: white; 
+    }
+
+    .empty-row td { 
+      text-align: center; 
+      color: #94a3b8; 
+      padding: 30px; 
+    }
+
+    .code-badge { 
+      font-family: 'Courier New', monospace; 
+      font-size: 12px; 
+      font-weight: 700; 
+      color: #005088; 
+      background: #e6f0fa; 
+      border: 1px solid #bfdcf5; 
+      border-radius: 6px; 
+      padding: 3px 8px; 
+      display: inline-block; 
+      white-space: nowrap; 
+    }
+
+    .model-code-badge { 
+      font-size: 13px; 
+      font-weight: 600; 
+      color: #1e293b; 
+      background: #f1f5f9; 
+      border: 1px solid #cbd5e1; 
+      border-radius: 6px; 
+      padding: 3px 10px; 
+      display: inline-block; 
+    }
+
+    .year-badge {
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 3px 8px;
+      display: inline-block;
+      white-space: nowrap;
+    }
+
+    .empty-val { color: #cbd5e1; }
+
+    .action-buttons {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .btn-edit-icon, .btn-delete-icon { 
+      border: none; 
+      width: 32px; 
+      height: 32px; 
+      border-radius: 50%; 
+      cursor: pointer; 
+      display: inline-flex; 
+      align-items: center; 
+      justify-content: center; 
+      transition: all 0.2s ease; 
+      font-size: 13px; 
+    }
+
+    .btn-edit-icon { background: #e6f0fa; color: #005088; }
+    .btn-delete-icon { background: #fee2e2; color: #dc2626; }
+
+    .modal-overlay { 
+      position: fixed; 
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%; 
+      background: rgba(0,0,0,0.5); 
+      display: none; 
+      justify-content: center; 
+      align-items: flex-start; 
+      overflow-y: auto; 
+      padding: 40px 16px; 
+      box-sizing: border-box; 
+      z-index: 2000; 
+      backdrop-filter: blur(2px); 
+    }
+
+    .modal-overlay.active { display: flex; }
+
+    .modal-box { 
+      background: white; 
+      width: 560px; 
+      max-width: 95%; 
+      border-radius: 14px; 
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25); 
+      overflow: hidden; 
+      display: flex; 
+      flex-direction: column; 
+      animation: modalIn 0.25s ease; 
+    }
+
+    @keyframes modalIn { 
+      from { transform: translateY(-20px); opacity: 0; } 
+      to { transform: translateY(0); opacity: 1; } 
+    }
+
+    .modal-header { 
+      background: var(--primary); 
+      color: white; 
+      padding: 16px 24px; 
+      font-size: 17px; 
+      font-weight: 600; 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      flex-shrink: 0; 
+    }
+
+    .modal-close { background: none; border: none; color: white; font-size: 22px; cursor: pointer; line-height: 1; }
+    .modal-body { padding: 24px; }
+    .modal-footer { background: #f8fafc; padding: 14px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0; }
+
+    .modal-section-label { 
+      font-size: 10px; 
+      font-weight: 600; 
+      color: #94a3b8; 
+      letter-spacing: 1.2px; 
+      text-transform: uppercase; 
+      margin: 16px 0 10px; 
+      border-top: 1px solid #f1f5f9; 
+      padding-top: 14px; 
+    }
+
+    .modal-section-label:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-grid .full { grid-column: 1 / -1; }
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .form-group label { font-size: 13px; font-weight: 600; color: #475569; }
+
+    .form-control { 
+      padding: 9px 11px; 
+      border: 1px solid #cbd5e1; 
+      border-radius: 6px; 
+      font-family: 'Prompt', sans-serif; 
+      font-size: 13px; 
+      outline: none; 
+      width: 100%; 
+      box-sizing: border-box; 
+    }
+
+    .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(0,80,136,0.15); }
+    .form-control:disabled { background: #f1f5f9; color: #64748b; }
+
+    .btn-save { 
+      background: var(--primary); 
+      color: white; 
+      border: none; 
+      padding: 10px 20px; 
+      border-radius: 6px; 
+      font-family: 'Prompt', sans-serif; 
+      font-size: 14px; 
+      font-weight: 600; 
+      cursor: pointer; 
+      transition: 0.2s; 
+    }
+    .btn-save:hover { background: var(--primary-dark); }
+
+    .btn-cancel { 
+      background: #e2e8f0; 
+      color: #475569; 
+      border: none; 
+      padding: 10px 20px; 
+      border-radius: 6px; 
+      font-family: 'Prompt', sans-serif; 
+      font-size: 14px; 
+      font-weight: 600; 
+      cursor: pointer; 
+    }
+    .btn-cancel:hover { background: #cbd5e1; }
+
+    .modal-alert { padding: 9px 14px; border-radius: 6px; font-size: 13px; display: none; margin-top: 12px; text-align: center; }
+    .modal-alert.success { background: #dcfce7; color: #065f46; border: 1px solid #86efac; }
+    .modal-alert.error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+
+    .delete-modal-box {
+      width: 420px !important;
+      border-radius: 20px !important;
+      overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(220, 38, 38, 0.15), 0 10px 15px -3px rgba(0, 0, 0, 0.1) !important;
+    }
+
+    .delete-icon-wrapper {
+      width: 70px; height: 70px;
+      background: #fef2f2; border: 2px solid #fecaca; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; margin: 0 auto;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);
+    }
+
+    .delete-icon-inner { font-size: 32px; animation: pulseIcon 2s infinite ease-in-out; }
+    @keyframes pulseIcon { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
+    .delete-target-card {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #ef4444;
+      padding: 12px 16px; border-radius: 10px; text-align: left; margin: 0 auto;
+    }
+    .delete-target-title { font-size: 14px; font-weight: 600; color: #1e293b; word-break: break-word; }
+    .delete-target-code {
+      font-size: 12px; color: #005088; font-family: monospace; font-weight: 700;
+      margin-top: 4px; display: inline-block; background: #e6f0fa; padding: 2px 6px; border-radius: 4px;
+    }
+
+    .btn-delete-confirm {
+      background: #dc2626; color: white; border: none; padding: 10px 20px; border-radius: 8px;
+      font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s ease;
+      box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
+    }
+    .btn-delete-confirm:hover { background: #b91c1c; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4); }
+
+    @media (max-width: 767px) {
+      h2 { font-size: 18px; }
+      .btn-add { padding: 8px 14px; font-size: 13px; }
+      .card { padding: 15px; }
+      table { font-size: 13px; }
+      td, th { padding: 10px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .modal-box { width: 90%; }
+      .filter-group { flex-direction: column; }
+      .search-box { max-width: 100%; width: 100%; }
+    }
+    
+  </style>
+</head>
+<body>
+
+<div class="app-container">
+  <div class="modal-overlay" id="carModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span id="modalTitle">🚗 เพิ่มข้อมูลรถยนต์</span>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+      <form id="carForm" onsubmit="handleSubmit(event)">
+        <div class="modal-body">
+          <div class="modal-section-label">ข้อมูลรถยนต์</div>
+          <div class="form-grid">
+            <div class="form-group full">
+              <label>รหัสอ้างอิง (Car ID)</label>
+              <input type="text" id="modalDocId" class="form-control" disabled placeholder="สร้างอัตโนมัติ">
+            </div>
+            <div class="form-group">
+              <label>รหัสรุ่น</label>
+              <input type="text" id="modalModelCode" class="form-control" placeholder="เช่น KUN15, TGN36 (ไม่บังคับ)">
+            </div>
+            <div class="form-group">
+              <label>ยี่ห้อ (Brand)</label>
+              <select id="modalBrand" class="form-control">
+                <option value="">-- เลือกรถยี่ห้อ --</option>
+                <option value="Toyota">Toyota</option>
+                <option value="Honda">Honda</option>
+                <option value="Mitsubishi">Mitsubishi</option>
+                <option value="Isuzu">Isuzu</option>
+                <option value="Nissan">Nissan</option>
+                <option value="Datsun">Datsun</option>
+                <option value="Suzuki">Suzuki</option>
+                <option value="Mazda">Mazda</option>
+                <option value="Hino">Hino</option>
+                <option value="Mercedes-Benz">Mercedes-Benz</option>
+                <option value="BMW">BMW</option>
+                <option value="Audi">Audi</option>
+                <option value="Volkswagen">Volkswagen</option>
+                <option value="Volvo">Volvo</option>
+                <option value="Scania">Scania</option>
+                <option value="Ford">Ford</option>
+                <option value="Chevrolet">Chevrolet</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>รุ่น (Model)</label>
+              <input type="text" id="modalModel" class="form-control" placeholder="เช่น Hilux Revo, D-Max">
+            </div>
+            <div class="form-group">
+              <label>ปีรถ (Car Year)</label>
+              <input type="text" id="modalCarYear" class="form-control" placeholder="เช่น 2022 หรือ 2020-2024">
+            </div>
+            <div class="form-group full">
+              <label>ประเภทรถ</label>
+              <select id="modalCategory" class="form-control">
+                <option value="">-- เลือกประเภทรถ --</option>
+                <option value="บรรทุก 6 ล้อ">บรรทุก 6 ล้อ</option>
+                <option value="บรรทุก 10 ล้อ">บรรทุก 10 ล้อ</option>
+                <option value="หัวลาก 10 ล้อ">หัวลาก 10 ล้อ</option>
+                <option value="หัวลาก 18 ล้อ">หัวลาก 18 ล้อ</option>
+                <option value="กระบะตอนเดียว">กระบะตอนเดียว</option>
+                <option value="กระบะแคบ">กระบะแคบ</option>
+                <option value="กระบะ 4 ประตู">กระบะ 4 ประตู</option>
+                <option value="SUV">SUV</option>
+                <option value="เก๋ง 4 ประตู">เก๋ง 4 ประตู</option>
+                <option value="เก๋ง 2 ประตู">เก๋ง 2 ประตู</option>
+              </select>
+            </div>
+            <div class="form-group full">
+              <label>หมายเหตุ</label>
+              <input type="text" id="modalNote" class="form-control" placeholder="รายละเอียดเพิ่มเติม">
+            </div>
+          </div>
+          <div id="modalAlert" class="modal-alert"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" onclick="closeModal()">ยกเลิก</button>
+          <button type="submit" class="btn-save" id="modalBtnSave">💾 บันทึก</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="deleteModal">
+    <div class="modal-box delete-modal-box">
+      <div class="modal-body" style="text-align: center; padding: 32px 24px 20px;">
+        <div class="delete-icon-wrapper">
+          <div class="delete-icon-inner">🗑️</div>
+        </div>
+        <h3 style="margin: 16px 0 6px; color: #0f172a; font-size: 19px; font-weight: 600;">
+          ยืนยันการลบข้อมูลรถยนต์?
+        </h3>
+        <p style="color: #64748b; font-size: 13px; margin: 0 0 16px;">
+          คุณกำลังจะลบรายการรถยนต์ต่อไปนี้ออกจากระบบ
+        </p>
+        <div id="deleteTargetCard" class="delete-target-card"></div>
+        <p style="color: #ef4444; font-size: 12px; margin-top: 14px; font-weight: 500;">
+          ⚠️ เมื่อลบแล้ว ข้อมูลนี้จะไม่สามารถฟื้นคืนได้
+        </p>
+      </div>
+      <div class="modal-footer" style="justify-content: center; background: #fafafa; border-top: 1px solid #f1f5f9; padding: 16px 24px;">
+        <button type="button" class="btn-cancel" onclick="closeDeleteModal()" style="min-width: 100px;">ยกเลิก</button>
+        <button type="button" class="btn-delete-confirm" id="btnConfirmDelete" onclick="execDeleteCar()" style="min-width: 120px;">
+          🗑️ ลบข้อมูล
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="header-section">
+    <h2>🚗 จัดการข้อมูลรถยนต์ (Master Cars)</h2>
+    <button class="btn-add" onclick="openAddModal()">➕ เพิ่มรถยนต์</button>
+  </div>
+
+  <div class="card">
+    <div class="card-toolbar">
+      <div class="filter-group">
+        <div class="search-box">
+          <input type="text" id="searchInput" class="table-search-input" placeholder="🔍 ค้นหารถยนต์ (ยี่ห้อ, รุ่น, รหัส)..." oninput="handleSearch()">
+        </div>
+      </div>
+      <span class="record-count" id="recordCount">กำลังโหลด...</span>
+    </div>
+    <div class="xlf-filter-summary" id="xlfSummary">
+      <span id="xlfSummaryText"></span>
+      <button type="button" onclick="XLF.clearAll('cars'); renderTable();">ล้างตัวกรองทั้งหมด</button>
+    </div>
+    <div class="table-container">
+      <table>
+        <colgroup>
+          <col style="width: 50px;">
+          <col style="width: 110px;">
+          <col style="width: 130px;">
+          <col style="width: 110px;">
+          <col style="width: 120px;">
+          <col style="width: 100px;">
+          <col style="width: 130px;">
+          <col>
+          <col style="width: 100px;">
+        </colgroup>
+        <thead id="carThead">
+          <tr>
+            <th style="text-align: center;">#</th>
+            <th>รหัสรถ</th>
+            <th>รหัสรุ่น</th>
+            <th>ยี่ห้อ</th>
+            <th>รุ่น</th>
+            <th style="text-align: center;">ปีรถ</th>
+            <th>ประเภท</th>
+            <th>หมายเหตุ</th>
+            <th class="col-sticky-right" style="text-align: center;">จัดการ</th>
+          </tr>
+        </thead>
+        <tbody id="carBody">
+          <tr class="empty-row"><td colspan="9">⏳ กำลังโหลดข้อมูล...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ═══ XLFILTER — สไตล์ปุ่ม/หัวคอลัมน์/dropdown filter แบบ Excel ═══ */
+th.xlf-th {
+  position: sticky;
+  padding-right: 34px !important;
+}
+.xlf-th-label { white-space: nowrap; }
+.xlf-th-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: rgba(255,255,255,.12);
+  color: rgba(255,255,255,.85);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 5px;
+  line-height: 1;
+  padding: 0;
+}
+.xlf-th-btn:hover { background: rgba(255,255,255,.28); color: #fff; }
+.xlf-th-btn.active { background: rgba(255,255,255,.95); color: #005088; font-weight: 700; }
+.xlf-th-btn.active::after {
+  content: '';
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #005088;
+}
+
+.xlf-filter-summary {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  color: #475569;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.xlf-filter-summary.show { display: flex; }
+.xlf-filter-summary button {
+  border: none;
+  background: transparent;
+  color: #005088;
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.xlf-popover {
+  position: absolute;
+  z-index: 3000;
+  width: 240px;
+  max-height: 440px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(15,23,42,.18);
+  padding: 8px;
+  font-family: 'Prompt', sans-serif;
+  font-size: 13px;
+}
+.xlf-sort-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #1e293b;
+  font-family: 'Prompt', sans-serif;
+  flex-shrink: 0;
+}
+.xlf-sort-btn:hover { background: #f1f5f9; }
+.xlf-divider { height: 1px; background: #e2e8f0; margin: 6px 0; flex-shrink: 0; }
+.xlf-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: 'Prompt', sans-serif;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+.xlf-search:focus { outline: none; border-color: #005088; box-shadow: 0 0 0 2px rgba(0,80,136,.15); }
+.xlf-selectall-row {
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+.xlf-selectall-row label,
+.xlf-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #334155;
+}
+.xlf-list { flex: 1 1 auto; overflow-y: auto; min-height: 60px; }
+.xlf-item {
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+.xlf-item:hover { background: #f1f5f9; }
+.xlf-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xlf-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.xlf-btn-clear {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 4px 2px;
+  font-family: 'Prompt', sans-serif;
+}
+.xlf-btn-ok {
+  background: #005088;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'Prompt', sans-serif;
+}
+.xlf-btn-ok:hover { background: #003d68; }
+
+@media (max-width: 640px) {
+  .xlf-popover { width: min(280px, calc(100vw - 24px)); }
+}
+
+    /* ★ NEW: ปรับสไตล์ SweetAlert2 ให้เข้ากับธีมระบบ (ชุดเดียวกับไฟล์อื่นทั้งหมด) */
+    .swal2-popup.swy-popup {
+      border-radius: 18px !important;
+      font-family: 'Prompt', sans-serif !important;
+    }
+    .swy-icon-warning { border-color: #fca5a5 !important; color: #dc2626 !important; }
+    .swy-title { color: #002e52 !important; font-weight: 600 !important; font-size: 19px !important; }
+    .swy-html { color: #64748b !important; font-family: 'Prompt', sans-serif !important; font-size: 13px !important; }
+    .swy-confirm-btn.danger {
+      background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%) !important;
+      border-radius: 8px !important; font-family: 'Prompt', sans-serif !important; font-weight: 600 !important;
+      padding: 10px 28px !important; box-shadow: 0 4px 14px rgba(220,38,38,0.35) !important;
+    }
+    .swy-confirm-btn {
+      background: linear-gradient(135deg, #002e52 0%, #005088 100%) !important;
+      border-radius: 8px !important; font-family: 'Prompt', sans-serif !important; font-weight: 600 !important;
+      padding: 10px 28px !important; box-shadow: 0 4px 14px rgba(0,80,136,0.35) !important;
+    }
+    .swy-cancel-btn {
+      background: #e2e8f0 !important; color: #475569 !important; border-radius: 8px !important;
+      font-family: 'Prompt', sans-serif !important; font-weight: 600 !important;
+      padding: 10px 24px !important; box-shadow: none !important;
+    }
+  </style>
+<script>
+  // ═════════════════════════════════════════════════════════════
+  // ★ NEW: SweetAlert2 helpers กลาง — มาตรฐานเดียวกันทุกไฟล์ในระบบ
+  // ═════════════════════════════════════════════════════════════
+  function swySuccess(title, html) {
+    return Swal.fire({
+      icon: 'success', title: title, html: html || '',
+      confirmButtonText: 'ตกลง',
+      customClass: { popup:'swy-popup', title:'swy-title', htmlContainer:'swy-html', confirmButton:'swy-confirm-btn' },
+      buttonsStyling: false
+    });
+  }
+  function swyError(title, html) {
+    return Swal.fire({
+      icon: 'error', title: title, html: html || '',
+      confirmButtonText: 'ตกลง',
+      customClass: { popup:'swy-popup', title:'swy-title', htmlContainer:'swy-html', confirmButton:'swy-confirm-btn danger' },
+      buttonsStyling: false
+    });
+  }
+  function swyWarning(title, html) {
+    return Swal.fire({
+      icon: 'warning', title: title, html: html || '',
+      confirmButtonText: 'ตกลง',
+      customClass: { popup:'swy-popup', icon:'swy-icon-warning', title:'swy-title', htmlContainer:'swy-html', confirmButton:'swy-confirm-btn' },
+      buttonsStyling: false
+    });
+  }
+  function swyConfirm(opts) {
+    return Swal.fire({
+      icon              : opts.icon || 'question',
+      title             : opts.title,
+      html              : opts.html || '',
+      showCancelButton  : true,
+      confirmButtonText : opts.confirmText || 'ยืนยัน',
+      cancelButtonText  : opts.cancelText || 'ยกเลิก',
+      reverseButtons    : true,
+      customClass: {
+        popup: 'swy-popup', title: 'swy-title', htmlContainer: 'swy-html',
+        confirmButton: 'swy-confirm-btn' + (opts.danger ? ' danger' : ''),
+        cancelButton: 'swy-cancel-btn'
+      },
+      buttonsStyling: false
+    }).then(function(result) { return result.isConfirmed; });
+  }  
+/* ══════════════════════════════════════════════════════════════
+   XLFILTER ENGINE — ตัวกรอง/เรียงข้อมูลแบบ Excel สำหรับตาราง
+   ก็อปทั้งบล็อกนี้ไปวางในแต่ละหน้า แล้วเรียกใช้ตาม 4 ขั้นตอนท้ายไฟล์
+   ══════════════════════════════════════════════════════════════ */
+
+var XLF = (function () {
+  var state = {};   // { tableKey: { filters: {col: Set(values)}, sortCol, sortAsc, colType: {} } }
+
+  function ensure(key) {
+    if (!state[key]) state[key] = { filters: {}, sortCol: null, sortAsc: true, colType: {} };
+    return state[key];
+  }
+
+  function escHtml(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // เดาชนิดคอลัมน์จากค่าจริง (ตัวเลข/ข้อความ) เพื่อเรียงให้ถูกแบบ (เลขน้อย→มาก ไม่ใช่ "10" มาก่อน "2")
+  function detectColType(rows, col) {
+    var sample = rows.slice(0, 30).map(function (r) { return r[col]; }).filter(function (v) { return v !== '' && v != null; });
+    if (!sample.length) return 'text';
+    var allNum = sample.every(function (v) { return !isNaN(parseFloat(v)) && isFinite(v); });
+    return allNum ? 'number' : 'text';
+  }
+
+  function compareVals(a, b, type, asc) {
+    var va = a, vb = b;
+    if (type === 'number') {
+      va = parseFloat(a) || 0; vb = parseFloat(b) || 0;
+    } else {
+      va = String(a == null ? '' : a).toLowerCase();
+      vb = String(b == null ? '' : b).toLowerCase();
+    }
+    if (va < vb) return asc ? -1 : 1;
+    if (va > vb) return asc ? 1 : -1;
+    return 0;
+  }
+
+  /**
+   * ประยุกต์ filter + sort ปัจจุบันกับข้อมูลดิบ คืน array ที่กรอง/เรียงแล้ว
+   * key      : ชื่อตาราง (ไว้แยก state ถ้าหน้าเดียวมีหลายตาราง)
+   * rows     : array ของ object ข้อมูลดิบ (เช่น brandsCache)
+   * colDefs  : [{ col: 'Name', type: 'text'|'number'|'auto' }, ...] — คอลัมน์ที่เปิดให้ filter/sort
+   */
+  function apply(key, rows, colDefs) {
+    var st = ensure(key);
+    colDefs.forEach(function (cd) {
+      if (!st.colType[cd.col]) {
+        st.colType[cd.col] = (cd.type && cd.type !== 'auto') ? cd.type : detectColType(rows, cd.col);
+      }
+    });
+
+    var result = rows.filter(function (row) {
+      for (var col in st.filters) {
+        var allowed = st.filters[col];
+        if (!allowed || !allowed.size) continue;
+        var v = row[col] == null || row[col] === '' ? '(ว่าง)' : String(row[col]);
+        if (!allowed.has(v)) return false;
+      }
+      return true;
+    });
+
+    if (st.sortCol) {
+      var type = st.colType[st.sortCol] || 'text';
+      result.sort(function (a, b) { return compareVals(a[st.sortCol], b[st.sortCol], type, st.sortAsc); });
+    }
+    return result;
+  }
+
+  // ค่าที่ไม่ซ้ำในคอลัมน์ (ใช้สร้างรายการ checkbox ใน dropdown)
+  function uniqueValues(rows, col) {
+    var seen = {};
+    var out = [];
+    rows.forEach(function (row) {
+      var v = row[col] == null || row[col] === '' ? '(ว่าง)' : String(row[col]);
+      if (!seen[v]) { seen[v] = true; out.push(v); }
+    });
+    out.sort(function (a, b) { return a.localeCompare(b, 'th'); });
+    return out;
+  }
+
+  function hasActiveFilter(key, col) {
+    var st = ensure(key);
+    return !!(st.filters[col] && st.filters[col].size > 0);
+  }
+
+  function anyActiveFilter(key) {
+    var st = ensure(key);
+    return Object.keys(st.filters).some(function (c) { return st.filters[c] && st.filters[c].size > 0; });
+  }
+
+  function clearAll(key) {
+    var st = ensure(key);
+    st.filters = {};
+    st.sortCol = null;
+    st.sortAsc = true;
+  }
+
+  var openPopoverEl = null;
+  var outsideClickHandler = null;
+
+  function closePopover() {
+    if (openPopoverEl && openPopoverEl.parentNode) openPopoverEl.parentNode.removeChild(openPopoverEl);
+    if (outsideClickHandler) {
+      document.removeEventListener('click', outsideClickHandler);
+      outsideClickHandler = null;
+    }
+    openPopoverEl = null;
+  }
+
+  /**
+   * เปิด dropdown filter ของคอลัมน์หนึ่ง (เรียกจาก onclick ของปุ่ม ▼ ในหัวตาราง)
+   * anchorBtn : element ปุ่ม ▼ ที่กด (ใช้อ้างตำแหน่ง)
+   * key       : ชื่อตาราง
+   * col       : ชื่อคอลัมน์ข้อมูล (ตรงกับ key ใน row object)
+   * rows      : ข้อมูลดิบทั้งหมด (ก่อน filter) — ใช้คำนวณรายการค่าที่มีให้เลือก
+   * onChange  : callback เรียกซ้ำเมื่อผู้ใช้กด "ตกลง" (มักจะ = re-render ฟังก์ชันของหน้านั้น)
+   */
+  function openFilterPopover(anchorBtn, key, col, rows, onChange) {
+    var wasOpenForThis = openPopoverEl && openPopoverEl.dataset.col === col && openPopoverEl.dataset.key === key;
+    closePopover();
+    if (wasOpenForThis) return;
+
+    var st = ensure(key);
+    var type = st.colType[col] || 'text';
+
+    // ★ FIX: คำนวณตัวเลือกจากแถวที่ผ่านการกรองของทุกคอลัมน์อื่นแล้ว (ไม่รวมคอลัมน์ตัวเอง)
+    //   เพื่อให้ dropdown แสดงเฉพาะค่าที่ยังมีอยู่จริงในผลลัพธ์ปัจจุบัน (Excel-style cascading filter)
+    var contextRows = rows.filter(function (row) {
+      for (var otherCol in st.filters) {
+        if (otherCol === col) continue;
+        var allowed = st.filters[otherCol];
+        if (!allowed || !allowed.size) continue;
+        var v = row[otherCol] == null || row[otherCol] === '' ? '(ว่าง)' : String(row[otherCol]);
+        if (!allowed.has(v)) return false;
+      }
+      return true;
+    });
+
+    var allValues = uniqueValues(contextRows, col);
+    var currentAllowed = st.filters[col];
+    var checkedSet = currentAllowed ? new Set(currentAllowed) : new Set(allValues);
+
+    var pop = document.createElement('div');
+    pop.className = 'xlf-popover';
+    pop.dataset.col = col;
+    pop.dataset.key = key;
+
+    var sortLabelAsc  = type === 'number' ? 'เรียงน้อย → มาก' : 'เรียง ก → ฮ';
+    var sortLabelDesc = type === 'number' ? 'เรียงมาก → น้อย' : 'เรียง ฮ → ก';
+
+    pop.innerHTML =
+      '<button type="button" class="xlf-sort-btn" data-dir="asc">▲ ' + sortLabelAsc + '</button>' +
+      '<button type="button" class="xlf-sort-btn" data-dir="desc">▼ ' + sortLabelDesc + '</button>' +
+      '<div class="xlf-divider"></div>' +
+      '<input type="text" class="xlf-search" placeholder="ค้นหาค่า...">' +
+      '<div class="xlf-selectall-row">' +
+        '<label><input type="checkbox" class="xlf-check-all" checked> เลือกทั้งหมด</label>' +
+      '</div>' +
+      '<div class="xlf-list"></div>' +
+      '<div class="xlf-actions">' +
+        '<button type="button" class="xlf-btn-clear">ล้างตัวกรองนี้</button>' +
+        '<button type="button" class="xlf-btn-ok">ตกลง</button>' +
+      '</div>';
+
+    document.body.appendChild(pop);
+    openPopoverEl = pop;
+
+    var listEl = pop.querySelector('.xlf-list');
+    function renderList(filterText) {
+      var ft = (filterText || '').toLowerCase();
+      listEl.innerHTML = '';
+      allValues.filter(function (v) { return v.toLowerCase().indexOf(ft) > -1; })
+        .forEach(function (v) {
+          var row = document.createElement('label');
+          row.className = 'xlf-item';
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = checkedSet.has(v);
+          cb.addEventListener('change', function () {
+            if (cb.checked) checkedSet.add(v); else checkedSet.delete(v);
+            syncCheckAll();
+          });
+          var span = document.createElement('span');
+          span.textContent = v;
+          row.appendChild(cb);
+          row.appendChild(span);
+          listEl.appendChild(row);
+        });
+    }
+    function syncCheckAll(filterText) {
+      var ft = (filterText || '').toLowerCase();
+      var visible = allValues.filter(function (v) { return v.toLowerCase().indexOf(ft) > -1; });
+      var allEl = pop.querySelector('.xlf-check-all');
+      allEl.checked = visible.length > 0 && visible.every(function (v) { return checkedSet.has(v); });
+    }
+    renderList('');
+    syncCheckAll('');
+
+    pop.querySelector('.xlf-search').addEventListener('input', function (e) { renderList(e.target.value); syncCheckAll(e.target.value); });
+    pop.querySelector('.xlf-check-all').addEventListener('change', function (e) {
+      var ft = pop.querySelector('.xlf-search').value.toLowerCase();
+      var visible = allValues.filter(function (v) { return v.toLowerCase().indexOf(ft) > -1; });
+      if (e.target.checked) visible.forEach(function (v) { checkedSet.add(v); });
+      else visible.forEach(function (v) { checkedSet.delete(v); });
+      renderList(pop.querySelector('.xlf-search').value);
+    });
+    pop.querySelectorAll('.xlf-sort-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        st.sortCol = col;
+        st.sortAsc = btn.dataset.dir === 'asc';
+        closePopover();
+        onChange();
+      });
+    });
+    pop.querySelector('.xlf-btn-clear').addEventListener('click', function () {
+      delete st.filters[col];
+      closePopover();
+      onChange();
+    });
+    pop.querySelector('.xlf-btn-ok').addEventListener('click', function () {
+      // ★ FIX (v2): ตัดสาเหตุที่แท้จริง — ถ้ายังไม่เคยมี filter ในคอลัมน์นี้มาก่อน (currentAllowed เป็น null)
+      //   checkedSet เริ่มต้นจะเท่ากับ "ทุกค่าทั้งคอลัมน์" (allValues) ซึ่งรวมค่าที่ไม่เคยปรากฏให้ผู้ใช้เห็นเลย
+      //   ถ้าผู้ใช้ค้นหาแล้ว uncheck แค่บางตัวที่เห็น ค่าที่เหลือทั้งหมด (ที่ไม่เคยเห็น) จะยังติด checked อยู่
+      //   วิธีแก้: ใช้ค่าที่ปรากฏจริงในลิสต์ปัจจุบัน (ทุกตัวที่เคย/กำลังมองเห็นระหว่างเปิด popover นี้) เป็นขอบเขตหลัก
+      var currentSearchText = pop.querySelector('.xlf-search').value.trim().toLowerCase();
+      var visibleScope = currentSearchText
+        ? allValues.filter(function (v) { return String(v).toLowerCase().indexOf(currentSearchText) > -1; })
+        : allValues;
+
+      // ค่าที่ถูกติ๊กไว้ "ภายในขอบเขตที่เห็นตอนนี้"
+      var checkedInVisible = visibleScope.filter(function (v) { return checkedSet.has(v); });
+
+      // ค่าที่เคย filter ไว้ก่อนหน้า (จาก currentAllowed) แต่ตอนนี้ไม่อยู่ในขอบเขตที่เห็น ให้คงไว้เหมือนเดิม
+      var previouslyKeptOutside = currentAllowed
+        ? Array.from(currentAllowed).filter(function (v) { return visibleScope.indexOf(v) === -1; })
+        : [];
+
+      var finalSet = new Set(previouslyKeptOutside.concat(checkedInVisible));
+
+      if (finalSet.size === allValues.length) delete st.filters[col];
+      else if (finalSet.size === 0) st.filters[col] = new Set(['\u0000__NONE__']); // กันกรณีไม่เลือกอะไรเลย ให้ผลลัพธ์เป็นค่าว่าง
+      else st.filters[col] = finalSet;
+
+      closePopover();
+      onChange();
+    });
+
+    // ตำแหน่ง: ใต้ปุ่มที่กด เลื่อนเข้าจอถ้าล้นขวา/ล่าง
+    var r = anchorBtn.getBoundingClientRect();
+    var top = r.bottom + window.scrollY + 4;
+    var left = r.left + window.scrollX;
+    document.body.appendChild(pop); // ต้อง append ก่อนอ่านขนาดจริง
+    var pw = pop.offsetWidth || 220;
+    if (left + pw > window.scrollX + document.documentElement.clientWidth - 8) {
+      left = window.scrollX + document.documentElement.clientWidth - pw - 8;
+    }
+    pop.style.top = top + 'px';
+    pop.style.left = Math.max(8, left) + 'px';
+
+    setTimeout(function () {
+      outsideClickHandler = function (e) {
+        if (!pop.contains(e.target) && e.target !== anchorBtn) {
+          closePopover();
+        }
+      };
+      document.addEventListener('click', outsideClickHandler);
+    }, 0);
+  }
+
+  /**
+   * สร้าง HTML หัวคอลัมน์แบบ Excel (label + ปุ่ม ▼) — ใช้แทน <th>ข้อความ</th> ธรรมดา
+   * label : ข้อความหัวคอลัมน์
+   * key   : ชื่อตาราง, col : ชื่อคอลัมน์ข้อมูล
+   */
+  function th(label, key, col) {
+    var active = hasActiveFilter(key, col);
+    var st = ensure(key);
+    var sortMark = st.sortCol === col ? (st.sortAsc ? ' ▲' : ' ▼') : '';
+    return '<th class="xlf-th">' +
+             '<span class="xlf-th-label">' + escHtml(label) + sortMark + '</span>' +
+             '<button type="button" class="xlf-th-btn' + (active ? ' active' : '') + '" ' +
+                     'data-xlf-key="' + escHtml(key) + '" data-xlf-col="' + escHtml(col) + '" ' +
+                     'aria-label="กรอง/เรียง ' + escHtml(label) + '" title="กรอง/เรียง">▾</button>' +
+           '</th>';
+  }
+
+  // ผูก event ให้ทุกปุ่ม ▾ ในตาราง (เรียกครั้งเดียวหลังวาด thead แล้ว หรือใช้ event delegation ที่ระดับ document แทนก็ได้)
+  function bindHeaderClicks(tableSelector, getRowsFn, onChange) {
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.xlf-th-btn');
+      if (!btn) return;
+      var table = btn.closest(tableSelector);
+      if (!table) return;
+      e.stopPropagation();
+      var key = btn.dataset.xlfKey, col = btn.dataset.xlfCol;
+      openFilterPopover(btn, key, col, getRowsFn(), onChange);
+    });
+  }
+
+  return {
+    apply: apply,
+    th: th,
+    bindHeaderClicks: bindHeaderClicks,
+    anyActiveFilter: anyActiveFilter,
+    clearAll: clearAll,
+    closePopover: closePopover
+  };
+})();
+
+
+  var carsCache         = [];
+  var editingDocId      = null;
+  var targetDeleteDocId = null;
+  var currentSortCol    = null;
+  var sortDirection     = 'asc';
+
+  window.onload = function() { loadTable(); };
+
+  function loadTable() {
+    var tbody = document.getElementById('carBody');
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">⏳ กำลังโหลดข้อมูล...</td></tr>';
+    document.getElementById('recordCount').innerText = 'กำลังโหลด...';
+
+    google.script.run
+      .withSuccessHandler(function(data) {
+        // ★ normalize field ที่เดิมมีชื่อสำรองหลายแบบ (item.id||item.carCode ฯลฯ) ให้เหลือชื่อเดียว
+        //   เพื่อให้ XLF filter/sort ทำงานถูกต้องตรงกับค่าที่ตารางแสดงจริง
+        carsCache = (data || []).map(function(item) {
+          item._code     = item.id || item.carCode || '';
+          item._modelCode= item.Model_Code || item.modelCode || '';
+          item._brand    = item.Brand || item.brand || '';
+          item._model    = item.Model || item.model || '';
+          item._year     = item.Year || item.Car_Year || item.year || '';
+          item._type     = item.Type_Car || item.typeCar || '';
+          item._note     = item.Note || item.note || '';
+          return item;
+        });
+        renderTable();
+      })
+      .withFailureHandler(function(err) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="9">❌ โหลดไม่สำเร็จ</td></tr>';
+      })
+      .getCarsFull();
+  }
+
+  function handleSearch() {
+    renderTable();
+  }
+
+  // ★ วาดหัวตาราง + แถวข้อมูล ผ่าน XLF filter/sort (แทนที่ sortData/populateFilters/filterBrand/filterType เดิม)
+  //   ยังคงช่องค้นหากลาง (searchInput) ไว้คู่กัน เพราะค้นข้ามหลายคอลัมน์พร้อมกันซึ่ง XLF ไม่ได้ทำหน้าที่นี้
+  function renderTable() {
+    var thead = document.getElementById('carThead');
+    thead.innerHTML =
+      '<tr>' +
+        '<th style="text-align:center; width:50px;">#</th>' +
+        XLF.th('รหัสรถ', 'cars', '_code') +
+        XLF.th('รหัสรุ่น', 'cars', '_modelCode') +
+        XLF.th('ยี่ห้อ', 'cars', '_brand') +
+        XLF.th('รุ่น', 'cars', '_model') +
+        XLF.th('ปีรถ', 'cars', '_year') +
+        XLF.th('ประเภท', 'cars', '_type') +
+        XLF.th('หมายเหตุ', 'cars', '_note') +
+        '<th class="col-sticky-right" style="text-align:center; width:100px;">จัดการ</th>' +
+      '</tr>';
+
+    var query = document.getElementById('searchInput').value.toLowerCase().trim();
+    var searched = !query ? carsCache : carsCache.filter(function(item) {
+      return (item._code + item._modelCode + item._brand + item._model + item._year + item._type + item._note)
+             .toLowerCase().indexOf(query) > -1;
+    });
+
+    var rows = XLF.apply('cars', searched, [
+      { col: '_code' }, { col: '_modelCode' }, { col: '_brand' }, { col: '_model' },
+      { col: '_year' }, { col: '_type' }, { col: '_note' }
+    ]);
+
+    var summaryEl = document.getElementById('xlfSummary');
+    if (XLF.anyActiveFilter('cars')) {
+      summaryEl.classList.add('show');
+      document.getElementById('xlfSummaryText').innerText =
+        'กรองอยู่ ' + rows.length + ' จาก ' + carsCache.length + ' รายการ';
+    } else {
+      summaryEl.classList.remove('show');
+    }
+    document.getElementById('recordCount').innerText = '📋 แสดง ' + rows.length + ' จากทั้งหมด ' + carsCache.length + ' รายการ';
+
+    var tbody = document.getElementById('carBody');
+    tbody.innerHTML = '';
+    if (!rows.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="9">📭 ไม่พบข้อมูลที่ค้นหา</td></tr>';
+      return;
+    }
+
+    rows.forEach(function(item, i) {
+      var modelCodeHtml = item._modelCode
+        ? '<span class="model-code-badge">' + esc(item._modelCode) + '</span>'
+        : '<span class="empty-val">—</span>';
+      var yearHtml = item._year
+        ? '<span class="year-badge">' + esc(item._year) + '</span>'
+        : '<span class="empty-val">—</span>';
+      var itemCode = item._code;
+
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td style="text-align: center; color: #94a3b8;">' + (i + 1) + '</td>' +
+        '<td><span class="code-badge">' + esc(itemCode) + '</span></td>' +
+        '<td>' + modelCodeHtml + '</td>' +
+        '<td style="font-weight:600;">' + esc(item._brand || '—') + '</td>' +
+        '<td>' + esc(item._model || '—') + '</td>' +
+        '<td style="text-align:center;">' + yearHtml + '</td>' +
+        '<td>' + esc(item._type || '—') + '</td>' +
+        '<td style="color:#64748b;">' + esc(item._note || '—') + '</td>' +
+        '<td class="col-sticky-right" style="text-align:center;">' +
+          '<div class="action-buttons">' +
+            '<button class="btn-edit-icon" onclick="openEditModal(\'' + itemCode + '\')" title="แก้ไข">✏️</button>' +
+            '<button class="btn-delete-icon" onclick="confirmDeleteModal(\'' + itemCode + '\')" title="ลบ">🗑️</button>' +
+          '</div>' +
+        '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  XLF.bindHeaderClicks('#carThead', function() { return carsCache; }, renderTable);
+
+  function openAddModal() {
+    editingDocId = null;
+    document.getElementById('carForm').reset();
+    document.getElementById('modalDocId').value = '';
+    // ★ เคลียร์ตรงๆ กัน form.reset() ไม่ล้างค่าที่เคย set ด้วย .value ตอนกด "แก้ไข" ก่อนหน้า
+    document.getElementById('modalModelCode').value = '';
+    document.getElementById('modalBrand').value     = '';
+    document.getElementById('modalModel').value     = '';
+    document.getElementById('modalCarYear').value   = '';
+    document.getElementById('modalCategory').value  = '';
+    document.getElementById('modalNote').value      = '';
+    document.getElementById('modalTitle').innerText   = '🚗 เพิ่มข้อมูลรถยนต์';
+    document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
+    document.getElementById('modalAlert').style.display = 'none';
+    document.getElementById('carModal').classList.add('active');
+  }
+
+  function openEditModal(docId) {
+    var item = carsCache.find(function(c) { return (c.id || c.carCode) === docId; });
+    if (!item) { alert('❌ ไม่พบข้อมูล'); return; }
+    editingDocId = docId;
+    document.getElementById('modalDocId').value       = item.id || item.carCode;
+    document.getElementById('modalModelCode').value   = item.Model_Code || item.modelCode || '';
+    document.getElementById('modalBrand').value       = item.Brand || item.brand || '';
+    document.getElementById('modalModel').value       = item.Model || item.model || '';
+    document.getElementById('modalCarYear').value     = item.Year || item.Car_Year || item.year || '';
+    document.getElementById('modalCategory').value    = item.Type_Car || item.typeCar || ''; 
+    document.getElementById('modalNote').value        = item.Note || item.note || '';
+    document.getElementById('modalTitle').innerText   = '✏️ แก้ไขข้อมูลรถยนต์ (' + docId + ')';
+    document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
+    document.getElementById('modalAlert').style.display = 'none';
+    document.getElementById('carModal').classList.add('active');
+  }
+
+  function closeModal() {
+    document.getElementById('carModal').classList.remove('active');
+    document.getElementById('carForm').reset();
+    document.getElementById('modalAlert').style.display = 'none';
+    var btn = document.getElementById('modalBtnSave');
+    btn.disabled = false; btn.innerText = '💾 บันทึก';
+    editingDocId = null;
+  }
+
+  function confirmDeleteModal(docId) {
+    var item = carsCache.find(function(c) { return (c.id || c.carCode) === docId; });
+    if (!item) { alert('❌ ไม่พบข้อมูล'); return; }
+    targetDeleteDocId = docId;
+    
+    var modelCode = item.Model_Code || item.modelCode || 'ไม่ระบุรหัสรุ่น';
+    var brandModel = (item.Brand || item.brand || '') + ' ' + (item.Model || item.model || '');
+    var carYear = item.Year || item.Car_Year || item.year ? ' (' + (item.Year || item.Car_Year || item.year) + ')' : '';
+    var displayTitle = modelCode + (brandModel.trim() ? ' (' + brandModel.trim() + ')' : '') + carYear;
+
+    var cardHtml = '<div class="delete-target-title">' + esc(displayTitle) + '</div>' +
+                   '<span class="delete-target-code">' + esc(docId) + '</span>';
+    document.getElementById('deleteTargetCard').innerHTML = cardHtml;
+    
+    var btn = document.getElementById('btnConfirmDelete');
+    btn.disabled = false;
+    btn.innerText = '🗑️ ลบข้อมูล';
+    document.getElementById('deleteModal').classList.add('active');
+  }
+
+  function closeDeleteModal() {
+    document.getElementById('deleteModal').classList.remove('active');
+    targetDeleteDocId = null;
+  }
+
+  function execDeleteCar() {
+    if (!targetDeleteDocId) return;
+    var btn = document.getElementById('btnConfirmDelete');
+    btn.disabled = true;
+    btn.innerText = '⏳ กำลังลบ...';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled = false;
+        btn.innerText = '🗑️ ลบข้อมูล';
+        closeDeleteModal();
+        if (res && res.success) {
+          alert('✅ ' + res.message);
+          loadTable();
+          window.parent.postMessage({ action: 'REFRESH_MAIN_TABLE' }, '*');
+        } else {
+          alert('❌ ' + (res ? res.message : 'เกิดข้อผิดพลาดในการลบ'));
+        }
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled = false;
+        btn.innerText = '🗑️ ลบข้อมูล';
+        closeDeleteModal();
+        alert('❌ เกิดข้อผิดพลาด: ' + JSON.stringify(err));
+      })
+      .deleteCar(targetDeleteDocId);
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    var btn     = document.getElementById('modalBtnSave');
+    var alertEl = document.getElementById('modalAlert');
+    alertEl.style.display = 'none';
+
+    var inputModelCode = document.getElementById('modalModelCode').value.trim();
+
+    if (inputModelCode !== "") {
+      var isDuplicate = carsCache.some(function(item) {
+        var currentCode = (item.Model_Code || item.modelCode || '').toString().toLowerCase();
+        var itemId      = item.id || item.carCode;
+
+        if (editingDocId && itemId === editingDocId) {
+          return false;
+        }
+        return currentCode !== "" && currentCode === inputModelCode.toLowerCase();
+      });
+
+      if (isDuplicate) {
+        alertEl.style.display = 'block';
+        alertEl.className = 'modal-alert error';
+        alertEl.innerText = '❌ รหัสรุ่น "' + inputModelCode + '" มีอยู่ในระบบแล้ว';
+        return;
+      }
+    }
+
+    btn.disabled  = true;
+    btn.innerText = '⏳ กำลังบันทึก...';
+
+    var formData = {
+      docId    : editingDocId || null,
+      modelCode: inputModelCode,
+      brand    : document.getElementById('modalBrand').value.trim(),
+      model    : document.getElementById('modalModel').value.trim(),
+      year     : document.getElementById('modalCarYear').value.trim(),
+      typeCar  : document.getElementById('modalCategory').value.trim(), // ส่งชื่อเป็น typeCar แทน
+      note     : document.getElementById('modalNote').value.trim()
+    };
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled  = false;
+        btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
+        alertEl.style.display = 'block';
+        if (res.success) {
+          alertEl.className = 'modal-alert success';
+          alertEl.innerText = '✅ ' + res.message + ' (ID: ' + res.id + ')';
+          loadTable();
+          window.parent.postMessage({ action: 'REFRESH_MAIN_TABLE' }, '*');
+          setTimeout(function() { closeModal(); }, 1200);
+        } else {
+          alertEl.className = 'modal-alert error';
+          alertEl.innerText = '❌ ' + res.message;
+        }
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled  = false;
+        btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
+        alertEl.style.display = 'block';
+        alertEl.className = 'modal-alert error';
+        alertEl.innerText = '❌ ' + JSON.stringify(err);
+      })
+      .saveCar(formData);
+  }
+
+  function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>
