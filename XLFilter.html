@@ -1,0 +1,239 @@
+<script>
+/* ═══════════════════════════════════════════════════════════
+   SYY Shop Control — XLFilter.html  (ตัวกรอง/เรียงแบบ Excel)
+   ใช้: <?!= include('XLFilter'); ?>  ก่อน </body>  (สไตล์อยู่ใน Styles.html)
+   เดิมโค้ดชุดนี้ถูกก็อปซ้ำอยู่ใน 10 ไฟล์ — ตอนนี้เหลือที่เดียว
+
+   วิธีใช้ 3 ขั้น
+   1) วาด thead:  thead.innerHTML = '<tr>…' + XLF.th('ชื่อยี่ห้อ','brands','Name') + '…</tr>';
+   2) กรอง+เรียง:  var rows = XLF.apply('brands', cacheArray, [{col:'id'},{col:'Name'}]);
+   3) ผูกปุ่มครั้งเดียว: XLF.bindHeaderClicks('#brandThead', function(){return cacheArray;}, renderRows);
+   ═══════════════════════════════════════════════════════════ */
+
+var XLF = (function () {
+  var state = {};
+
+  function ensure(key){
+    if(!state[key]) state[key]={filters:{},sortCol:null,sortAsc:true,colType:{}};
+    return state[key];
+  }
+  function escH(v){
+    return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function detectColType(rows,col){
+    var sample=rows.slice(0,30).map(function(r){return r[col];}).filter(function(v){return v!=='' && v!=null;});
+    if(!sample.length) return 'text';
+    return sample.every(function(v){return !isNaN(parseFloat(v)) && isFinite(v);}) ? 'number' : 'text';
+  }
+  function keyOf(v){ return (v==null || v==='') ? '(ว่าง)' : String(v); }
+  function compareVals(a,b,type,asc){
+    var va,vb;
+    if(type==='number'){ va=parseFloat(a)||0; vb=parseFloat(b)||0; }
+    else { va=String(a==null?'':a).toLowerCase(); vb=String(b==null?'':b).toLowerCase(); }
+    if(va<vb) return asc?-1:1;
+    if(va>vb) return asc?1:-1;
+    return 0;
+  }
+
+  function apply(key,rows,colDefs){
+    var st=ensure(key);
+    (colDefs||[]).forEach(function(cd){
+      if(!st.colType[cd.col]) st.colType[cd.col]=(cd.type && cd.type!=='auto')?cd.type:detectColType(rows,cd.col);
+    });
+    var result=(rows||[]).filter(function(row){
+      for(var col in st.filters){
+        var allowed=st.filters[col];
+        if(!allowed || !allowed.size) continue;
+        if(!allowed.has(keyOf(row[col]))) return false;
+      }
+      return true;
+    });
+    if(st.sortCol){
+      var type=st.colType[st.sortCol]||'text';
+      result.sort(function(a,b){return compareVals(a[st.sortCol],b[st.sortCol],type,st.sortAsc);});
+    }
+    return result;
+  }
+
+  function uniqueValues(rows,col,numeric){
+    var seen={},out=[];
+    (rows||[]).forEach(function(row){
+      var v=keyOf(row[col]);
+      if(!seen[v]){seen[v]=true;out.push(v);}
+    });
+    out.sort(function(a,b){ return numeric?(parseFloat(a)-parseFloat(b)):String(a).localeCompare(String(b),'th'); });
+    return out;
+  }
+
+  function hasActiveFilter(key,col){ var st=ensure(key); return !!(st.filters[col] && st.filters[col].size>0); }
+  function anyActiveFilter(key){ var st=ensure(key); return Object.keys(st.filters).some(function(c){return st.filters[c] && st.filters[c].size>0;}); }
+  function activeSummary(key,labels){
+    var st=ensure(key),out=[];
+    Object.keys(st.filters).forEach(function(c){
+      if(!st.filters[c] || !st.filters[c].size) return;
+      var vals=Array.from(st.filters[c]);
+      var preview=vals.length>2 ? vals.slice(0,2).join(', ')+' +'+(vals.length-2) : vals.join(', ');
+      out.push(((labels&&labels[c])||c)+': '+preview);
+    });
+    return out.join(' · ');
+  }
+  function clearAll(key){ var st=ensure(key); st.filters={}; st.sortCol=null; st.sortAsc=true; }
+  function clearCol(key,col){ delete ensure(key).filters[col]; }
+
+  var openPop=null, outsideHandler=null;
+
+  function closePopover(){
+    if(openPop && openPop.parentNode) openPop.parentNode.removeChild(openPop);
+    if(outsideHandler){ document.removeEventListener('click',outsideHandler); outsideHandler=null; }
+    openPop=null;
+  }
+
+  function openFilterPopover(anchorBtn,key,col,rows,onChange){
+    var wasOpen = openPop && openPop.dataset.col===col && openPop.dataset.key===key;
+    closePopover();
+    if(wasOpen) return;
+
+    var st=ensure(key);
+    var type=st.colType[col]||'text';
+    var numeric = type==='number';
+
+    // ตัวเลือกคำนวณจากแถวที่ผ่านตัวกรองคอลัมน์อื่นแล้ว (cascading แบบ Excel)
+    var contextRows=(rows||[]).filter(function(row){
+      for(var other in st.filters){
+        if(other===col) continue;
+        var allowed=st.filters[other];
+        if(!allowed || !allowed.size) continue;
+        if(!allowed.has(keyOf(row[other]))) return false;
+      }
+      return true;
+    });
+
+    var allValues=uniqueValues(contextRows,col,numeric);
+    var currentAllowed=st.filters[col];
+    var checkedSet=currentAllowed?new Set(currentAllowed):new Set(allValues);
+
+    var pop=document.createElement('div');
+    pop.className='xlf-popover';
+    pop.dataset.col=col; pop.dataset.key=key;
+    pop.innerHTML=
+      '<button type="button" class="xlf-sort-btn" data-dir="asc">▲ '+(numeric?'เรียงน้อย → มาก':'เรียง ก → ฮ')+'</button>'+
+      '<button type="button" class="xlf-sort-btn" data-dir="desc">▼ '+(numeric?'เรียงมาก → น้อย':'เรียง ฮ → ก')+'</button>'+
+      '<div class="xlf-divider"></div>'+
+      '<input type="text" class="xlf-search" placeholder="ค้นหาค่า...">'+
+      '<div class="xlf-selectall-row"><label><input type="checkbox" class="xlf-check-all" checked> เลือกทั้งหมด</label></div>'+
+      '<div class="xlf-list"></div>'+
+      '<div class="xlf-actions">'+
+        '<button type="button" class="xlf-btn-clear">ล้างตัวกรองนี้</button>'+
+        '<button type="button" class="xlf-btn-ok">ตกลง</button>'+
+      '</div>';
+    document.body.appendChild(pop);
+    openPop=pop;
+
+    var listEl=pop.querySelector('.xlf-list');
+    var searchEl=pop.querySelector('.xlf-search');
+
+    function visibleValues(){
+      var ft=searchEl.value.trim().toLowerCase();
+      return ft ? allValues.filter(function(v){return String(v).toLowerCase().indexOf(ft)>-1;}) : allValues;
+    }
+    function renderList(){
+      listEl.innerHTML='';
+      var vis=visibleValues();
+      if(!vis.length){ listEl.innerHTML='<div style="padding:12px;text-align:center;color:#94a3b8;font-size:12px">ไม่พบค่าที่ค้นหา</div>'; }
+      vis.forEach(function(v){
+        var row=document.createElement('label'); row.className='xlf-item';
+        var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=checkedSet.has(v);
+        cb.addEventListener('change',function(){ if(cb.checked) checkedSet.add(v); else checkedSet.delete(v); syncCheckAll(); });
+        var sp=document.createElement('span'); sp.textContent=v;
+        row.appendChild(cb); row.appendChild(sp); listEl.appendChild(row);
+      });
+      syncCheckAll();
+    }
+    function syncCheckAll(){
+      var vis=visibleValues();
+      pop.querySelector('.xlf-check-all').checked = vis.length>0 && vis.every(function(v){return checkedSet.has(v);});
+    }
+    renderList();
+
+    searchEl.addEventListener('input',renderList);
+    pop.querySelector('.xlf-check-all').addEventListener('change',function(e){
+      var vis=visibleValues();
+      if(e.target.checked) vis.forEach(function(v){checkedSet.add(v);});
+      else vis.forEach(function(v){checkedSet.delete(v);});
+      renderList();
+    });
+    pop.querySelectorAll('.xlf-sort-btn').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        st.sortCol=col; st.sortAsc=btn.dataset.dir==='asc';
+        closePopover(); onChange();
+      });
+    });
+    pop.querySelector('.xlf-btn-clear').addEventListener('click',function(){
+      checkedSet=new Set(allValues);
+      searchEl.value='';
+      renderList();
+      delete st.filters[col];
+      onChange();
+    });
+    pop.querySelector('.xlf-btn-ok').addEventListener('click',function(){
+      // นับจาก "ค่าที่มองเห็นและติ๊กอยู่" + "ค่าที่เคยกรองไว้แต่ตอนนี้มองไม่เห็น" เท่านั้น
+      var scope=visibleValues();
+      var checkedInScope=scope.filter(function(v){return checkedSet.has(v);});
+      var keptOutside=currentAllowed?Array.from(currentAllowed).filter(function(v){return scope.indexOf(v)===-1;}):[];
+      var finalSet=new Set(keptOutside.concat(checkedInScope));
+
+      if(finalSet.size===allValues.length) delete st.filters[col];
+      else if(finalSet.size===0) st.filters[col]=new Set(['\u0000__NONE__']);
+      else st.filters[col]=finalSet;
+
+      closePopover(); onChange();
+    });
+
+    // ตำแหน่ง: ใต้ปุ่ม เลื่อนเข้าจอถ้าล้นขวา/ล่าง
+    var r=anchorBtn.getBoundingClientRect();
+    var pw=pop.offsetWidth||250, ph=pop.offsetHeight||300;
+    var left=r.left+window.scrollX;
+    var top=r.bottom+window.scrollY+4;
+    if(left+pw > window.scrollX+document.documentElement.clientWidth-8) left=window.scrollX+document.documentElement.clientWidth-pw-8;
+    if(r.bottom+ph > document.documentElement.clientHeight-8 && r.top>ph) top=r.top+window.scrollY-ph-4;
+    pop.style.left=Math.max(8,left)+'px';
+    pop.style.top=top+'px';
+
+    setTimeout(function(){
+      outsideHandler=function(e){ if(!pop.contains(e.target) && e.target!==anchorBtn) closePopover(); };
+      document.addEventListener('click',outsideHandler);
+    },0);
+  }
+
+  function th(label,key,col,opt){
+    opt=opt||{};
+    var active=hasActiveFilter(key,col);
+    var st=ensure(key);
+    var mark = st.sortCol===col ? (st.sortAsc?' ▲':' ▼') : '';
+    var cls = 'xlf-th' + (opt.className?' '+opt.className:'');
+    var style = opt.width ? ' style="width:'+opt.width+'"' : '';
+    return '<th class="'+cls+'"'+style+'>'+
+             '<span class="xlf-th-label">'+escH(label)+mark+'</span>'+
+             '<button type="button" class="xlf-th-btn'+(active?' active':'')+'" '+
+                     'data-xlf-key="'+escH(key)+'" data-xlf-col="'+escH(col)+'" '+
+                     'aria-label="กรอง/เรียง '+escH(label)+'" title="กรอง / เรียง">▾</button>'+
+           '</th>';
+  }
+
+  function bindHeaderClicks(tableSelector,getRowsFn,onChange){
+    document.addEventListener('click',function(e){
+      var btn=e.target.closest ? e.target.closest('.xlf-th-btn') : null;
+      if(!btn) return;
+      if(!btn.closest(tableSelector)) return;
+      e.stopPropagation();
+      openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,getRowsFn(),onChange);
+    });
+  }
+
+  return {
+    apply:apply, th:th, bindHeaderClicks:bindHeaderClicks,
+    anyActiveFilter:anyActiveFilter, hasActiveFilter:hasActiveFilter,
+    activeSummary:activeSummary, clearAll:clearAll, clearCol:clearCol, closePopover:closePopover
+  };
+})();
+</script>

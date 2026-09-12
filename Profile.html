@@ -3,127 +3,61 @@
 <head>
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <?!= include('Styles'); ?>
   <style>
-    :root { --primary: #005088; --primary-dark: #002e52; --bg: #f8fafc; --danger: #dc2626; --danger-hover: #b91c1c; --green: #16a34a; }
-    * { box-sizing: border-box; }
-    body { font-family: 'Prompt', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; }
-    .app-container { max-width: 900px; margin: 0 auto; width: 100%; }
-
-    .header-section { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-    h2 { margin: 0; color: var(--primary); font-size: 20px; }
-
-    .tab-bar { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 2px solid #e2e8f0; flex-wrap: wrap; }
-    .tab-btn {
-      background: transparent; border: none; padding: 10px 18px; cursor: pointer;
-      font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; color: #64748b;
-      border-bottom: 3px solid transparent; margin-bottom: -2px; transition: 0.2s;
-    }
-    .tab-btn:hover { color: var(--primary); }
-    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
-
-    .card { background: white; padding: 22px 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; margin-bottom: 18px; }
-    .card-title { font-size: 15px; font-weight: 600; color: #1e293b; margin: 0 0 4px; }
-    .card-sub { font-size: 12.5px; color: #94a3b8; margin: 0 0 18px; }
-
-    .profile-head { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
-    .avatar { width: 58px; height: 58px; border-radius: 50%; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; flex-shrink: 0; }
-    .profile-name { font-size: 17px; font-weight: 600; color: #0f172a; }
-    .role-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; margin-top: 4px; }
-    .role-badge.admin { background: #fee2e2; color: #991b1b; }
-    .role-badge.staff { background: #dbeafe; color: #1e40af; }
-    .role-badge.viewer { background: #f1f5f9; color: #475569; }
-
-    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .form-grid .full { grid-column: 1 / -1; }
-    .form-group { display: flex; flex-direction: column; gap: 5px; }
-    .form-group label { font-size: 13px; font-weight: 600; color: #475569; }
-    .form-control {
-      padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 6px;
-      font-family: 'Prompt', sans-serif; font-size: 13px; outline: none; width: 100%;
-    }
-    .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(0,80,136,0.15); }
-    .form-control.is-invalid { border-color: var(--danger); background: #fef2f2; }
-    .field-error { font-size: 11px; color: var(--danger); margin-top: 2px; display: none; }
-    .field-error.show { display: block; }
-    .field-hint { font-size: 11px; color: #94a3b8; }
-
-    .btn-primary { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; transition: 0.2s; }
-    .btn-primary:hover { background: var(--primary-dark); }
-    .btn-primary:disabled { background: #cbd5e1; cursor: not-allowed; }
-    .btn-outline { background: #fff; color: var(--primary); border: 1px solid var(--primary); padding: 9px 18px; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .btn-outline:hover { background: #eff6ff; }
-    .btn-danger { background: var(--danger); color: white; border: none; padding: 9px 18px; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .btn-danger:hover { background: var(--danger-hover); }
-
-    .alert { padding: 11px 14px; border-radius: 8px; font-size: 13px; margin-top: 14px; display: none; line-height: 1.5; }
-    .alert.show { display: block; }
-    .alert.success { background: #dcfce7; color: #166534; }
-    .alert.error { background: #fee2e2; color: #991b1b; }
-    .alert.info { background: #eff6ff; color: #1e40af; }
-
-    .totp-status { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; }
-    .totp-status.enabled { background: #f0fdf4; border-color: #bbf7d0; }
-    .status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 7px; }
-    .status-dot.on { background: var(--green); }
-    .status-dot.off { background: #cbd5e1; }
-
-    .qr-box { text-align: center; padding: 18px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; margin: 16px 0; }
-    .qr-box canvas { margin: 0 auto; }
-    .secret-text { font-family: 'Courier New', monospace; font-size: 13px; letter-spacing: 1px; background: #fff; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 8px 12px; margin-top: 10px; display: inline-block; word-break: break-all; }
-
-    .recovery-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 14px 0; }
-    .recovery-code { font-family: 'Courier New', monospace; font-size: 13px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; text-align: center; }
-
-    .otp-input { letter-spacing: 8px; text-align: center; font-size: 20px; font-weight: 600; font-family: 'Courier New', monospace; }
-
-    /* ═══ Activity Log table ═══ */
-    .table-container { max-height: 60vh; overflow: auto; border: 1px solid #eef2f5; border-radius: 10px; }
-    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
-    th { text-align: left; padding: 10px 12px; background: var(--primary); color: #fff; font-weight: 600; position: sticky; top: 0; z-index: 5; white-space: nowrap; }
-    td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #334155; }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #f8fafc; }
-    .empty-row td { text-align: center; color: #94a3b8; padding: 30px; }
-    .action-chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; }
-    .action-chip.save { background: #dbeafe; color: #1e40af; }
-    .action-chip.update { background: #fef3c7; color: #92400e; }
-    .action-chip.delete { background: #fee2e2; color: #991b1b; }
-    .success-icon { font-size: 13px; }
-
-    /* ═══ Modal (สถาปัตยกรรม overlay-scroll ล่าสุด — กันปุ่มหายตอนซูม) ═══ */
-    .modal-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:none; justify-content:center; align-items:flex-start; overflow-y:auto; padding:40px 16px; box-sizing:border-box; z-index:2000; backdrop-filter:blur(2px); }
-    .modal-overlay.active { display: flex; }
-    .modal-box { background: white; width: 420px; max-width: 95%; border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); overflow: hidden; display: flex; flex-direction: column; animation: modalIn 0.25s ease; }
-    @keyframes modalIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    .modal-header { background: var(--primary); color: white; padding: 16px 24px; font-size: 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
-    .modal-close { background: none; border: none; color: white; font-size: 22px; cursor: pointer; line-height: 1; }
-    .modal-body { padding: 22px 24px; }
-    .modal-footer { background: #f8fafc; padding: 14px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0; }
-
-    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; margin-right: 6px; vertical-align: -2px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .filter-row { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
-    .filter-row select { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Prompt', sans-serif; font-size: 13px; }
-
-    @media (max-width: 640px) {
-      .form-grid { grid-template-columns: 1fr; }
-      .recovery-grid { grid-template-columns: 1fr; }
-      table { font-size: 12px; }
-    }
+  /* ─── เฉพาะหน้านี้: แท็บ, การ์ดโปรไฟล์, 2FA/QR, log แจ้งเตือนแบบฝังหน้า (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
+  .tab-bar{display:flex;gap:6px;margin-bottom:18px;border-bottom:2px solid var(--line);flex-wrap:wrap}
+  .tab-btn{background:transparent;border:none;padding:10px 18px;cursor:pointer;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
+  .tab-btn:hover{color:var(--primary)}
+  .tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .card-title{font-size:15px;font-weight:600;color:#1e293b;margin:0 0 4px}
+  .card-sub{font-size:12.5px;color:var(--faint);margin:0 0 18px}
+  .profile-head{display:flex;align-items:center;gap:16px;margin-bottom:4px}
+  .avatar{width:58px;height:58px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;flex-shrink:0}
+  .profile-name{font-size:17px;font-weight:600;color:#0f172a}
+  .role-badge{display:inline-block;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;margin-top:4px}
+  .role-badge.admin{background:#fee2e2;color:#991b1b}
+  .role-badge.staff{background:#dbeafe;color:#1e40af}
+  .role-badge.viewer{background:var(--line-soft);color:#475569}
+  .btn-outline{background:#fff;color:var(--primary);border:1px solid var(--primary);padding:9px 18px;border-radius:6px;font-family:'Prompt',sans-serif;font-size:13px;font-weight:600;cursor:pointer}
+  .btn-outline:hover{background:var(--info-bg)}
+  .alert{padding:11px 14px;border-radius:8px;font-size:13px;margin-top:14px;display:none;line-height:1.5}
+  .alert.show{display:block}
+  .alert.success{background:#dcfce7;color:#166534}
+  .alert.error{background:#fee2e2;color:#991b1b}
+  .alert.info{background:var(--info-bg);color:#1e40af}
+  .totp-status{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg);border-radius:10px;border:1px solid var(--line)}
+  .totp-status.enabled{background:#f0fdf4;border-color:#bbf7d0}
+  .status-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:7px}
+  .status-dot.on{background:#16a34a}
+  .status-dot.off{background:#cbd5e1}
+  .qr-box{text-align:center;padding:18px;background:var(--bg);border-radius:10px;border:1px solid var(--line);margin:16px 0}
+  .qr-box canvas{margin:0 auto}
+  .secret-text{font-family:'Courier New',monospace;font-size:13px;letter-spacing:1px;background:#fff;border:1px dashed #cbd5e1;border-radius:6px;padding:8px 12px;margin-top:10px;display:inline-block;word-break:break-all}
+  .recovery-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:14px 0}
+  .recovery-code{font-family:'Courier New',monospace;font-size:13px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;text-align:center}
+  .otp-input{letter-spacing:8px;text-align:center;font-size:20px;font-weight:600;font-family:'Courier New',monospace}
+  .action-chip{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px}
+  .action-chip.save{background:#dbeafe;color:#1e40af}
+  .action-chip.update{background:#fef3c7;color:#92400e}
+  .action-chip.delete{background:#fee2e2;color:#991b1b}
+  .success-icon{font-size:13px}
+  .filter-row{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .filter-row select{padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Prompt',sans-serif;font-size:13px}
+  @media (max-width:640px){ .recovery-grid{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
-<div class="app-container">
-  <div class="header-section">
-    <h2>👤 บัญชีของฉัน</h2>
-    <button class="btn-outline" onclick="goHome()">← กลับหน้าหลัก</button>
-  </div>
+<div class="page-head">
+  <div class="crumb"><span>บัญชี</span><span class="sep">›</span><b>บัญชีของฉัน</b></div>
+  <button class="btn btn-ghost" onclick="goHome()">← กลับหน้าหลัก</button>
+</div>
 
+<div class="page-body">
   <div class="tab-bar">
     <button class="tab-btn active" id="tabBtnProfile" onclick="switchTab('profile')">👤 โปรไฟล์</button>
     <button class="tab-btn" id="tabBtnSecurity" onclick="switchTab('security')">🔒 ความปลอดภัย</button>
@@ -211,7 +145,7 @@
         <button class="btn-outline" onclick="loadActivityLog()">🔄 รีเฟรช</button>
       </div>
 
-      <div class="table-container">
+      <div class="table-wrap">
         <table>
           <thead>
             <tr>
@@ -298,9 +232,12 @@
   </div>
 </div>
 
+<?!= include('Shared'); ?>
 <script>
 /* ══════════════════════════════════════════════════════════════
-   ★ API Gateway helper — เหมือนกับที่ใช้ใน Master_Brands.txt
+   ★ API Gateway helper ของหน้านี้เอง (แบบ chainable .withSuccessHandler().run())
+   ต่างจาก callApi(fnName,args,onSuccess,onFailure) ใน Shared.html โดยเจตนา —
+   หน้านี้ต้องรู้ตัวตนผู้ใช้ก่อนแสดงผลอะไรเลย จึงคงรูปแบบเดิมไว้ ไม่ได้ใช้ตัวจาก Shared
    ══════════════════════════════════════════════════════════════ */
 var AUTH_TOKEN = '<?= authToken ?>';
 var WEB_APP_URL = '<?= webAppUrl ?>';
@@ -313,8 +250,9 @@ function callApi(fnName) {
       runner = runner.withSuccessHandler(function (res) {
         if (res && res.__authError) {
           try { sessionStorage.removeItem('syy_token'); } catch (e) {}
-          alert('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
-          window.top.location.href = WEB_APP_URL + '?page=login';
+          swyError('เซสชันหมดอายุ', 'กรุณาเข้าสู่ระบบใหม่').then(function(){
+            window.top.location.href = WEB_APP_URL + '?page=login';
+          });
           return;
         }
         successFn(res);
@@ -485,11 +423,13 @@ function doChangePassword() {
 
 /* ═══ ออกจากระบบ ═══ */
 function doLogout() {
-  if (!confirm('ต้องการออกจากระบบใช่หรือไม่?')) return;
-  callApi('authLogout', AUTH_TOKEN)
-    .withSuccessHandler(function () { finishLogout(); })
-    .withFailureHandler(function () { finishLogout(); })
-    .run();
+  swyConfirm({icon:'question', title:'ออกจากระบบ?', html:'คุณต้องการออกจากระบบตอนนี้ใช่หรือไม่', confirmText:'ออกจากระบบ', danger:true}).then(function(ok){
+    if (!ok) return;
+    callApi('authLogout', AUTH_TOKEN)
+      .withSuccessHandler(function () { finishLogout(); })
+      .withFailureHandler(function () { finishLogout(); })
+      .run();
+  });
 }
 function finishLogout() {
   try { sessionStorage.removeItem('syy_token'); } catch (e) {}
@@ -501,7 +441,7 @@ function openTotpSetupModal() {
   document.getElementById('totpSetupAlert').className = 'alert';
   document.getElementById('inpTotpConfirm').value = '';
   document.getElementById('qrCanvasHolder').innerHTML = '<div style="padding:40px; color:#94a3b8; font-size:13px;">⏳ กำลังสร้างรหัส...</div>';
-  document.getElementById('totpSetupModal').classList.add('active');
+  openModal('totpSetupModal');
 
   callApi('authStartTotpSetup', AUTH_TOKEN)
     .withSuccessHandler(function (res) {
@@ -537,7 +477,7 @@ function renderQrCode(otpauthUri) {
 }
 
 function closeTotpSetupModal() {
-  document.getElementById('totpSetupModal').classList.remove('active');
+  closeModal('totpSetupModal');
 }
 
 function doConfirmTotpSetup() {
@@ -582,17 +522,17 @@ function showRecoveryCodes(codes) {
   grid.innerHTML = (codes || []).map(function (c) {
     return '<div class="recovery-code">' + esc(c) + '</div>';
   }).join('');
-  document.getElementById('recoveryModal').classList.add('active');
+  openModal('recoveryModal');
 }
-function closeRecoveryModal() { document.getElementById('recoveryModal').classList.remove('active'); }
+function closeRecoveryModal() { closeModal('recoveryModal'); }
 
 /* ═══ ปิด TOTP ═══ */
 function openDisableTotpModal() {
   document.getElementById('inpDisableTotpPassword').value = '';
   document.getElementById('disableTotpAlert').className = 'alert';
-  document.getElementById('disableTotpModal').classList.add('active');
+  openModal('disableTotpModal');
 }
-function closeDisableTotpModal() { document.getElementById('disableTotpModal').classList.remove('active'); }
+function closeDisableTotpModal() { closeModal('disableTotpModal'); }
 
 function doDisableTotp() {
   var pw = document.getElementById('inpDisableTotpPassword').value;
@@ -671,7 +611,7 @@ function renderLogTable() {
       '<td>' + esc(r.username) + '</td>' +
       '<td><span class="action-chip ' + esc(r.action) + '">' + esc(ACTION_LABEL[r.action] || r.action) + '</span></td>' +
       '<td>' + esc(r.label) + '</td>' +
-      '<td><span class="code-badge" style="font-family:monospace; font-size:11.5px; color:#64748b;">' + esc(r.docId || '-') + '</span></td>' +
+      '<td><span class="chip-code" style="font-family:monospace; font-size:11.5px; color:#64748b;">' + esc(r.docId || '-') + '</span></td>' +
       '<td style="text-align:center;" class="success-icon">' + (r.success ? '✅' : '❌') + '</td>' +
     '</tr>';
   }).join('');

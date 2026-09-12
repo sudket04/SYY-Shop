@@ -1,0 +1,163 @@
+<script>
+/* ═══════════════════════════════════════════════════════════
+   SYY Shop Control — Shared.html  (ฟังก์ชันกลางของทุกหน้า)
+   ใช้: <?!= include('Shared'); ?>  ก่อน </body>
+   ต้องมี SweetAlert2 โหลดไว้แล้วใน <head>
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── escape / format ── */
+function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function num(v){return parseFloat(v)||0;}
+function money(n){return '฿ '+num(n).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function moneyShort(n){
+  n=num(n);
+  if(n>=1000000) return (n/1000000).toFixed(2).replace(/\.00$/,'')+' ล.';
+  if(n>=1000)     return (n/1000).toFixed(0)+' พ.';
+  return n.toLocaleString('th-TH',{maximumFractionDigits:0});
+}
+var TH_MONTHS=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+function thDate(iso,withTime){
+  var d=new Date(iso);
+  if(isNaN(d.getTime())) return iso||'-';
+  var s=d.getDate()+' '+TH_MONTHS[d.getMonth()]+' '+(d.getFullYear()+543);
+  if(withTime) s+=' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  return s;
+}
+
+/* ── Toast: ใช้แทน popup "บันทึกสำเร็จ" ที่ต้องกดตกลง ── */
+function toast(msg,type,ms){
+  var wrap=document.getElementById('toastWrap');
+  if(!wrap){wrap=document.createElement('div');wrap.id='toastWrap';wrap.className='toast-wrap';document.body.appendChild(wrap);}
+  var t=document.createElement('div');
+  t.className='toast '+(type||'ok');
+  var ic=type==='err'?'✕':(type==='warn'?'!':'✓');
+  t.innerHTML='<span class="ic">'+ic+'</span><span>'+esc(msg)+'</span>';
+  wrap.appendChild(t);
+  setTimeout(function(){t.classList.add('out');setTimeout(function(){if(t.parentNode)t.parentNode.removeChild(t);},260);},ms||2800);
+}
+
+/* ── Modal: เปิด/ปิด + ปิดด้วย Esc + คลิกฉากหลัง (ทุกหน้าได้เหมือนกัน) ── */
+var _modalStack=[];
+function openModal(id){
+  var el=document.getElementById(id);
+  if(!el) return;
+  el.classList.add('active');
+  if(_modalStack.indexOf(id)===-1) _modalStack.push(id);
+  var first=el.querySelector('.form-control:not([disabled]),.input:not([disabled])');
+  if(first) setTimeout(function(){first.focus();},60);
+}
+function closeModal(id){
+  var el=document.getElementById(id);
+  if(el) el.classList.remove('active');
+  _modalStack=_modalStack.filter(function(x){return x!==id;});
+}
+function closeTopModal(){
+  if(!_modalStack.length) return;
+  closeModal(_modalStack[_modalStack.length-1]);
+}
+document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeTopModal(); });
+document.addEventListener('click',function(e){
+  if(e.target.classList && e.target.classList.contains('modal-overlay') && e.target.classList.contains('active')){
+    closeModal(e.target.id);
+  }
+});
+
+/* ── Skeleton / Empty state ── */
+function skeletonRows(cols,rows){
+  var out='';
+  for(var r=0;r<(rows||4);r++){
+    out+='<tr>';
+    for(var c=0;c<cols;c++){
+      var w=[70,90,60,50,80][c%5];
+      out+='<td><span class="sk" style="width:'+w+'%"></span></td>';
+    }
+    out+='</tr>';
+  }
+  return out;
+}
+function emptyStateHtml(colspan,opt){
+  opt=opt||{};
+  var ac='';
+  (opt.actions||[]).forEach(function(a){
+    ac+='<button type="button" class="btn '+(a.primary?'btn-primary':'btn-ghost')+'" onclick="'+a.onclick+'">'+esc(a.label)+'</button>';
+  });
+  return '<tr><td colspan="'+colspan+'"><div class="empty-state">'+
+    '<div class="ic">'+(opt.icon||'📭')+'</div>'+
+    '<div class="ti">'+esc(opt.title||'ไม่พบข้อมูล')+'</div>'+
+    (opt.sub?'<div class="su">'+esc(opt.sub)+'</div>':'')+
+    (ac?'<div class="ac">'+ac+'</div>':'')+
+    '</div></td></tr>';
+}
+
+/* ── ปุ่มที่กำลังโหลด ── */
+function btnBusy(el,text){
+  if(!el) return;
+  el.dataset.label=el.innerHTML;
+  el.disabled=true;
+  el.innerHTML='<span class="spinner"></span>'+(text||'กำลังบันทึก...');
+}
+function btnDone(el){
+  if(!el) return;
+  el.disabled=false;
+  if(el.dataset.label) el.innerHTML=el.dataset.label;
+}
+
+/* ── ความหนาแน่นแถว (จำค่าไว้ต่อเบราว์เซอร์) ── */
+function initDensity(){
+  var d=localStorage.getItem('syy_density')||'normal';
+  document.body.setAttribute('data-density',d);
+}
+function toggleDensity(){
+  var d=document.body.getAttribute('data-density')==='compact'?'normal':'compact';
+  document.body.setAttribute('data-density',d);
+  localStorage.setItem('syy_density',d);
+  toast(d==='compact'?'แสดงแบบแน่น':'แสดงแบบสบายตา');
+}
+
+/* ── แจ้ง index ให้รีเฟรชตารางหลัก ── */
+function notifyParentRefresh(){
+  try{ window.parent.postMessage({action:'REFRESH_MAIN_TABLE'},'*'); }catch(e){}
+}
+
+/* ── SweetAlert2 helper (เหลือใช้เฉพาะยืนยัน / error) ── */
+function swySuccess(title,html){
+  return Swal.fire({icon:'success',title:title,html:html||'',confirmButtonText:'ตกลง',
+    customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
+}
+function swyError(title,html){
+  return Swal.fire({icon:'error',title:title,html:html||'',confirmButtonText:'ตกลง',
+    customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn danger'},buttonsStyling:false});
+}
+function swyWarning(title,html){
+  return Swal.fire({icon:'warning',title:title,html:html||'',confirmButtonText:'ตกลง',
+    customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
+}
+function swyConfirm(o){
+  return Swal.fire({
+    icon:o.icon||'question',title:o.title,html:o.html||'',showCancelButton:true,
+    confirmButtonText:o.confirmText||'ยืนยัน',cancelButtonText:o.cancelText||'ยกเลิก',reverseButtons:true,
+    customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',
+      confirmButton:'swy-confirm-btn'+(o.danger?' danger':''),cancelButton:'swy-cancel-btn'},
+    buttonsStyling:false
+  }).then(function(r){return r.isConfirmed;});
+}
+
+/* ── เรียก backend: ผ่าน apiGateway ถ้ามี token (เช็คสิทธิ์ role) ไม่มีก็เรียกตรง ── */
+function callApi(fnName,args,onSuccess,onFailure){
+  var token=(typeof AUTH_TOKEN!=='undefined')?AUTH_TOKEN:'';
+  var runner=google.script.run
+    .withSuccessHandler(function(res){
+      if(res && res.__authError){
+        swyError('เซสชันหมดอายุ','กรุณาเข้าสู่ระบบใหม่').then(function(){
+          if(typeof WEB_APP_URL!=='undefined') window.top.location.href=WEB_APP_URL+'?page=login';
+        });
+        return;
+      }
+      if(onSuccess) onSuccess(res);
+    })
+    .withFailureHandler(onFailure||function(err){ swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err))); });
+
+  if(token) runner.apiGateway(token,fnName,args||[],navigator.userAgent);
+  else runner[fnName].apply(runner,args||[]);
+}
+</script>

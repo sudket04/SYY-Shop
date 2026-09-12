@@ -3,208 +3,116 @@
 <head>
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <?!= include('Styles'); ?>
   <style>
-    :root { --primary: #005088; --primary-dark: #002e52; --bg: #f8fafc; --danger: #dc2626; --danger-hover: #b91c1c; }
-    body { font-family: 'Prompt', sans-serif; background-color: var(--bg); margin: 0; padding: 20px; }
-    .app-container { max-width: 1300px; margin: 0 auto; width: 100%; box-sizing: border-box; }
-    .header-section { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-    h2 { margin: 0; color: var(--primary); font-size: 20px; white-space: nowrap; }
-    .btn-add { background: var(--primary); color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; font-family: 'Prompt', sans-serif; font-size: 14px; display: flex; align-items: center; gap: 8px; white-space: nowrap; transition: background 0.2s; }
-    .btn-add:hover { background: var(--primary-dark); }
-    .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; display: flex; flex-direction: column; }
-    .card-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 5px; }
-    .record-count { font-size: 12px; color: #64748b; font-weight: 600; }
-    .table-container { max-height: 65vh; overflow: auto; border: 1px solid #eef2f5; border-radius: 10px; }
-    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; white-space: nowrap; }
-    th { text-align: left; padding: 12px 14px; background: var(--primary); color: #ffffff; font-weight: 600; position: sticky; top: 0; z-index: 20; white-space: nowrap; }
-    .col-sticky-right { position: sticky; right: 0; z-index: 15; background: #ffffff; box-shadow: -2px 0 4px rgba(0,0,0,0.04); }
-    th.col-sticky-right { z-index: 25; background: var(--primary); }
-    td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: middle; transition: background-color 0.15s ease, color 0.15s ease; }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background-color: #93c5fd !important; color: #00284d !important; }
-    tr:hover td:first-child { border-left: 5px solid var(--primary); }
-    tr:hover .btn-edit-icon, tr:hover .btn-delete-icon, tr:hover .btn-print-icon { transform: scale(1.15); box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
-    tr:hover .btn-edit-icon { background: var(--primary); color: white; }
-    tr:hover .btn-delete-icon { background: var(--danger); color: white; }
-    tr:hover .btn-print-icon { background: #7c3aed; color: white; }
-    .empty-row td { text-align: center; color: #94a3b8; padding: 30px; }
-    .code-badge { font-family: 'Courier New', monospace; font-size: 12px; font-weight: 700; color: #005088; background: #e6f0fa; border: 1px solid #bfdcf5; border-radius: 6px; padding: 3px 8px; display: inline-block; white-space: nowrap; }
-    .amount-cell { font-family: 'Courier New', monospace; font-weight: 700; color: #166534; text-align: right; }
-    .empty-val { color: #cbd5e1; }
-    .action-buttons { display: flex; gap: 6px; justify-content: center; align-items: center; }
-    .btn-edit-icon, .btn-delete-icon, .btn-print-icon { border: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.2s ease; font-size: 13px; }
-    .btn-print-icon { background: #ede9fe; color: #7c3aed; }
-    .btn-edit-icon { background: #e6f0fa; color: #005088; }
-    .btn-delete-icon { background: #fee2e2; color: #dc2626; }
-    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: flex-start; overflow-y: auto; padding: 40px 16px; box-sizing: border-box; z-index: 2000; backdrop-filter: blur(2px); }
-    .modal-overlay.active { display: flex; }
-    .modal-box { background: white; width: 760px; max-width: 96%; border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); overflow: hidden; display: flex; flex-direction: column; animation: modalIn 0.25s ease; }
-    .modal-box.modal-view { width: 900px; }
-    @keyframes modalIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    .modal-header { background: var(--primary); color: white; padding: 16px 24px; font-size: 17px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
-    .modal-close { background: none; border: none; color: white; font-size: 22px; cursor: pointer; line-height: 1; }
-    .modal-body { padding: 24px; }
-    .modal-footer { background: #f8fafc; padding: 14px 24px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-shrink: 0; }
-    .modal-section-label { font-size: 10px; font-weight: 600; color: #94a3b8; letter-spacing: 1.2px; text-transform: uppercase; margin: 16px 0 10px; border-top: 1px solid #f1f5f9; padding-top: 14px; }
-    .modal-section-label:first-child { border-top: none; margin-top: 0; padding-top: 0; }
-    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .form-grid .full { grid-column: 1 / -1; }
-    .form-group { display: flex; flex-direction: column; gap: 5px; }
-    .form-group label { font-size: 13px; font-weight: 600; color: #475569; }
-    .form-control { padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 13px; outline: none; width: 100%; box-sizing: border-box; }
-    .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(0,80,136,0.15); }
-    .form-control:disabled { background: #f1f5f9; color: #64748b; }
-    .field-hint { font-size: 11px; color: #94a3b8; margin-top: -1px; }
-    .seller-info-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px; font-size: 12.5px; color: #1e3a5f; line-height: 1.6; }
-    .seller-info-box b { color: var(--primary); }
-    .btn-save { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; transition: 0.2s; }
-    .btn-save:hover { background: var(--primary-dark); }
-    .btn-save:disabled { background: #cbd5e1; cursor: not-allowed; }
-    .btn-cancel { background: #e2e8f0; color: #475569; border: none; padding: 10px 20px; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; }
-    .btn-cancel:hover { background: #cbd5e1; }
-    .btn-danger-solid { background: var(--danger); color: white; border: none; padding: 10px 20px; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; }
-    .btn-danger-solid:hover { background: var(--danger-hover); }
-    .btn-purple-solid { background: #7c3aed; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; }
-    .btn-purple-solid:hover { background: #6d28d9; }
-    .item-basket-head { display: grid; grid-template-columns: 1fr 70px 100px 120px 110px 36px; gap: 8px; padding: 0 4px 6px; font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; }
-    .item-basket-row { display: grid; grid-template-columns: 1fr 70px 100px 120px 110px 36px; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: 1px solid #f1f5f9; }
-    .item-basket-row .line-total { font-family: 'Courier New', monospace; font-weight: 700; color: #166534; text-align: right; font-size: 13px; }
-    .btn-remove-row { background: #fee2e2; color: #dc2626; border: none; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; }
-    .btn-remove-row:hover { background: #fca5a5; }
-    .btn-add-row { margin-top: 10px; background: #eff6ff; color: #005088; border: 1px dashed #93c5fd; padding: 9px; width: 100%; border-radius: 8px; cursor: pointer; font-weight: 600; font-family: 'Prompt', sans-serif; font-size: 13px; }
-    .btn-add-row:hover { background: #dbeafe; }
-    .totals-box { margin-top: 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; }
-    .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13.5px; color: #475569; }
-    .totals-row.grand { border-top: 2px solid #e2e8f0; margin-top: 6px; padding-top: 10px; font-size: 16px; font-weight: 700; color: var(--primary); }
-    .totals-row .val { font-family: 'Courier New', monospace; font-weight: 700; }
-    .modal-alert { display: none; margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
-    .modal-alert.success { display: block; background: #dcfce7; color: #166534; }
-    .modal-alert.error { display: block; background: #fee2e2; color: #991b1b; }
-    .print-sheet { background: #fff; border: 2px solid var(--primary); padding: 18px 22px; font-size: 13px; color: #1e293b; }
-    .print-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 6px; }
-    .print-logo { width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-    .print-logo img { width: 100%; height: 100%; object-fit: contain; }
-    .print-head-center { flex: 1; text-align: center; }
-    .print-doc-title { font-weight: 700; font-size: 15px; }
-    .print-company-name { font-weight: 700; font-size: 13.5px; margin-top: 2px; }
-    .print-company-line { font-size: 12px; margin-top: 1px; }
-    .print-no-box { font-weight: 700; font-size: 13px; white-space: nowrap; }
-    .print-meta-row { display: flex; justify-content: flex-end; margin: 8px 0 4px; font-size: 13px; }
-    .print-parties { border-top: 2px solid var(--primary); border-bottom: 1px solid #94a3b8; padding: 6px 0; margin-bottom: 4px; font-size: 13px; }
-    .print-parties .row { display: flex; gap: 6px; padding: 2px 0; }
-    .print-parties .row b { flex-shrink: 0; }
-    .print-items-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 4px; }
-    .print-items-table th { position: static; background: transparent; color: #1e293b; border-bottom: 2px solid var(--primary); border-top: none; text-align: center; padding: 6px 8px; font-weight: 700; }
-    .print-items-table td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
-    .print-items-table tbody tr td { height: 22px; }
-    .print-items-table .col-no { width: 40px; text-align: center; }
-    .print-items-table .col-qty { width: 55px; text-align: center; }
-    .print-items-table .col-unit { width: 55px; text-align: center; }
-    .print-items-table .col-price { width: 100px; text-align: right; }
-    .print-items-table .col-amount { width: 110px; text-align: right; font-weight: 600; }
-    .print-totals-row { display: flex; justify-content: space-between; border-top: 2px solid var(--primary); padding-top: 6px; margin-top: 2px; }
-    .print-baht-text { font-weight: 700; }
-    .print-totals-table { text-align: right; font-size: 13px; }
-    .print-totals-table .line { display: flex; justify-content: space-between; gap: 30px; padding: 1px 0; }
-    .print-totals-table .line.grand { font-weight: 700; border-top: 1px solid #94a3b8; margin-top: 3px; padding-top: 3px; }
-    .print-sign-row { margin-top: 30px; text-align: center; font-size: 13px; }
-    @media print {
-      body * { visibility: hidden; }
-      #printArea, #printArea * { visibility: visible; }
-      #printArea { position: absolute; top: 0; left: 0; width: 100%; }
-      .print-sheet { border: none; }
-      @page { size: A4; margin: 10mm; }
-    }
-    @media (max-width: 767px) {
-      body { padding: 10px; }
-      .app-container { max-width: 100%; }
-      .header-section { flex-direction: column; align-items: stretch; }
-      .btn-add { width: 100%; justify-content: center; }
-      .card { padding: 12px; }
-      table { font-size: 12px; }
-      td, th { padding: 8px; }
-      .modal-body { padding: 16px; }
-      .form-grid { grid-template-columns: 1fr; }
-      .item-basket-head { display: none; }
-      .item-basket-row { grid-template-columns: 1fr; gap: 4px; padding: 10px 8px; background: #f8fafc; border-radius: 8px; margin-bottom: 8px; border-bottom: none; }
-      .item-basket-row .btn-remove-row { justify-self: end; }
-      .modal-box.modal-view { width: 96%; }
-      .print-sheet { font-size: 11px; padding: 12px; }
-    }
-
-    /* ═══ Tabs ═══ */
-    .tab-bar { display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 2px solid #e2e8f0; }
-    .tab-btn {
-      background: transparent; border: none; padding: 10px 20px; cursor: pointer;
-      font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; color: #64748b;
-      border-bottom: 3px solid transparent; margin-bottom: -2px; transition: 0.2s;
-    }
-    .tab-btn:hover { color: var(--primary); }
-    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
-
-    /* ═══ Dashboard ═══ */
-    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
-    .stat-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-    /* ★ การ์ด/รายการที่คลิกดูรายละเอียดได้ — มี hover บอกให้ผู้ใช้รู้ว่ากดได้ */
-    .stat-card.clickable, .top-list li.clickable { cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease; }
-    .stat-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,80,136,0.15); }
-    .top-list li.clickable:hover { background: #f0f7ff; border-radius: 6px; }
-    .stat-card.clickable::after { content: '›'; float: right; color: #cbd5e1; font-size: 20px; font-weight: 700; line-height: 1; margin-top: -4px; }
-    .drill-hint { font-size: 10px; color: #94a3b8; margin-top: 6px; }
-    .btn-icon { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 13px; line-height: 1; }
-    .btn-icon:hover { background: #dbeafe; }
-    .stat-label { font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 6px; }
-    .stat-value { font-size: 24px; font-weight: 700; color: var(--primary); font-family: 'Courier New', monospace; }
-    .stat-sub { font-size: 11px; color: #94a3b8; margin-top: 4px; }
-    .stat-card.green .stat-value { color: #166534; }
-    .stat-card.orange .stat-value { color: #b45309; }
-    .stat-card.purple .stat-value { color: #7c3aed; }
-
-    .chart-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 18px; }
-    .chart-title { font-size: 15px; font-weight: 600; color: #1e293b; margin-bottom: 4px; }
-    .chart-sub { font-size: 12px; color: #94a3b8; margin-bottom: 14px; }
-    .chart-empty { text-align: center; color: #94a3b8; padding: 40px; font-size: 13px; }
-
-    .top-list { list-style: none; padding: 0; margin: 0; }
-    .top-list li { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
-    .top-list li:last-child { border-bottom: none; }
-    .top-rank { width: 24px; height: 24px; border-radius: 50%; background: #e6f0fa; color: var(--primary); font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-    .top-name { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .top-amount { font-family: 'Courier New', monospace; font-weight: 700; color: #166534; white-space: nowrap; }
-
-    .dash-filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
-    .dash-filter select { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Prompt', sans-serif; font-size: 13px; }
-
-    /* ═══ Validation error ═══ */
-    .form-control.is-invalid { border-color: var(--danger) !important; background: #fef2f2; }
-    .field-error { font-size: 11px; color: var(--danger); margin-top: 2px; display: none; }
-    .field-error.show { display: block; }
-    .item-basket-row.is-invalid { background: #fef2f2; border-radius: 6px; }
-
-    /* ═══ A4 Print ═══ */
-    .a4-page {
-      width: 210mm; min-height: 297mm; margin: 0 auto 16px; background: #fff;
-      padding: 12mm 12mm; box-sizing: border-box; box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-      font-size: 13px; color: #1e293b; position: relative;
-    }
-    .a4-page + .a4-page { page-break-before: always; }
-    .a4-foot-note { position: absolute; bottom: 8mm; left: 12mm; right: 12mm; font-size: 11px; color: #64748b; display: flex; justify-content: space-between; border-top: 1px solid #cbd5e1; padding-top: 4px; }
-
-    @media print {
-      body * { visibility: hidden; }
-      #printArea, #printArea * { visibility: visible; }
-      #printArea { position: absolute; top: 0; left: 0; width: 100%; }
-      .a4-page { width: auto; min-height: auto; margin: 0; padding: 0; box-shadow: none; page-break-after: always; }
-      .a4-page:last-child { page-break-after: auto; }
-      .print-items-table thead { display: table-header-group; }
-      .print-items-table tr { page-break-inside: avoid; }
-      @page { size: A4 portrait; margin: 12mm; }
-    }
+  /* ─── เฉพาะหน้านี้: ตะกร้ารายการ, ใบพิมพ์/PDF, แท็บ, แดชบอร์ด (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
+  .modal-box{width:760px}
+  .modal-box.modal-view{width:900px}
+  .amount-cell{font-family:'Courier New',monospace;font-weight:700;color:#166534;text-align:right}
+  .seller-info-box{background:var(--info-bg);border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;font-size:12.5px;color:#1e3a5f;line-height:1.6}
+  .seller-info-box b{color:var(--primary)}
+  .btn-danger-solid{background:var(--danger);color:#fff;border:none;padding:10px 20px;border-radius:6px;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;cursor:pointer}
+  .btn-danger-solid:hover{background:var(--danger-dark)}
+  .btn-purple-solid{background:#7c3aed;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;cursor:pointer}
+  .btn-purple-solid:hover{background:#6d28d9}
+  .btn-icon.print{background:#ede9fe;color:#7c3aed}
+  .btn-icon.print:hover{background:#7c3aed;color:#fff}
+  .btn-icon-sm{background:var(--info-bg);border:1px solid #bfdbfe;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:13px;line-height:1}
+  .btn-icon-sm:hover{background:#dbeafe}
+  .item-basket-head{display:grid;grid-template-columns:1fr 70px 100px 120px 110px 36px;gap:8px;padding:0 4px 6px;font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+  .item-basket-row{display:grid;grid-template-columns:1fr 70px 100px 120px 110px 36px;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--line-soft)}
+  .item-basket-row .line-total{font-family:'Courier New',monospace;font-weight:700;color:#166534;text-align:right;font-size:13px}
+  .item-basket-row.is-invalid{background:#fef2f2;border-radius:6px}
+  .btn-remove-row{background:#fee2e2;color:#dc2626;border:none;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .btn-remove-row:hover{background:#fca5a5}
+  .btn-add-row{margin-top:10px;background:var(--info-bg);color:var(--primary);border:1px dashed #93c5fd;padding:9px;width:100%;border-radius:8px;cursor:pointer;font-weight:600;font-family:'Prompt',sans-serif;font-size:13px}
+  .btn-add-row:hover{background:#dbeafe}
+  .totals-box{margin-top:14px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .totals-row{display:flex;justify-content:space-between;padding:4px 0;font-size:13.5px;color:#475569}
+  .totals-row.grand{border-top:2px solid var(--line);margin-top:6px;padding-top:10px;font-size:16px;font-weight:700;color:var(--primary)}
+  .totals-row .val{font-family:'Courier New',monospace;font-weight:700}
+  .print-sheet{background:#fff;border:2px solid var(--primary);padding:18px 22px;font-size:13px;color:#1e293b}
+  .print-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:6px}
+  .print-logo{width:70px;height:70px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .print-logo img{width:100%;height:100%;object-fit:contain}
+  .print-head-center{flex:1;text-align:center}
+  .print-doc-title{font-weight:700;font-size:15px}
+  .print-company-name{font-weight:700;font-size:13.5px;margin-top:2px}
+  .print-company-line{font-size:12px;margin-top:1px}
+  .print-no-box{font-weight:700;font-size:13px;white-space:nowrap}
+  .print-meta-row{display:flex;justify-content:flex-end;margin:8px 0 4px;font-size:13px}
+  .print-parties{border-top:2px solid var(--primary);border-bottom:1px solid #94a3b8;padding:6px 0;margin-bottom:4px;font-size:13px}
+  .print-parties .row{display:flex;gap:6px;padding:2px 0}
+  .print-parties .row b{flex-shrink:0}
+  .print-items-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+  .print-items-table th{position:static;background:transparent;color:#1e293b;border-bottom:2px solid var(--primary);border-top:none;text-align:center;padding:6px 8px;font-weight:700}
+  .print-items-table td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  .print-items-table tbody tr td{height:22px}
+  .print-items-table .col-no{width:40px;text-align:center}
+  .print-items-table .col-qty{width:55px;text-align:center}
+  .print-items-table .col-unit{width:55px;text-align:center}
+  .print-items-table .col-price{width:100px;text-align:right}
+  .print-items-table .col-amount{width:110px;text-align:right;font-weight:600}
+  .print-totals-row{display:flex;justify-content:space-between;border-top:2px solid var(--primary);padding-top:6px;margin-top:2px}
+  .print-baht-text{font-weight:700}
+  .print-totals-table{text-align:right;font-size:13px}
+  .print-totals-table .line{display:flex;justify-content:space-between;gap:30px;padding:1px 0}
+  .print-totals-table .line.grand{font-weight:700;border-top:1px solid #94a3b8;margin-top:3px;padding-top:3px}
+  .print-sign-row{margin-top:30px;text-align:center;font-size:13px}
+  .tab-bar{display:flex;gap:6px;margin-bottom:16px;border-bottom:2px solid var(--line)}
+  .tab-btn{background:transparent;border:none;padding:10px 20px;cursor:pointer;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
+  .tab-btn:hover{color:var(--primary)}
+  .tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .stat-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+  .stat-card.clickable,.top-list li.clickable{cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+  .stat-card.clickable:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,80,136,.15)}
+  .top-list li.clickable:hover{background:#f0f7ff;border-radius:6px}
+  .stat-card.clickable::after{content:'›';float:right;color:#cbd5e1;font-size:20px;font-weight:700;line-height:1;margin-top:-4px}
+  .drill-hint{font-size:10px;color:var(--faint);margin-top:6px}
+  .stat-label{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
+  .stat-value{font-size:24px;font-weight:700;color:var(--primary);font-family:'Courier New',monospace}
+  .stat-sub{font-size:11px;color:var(--faint);margin-top:4px}
+  .stat-card.green .stat-value{color:#166534}
+  .stat-card.orange .stat-value{color:#b45309}
+  .stat-card.purple .stat-value{color:#7c3aed}
+  .chart-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;box-shadow:var(--shadow);margin-bottom:18px}
+  .chart-title{font-size:15px;font-weight:600;color:#1e293b;margin-bottom:4px}
+  .chart-sub{font-size:12px;color:var(--faint);margin-bottom:14px}
+  .chart-empty{text-align:center;color:var(--faint);padding:40px;font-size:13px}
+  .top-list{list-style:none;padding:0;margin:0}
+  .top-list li{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-soft);font-size:13px}
+  .top-list li:last-child{border-bottom:none}
+  .top-rank{width:24px;height:24px;border-radius:50%;background:var(--primary-soft);color:var(--primary);font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .top-name{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top-amount{font-family:'Courier New',monospace;font-weight:700;color:#166534;white-space:nowrap}
+  .dash-filter{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .dash-filter select{padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Prompt',sans-serif;font-size:13px}
+  .a4-page{width:210mm;min-height:297mm;margin:0 auto 16px;background:#fff;padding:12mm;box-sizing:border-box;box-shadow:0 2px 12px rgba(0,0,0,.15);font-size:13px;color:#1e293b;position:relative}
+  .a4-page + .a4-page{page-break-before:always}
+  .a4-foot-note{position:absolute;bottom:8mm;left:12mm;right:12mm;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;border-top:1px solid #cbd5e1;padding-top:4px}
+  @media print{
+    body *{visibility:hidden}
+    #printArea, #printArea *{visibility:visible}
+    #printArea{position:absolute;top:0;left:0;width:100%}
+    .print-sheet{border:none}
+    .a4-page{width:auto;min-height:auto;margin:0;padding:0;box-shadow:none;page-break-after:always}
+    .a4-page:last-child{page-break-after:auto}
+    .print-items-table thead{display:table-header-group}
+    .print-items-table tr{page-break-inside:avoid}
+    @page{size:A4;margin:10mm}
+  }
+  @media (max-width:767px){
+    .item-basket-head{display:none}
+    .item-basket-row{grid-template-columns:1fr;gap:4px;padding:10px 8px;background:var(--bg);border-radius:8px;margin-bottom:8px;border-bottom:none}
+    .item-basket-row .btn-remove-row{justify-self:end}
+    .modal-box.modal-view{width:96%}
+    .print-sheet{font-size:11px;padding:12px}
+  }
   </style>
 </head>
 <body>
@@ -214,12 +122,12 @@
     <div class="modal-box">
       <div class="modal-header">
         <span id="modalTitle">🧾 เพิ่มใบกำกับภาษี</span>
-        <button class="modal-close" onclick="closeModal()">&times;</button>
+        <button class="modal-close" onclick="closeInvoiceModal()">&times;</button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="modalDocId">
 
-        <div class="modal-section-label">ข้อมูลใบกำกับภาษี</div>
+        <div class="section-label">ข้อมูลใบกำกับภาษี</div>
         <div class="form-grid">
           <div class="form-group">
             <label>เลขที่ใบกำกับภาษี</label>
@@ -233,10 +141,10 @@
           </div>
         </div>
 
-        <div class="modal-section-label">ผู้ขาย (ร้านของเรา)</div>
+        <div class="section-label">ผู้ขาย (ร้านของเรา)</div>
         <div class="seller-info-box" id="sellerInfoBox"></div>
 
-        <div class="modal-section-label">ผู้ซื้อ (ลูกค้า)</div>
+        <div class="section-label">ผู้ซื้อ (ลูกค้า)</div>
         <div class="form-grid">
           <div class="form-group full">
             <label>เลือกลูกค้าที่มีอยู่แล้ว</label>
@@ -244,7 +152,7 @@
               <select id="modalCustomerSelect" class="form-control" onchange="onCustomerSelect()" style="flex:1;">
                 <option value="">-- ลูกค้าใหม่ / ลูกค้าขาจร --</option>
               </select>
-              <button type="button" class="btn-save" style="background:#16a34a; white-space:nowrap; padding:9px 14px;" onclick="openQuickAddCustomer()">➕ เพิ่มลูกค้า</button>
+              <button type="button" class="btn btn-primary" style="background:#16a34a; white-space:nowrap; padding:9px 14px;" onclick="openQuickAddCustomer()">➕ เพิ่มลูกค้า</button>
             </div>
             <span class="field-hint">เลือกแล้วระบบจะเติมชื่อ/ที่อยู่/เลขผู้เสียภาษีให้อัตโนมัติ (แก้ไขต่อได้) หรือกด "เพิ่มลูกค้า" เพื่อเพิ่มลูกค้าใหม่เข้าระบบทันที</span>
           </div>
@@ -268,7 +176,7 @@
           </div>
         </div>
 
-        <div class="modal-section-label">รายการสินค้า / บริการ</div>
+        <div class="section-label">รายการสินค้า / บริการ</div>
         <div class="item-basket-head">
           <span>รายการ</span><span>จำนวน</span><span>หน่วยนับ</span><span>ราคา/หน่วย</span><span>รวม (บาท)</span><span></span>
         </div>
@@ -291,7 +199,7 @@
           <div class="totals-row grand"><span>ยอดรวมสุทธิ</span><span class="val" id="calcTotal">0.00</span></div>
         </div>
 
-        <div class="modal-section-label">หมายเหตุ</div>
+        <div class="section-label">หมายเหตุ</div>
         <div class="form-group">
           <textarea id="modalNote" class="form-control" rows="2" placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"></textarea>
         </div>
@@ -301,8 +209,8 @@
       <div class="modal-footer">
         <span></span>
         <div style="display:flex; gap:10px;">
-          <button class="btn-cancel" onclick="closeModal()">ยกเลิก</button>
-          <button class="btn-save" id="modalBtnSave" onclick="handleSubmit()">💾 บันทึก</button>
+          <button class="btn btn-ghost" onclick="closeInvoiceModal()">ยกเลิก</button>
+          <button class="btn btn-primary" id="modalBtnSave" onclick="handleSubmit()">💾 บันทึก</button>
         </div>
       </div>
     </div>
@@ -317,7 +225,7 @@
       </div>
       <div class="modal-body">
         <div id="drillSummary" style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:12px 16px; margin-bottom:14px; font-size:13px; color:#1e3a5f;"></div>
-        <div class="table-container" style="max-height:52vh;">
+        <div class="table-wrap" style="max-height:52vh;">
           <table>
             <colgroup>
               <col style="width:50px;"><col style="width:150px;"><col style="width:120px;">
@@ -339,7 +247,7 @@
       </div>
       <div class="modal-footer">
         <span style="font-size:12px; color:#64748b;" id="drillFooterInfo"></span>
-        <button class="btn-cancel" onclick="closeDrillModal()">ปิด</button>
+        <button class="btn btn-ghost" onclick="closeDrillModal()">ปิด</button>
       </div>
     </div>
   </div>
@@ -357,8 +265,8 @@
       <div class="modal-footer">
         <span style="font-size:12px; color:#64748b;" id="printPageInfo"></span>
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn-cancel" onclick="closeViewModal()">ปิด</button>
-          <button class="btn-cancel" style="background:#dcfce7; color:#166534;" onclick="downloadInvoiceFile()">⬇️ ดาวน์โหลด PDF</button>
+          <button class="btn btn-ghost" onclick="closeViewModal()">ปิด</button>
+          <button class="btn btn-ghost" style="background:#dcfce7; color:#166534;" onclick="downloadInvoiceFile()">⬇️ ดาวน์โหลด PDF</button>
           <button class="btn-purple-solid" onclick="window.print()">🖨️ สั่งพิมพ์ (A4)</button>
         </div>
       </div>
@@ -389,7 +297,7 @@
             <span class="field-error" id="err_qcTaxId">เลขผู้เสียภาษีต้องมี 13 หลัก หรือเว้นว่างไว้</span>
           </div>
         </div>
-        <div class="modal-section-label">ที่อยู่ (มาตรฐาน)</div>
+        <div class="section-label">ที่อยู่ (มาตรฐาน)</div>
         <div class="form-grid">
           <div class="form-group">
             <label>เลขที่</label>
@@ -435,8 +343,8 @@
       <div class="modal-footer">
         <span></span>
         <div style="display:flex; gap:10px;">
-          <button class="btn-cancel" onclick="closeQuickAddCustomer()">ยกเลิก</button>
-          <button class="btn-save" id="qcBtnSave" onclick="submitQuickAddCustomer()">💾 บันทึกลูกค้า</button>
+          <button class="btn btn-ghost" onclick="closeQuickAddCustomer()">ยกเลิก</button>
+          <button class="btn btn-primary" id="qcBtnSave" onclick="submitQuickAddCustomer()">💾 บันทึกลูกค้า</button>
         </div>
       </div>
     </div>
@@ -456,19 +364,22 @@
       <div class="modal-footer">
         <span></span>
         <div style="display:flex; gap:10px;">
-          <button class="btn-cancel" onclick="closeDeleteModal()">ยกเลิก</button>
+          <button class="btn btn-ghost" onclick="closeDeleteModal()">ยกเลิก</button>
           <button class="btn-danger-solid" id="btnConfirmDelete" onclick="execDelete()">ลบข้อมูล</button>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="app-container">
-    <div class="header-section">
-      <h2>🧾 จัดการใบกำกับภาษี (Master Tax Invoice)</h2>
-      <button class="btn-add" onclick="openAddModal()">➕ เพิ่มใบกำกับภาษี</button>
+  <div class="page-head">
+    <div class="crumb"><span>เอกสาร</span><span class="sep">›</span><b>ใบกำกับภาษี</b></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
+      <button class="btn btn-primary" onclick="openAddModal()">➕ เพิ่มใบกำกับภาษี</button>
     </div>
+  </div>
 
+  <div class="page-body">
     <div class="tab-bar" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div style="display:flex; gap:6px;">
         <button class="tab-btn active" id="tabBtnList" onclick="switchTab('list')">📋 รายการใบกำกับภาษี</button>
@@ -486,14 +397,14 @@
     <!-- ═══ TAB: รายการ ═══ -->
     <div class="tab-panel active" id="panelList">
       <div class="card">
-        <div class="card-toolbar">
-          <span class="record-count" id="recordCount">กำลังโหลด...</span>
+        <div class="toolbar">
+          <span class="count" id="recordCount">กำลังโหลด...</span>
         </div>
         <div class="xlf-filter-summary" id="xlfSummary">
           <span id="xlfSummaryText"></span>
           <button type="button" onclick="XLF.clearAll('tax'); renderRows();">ล้างตัวกรองทั้งหมด</button>
         </div>
-        <div class="table-container">
+        <div class="table-wrap">
           <table>
             <colgroup>
               <col style="width: 50px;"><col style="width: 140px;"><col style="width: 110px;">
@@ -537,365 +448,13 @@
       </div>
     </div>
   </div>
-<style>
-/* ═══ XLFILTER — สไตล์ปุ่ม/หัวคอลัมน์/dropdown filter แบบ Excel ═══ */
-th.xlf-th {
-  position: sticky;
-  padding-right: 34px !important;
-}
-.xlf-th-label { white-space: nowrap; }
-.xlf-th-btn {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 26px;
-  height: 26px;
-  border: none;
-  background: rgba(255,255,255,.12);
-  color: rgba(255,255,255,.85);
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  border-radius: 5px;
-  line-height: 1;
-  padding: 0;
-}
-.xlf-th-btn:hover { background: rgba(255,255,255,.28); color: #fff; }
-.xlf-th-btn.active { background: rgba(255,255,255,.95); color: #005088; font-weight: 700; }
-.xlf-th-btn.active::after {
-  content: '';
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #005088;
-}
-.xlf-popover {
-  position: absolute; z-index: 3000; width: 240px; max-height: 440px;
-  display: flex; flex-direction: column; overflow: hidden;
-  background: #fff; border: 1px solid #cbd5e1; border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(15,23,42,.18); padding: 8px; font-family: 'Prompt', sans-serif; font-size: 13px;
-}
-.xlf-sort-btn {
-  display: block; width: 100%; text-align: left; background: transparent; border: none;
-  padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: #1e293b;
-  font-family: 'Prompt', sans-serif; flex-shrink: 0;
-}
-.xlf-sort-btn:hover { background: #f1f5f9; }
-.xlf-divider { height: 1px; background: #e2e8f0; margin: 6px 0; flex-shrink: 0; }
-.xlf-search {
-  width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #cbd5e1;
-  border-radius: 6px; font-size: 13px; font-family: 'Prompt', sans-serif; margin-bottom: 6px; flex-shrink: 0;
-}
-.xlf-search:focus { outline: none; border-color: #005088; box-shadow: 0 0 0 2px rgba(0,80,136,.15); }
-.xlf-selectall-row { padding: 4px 8px 6px; border-bottom: 1px solid #e2e8f0; margin-bottom: 4px; flex-shrink: 0; }
-.xlf-selectall-row label, .xlf-item {
-  display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: #334155;
-}
-.xlf-list { flex: 1 1 auto; overflow-y: auto; min-height: 60px; }
-.xlf-item { padding: 5px 8px; border-radius: 6px; }
-.xlf-item:hover { background: #f1f5f9; }
-.xlf-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.xlf-actions {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; flex-shrink: 0;
-}
-.xlf-btn-clear {
-  background: transparent; border: none; color: #64748b; font-size: 12px; cursor: pointer;
-  text-decoration: underline; padding: 4px 2px; font-family: 'Prompt', sans-serif;
-}
-.xlf-btn-ok {
-  background: #005088; color: #fff; border: none; border-radius: 6px; padding: 7px 16px;
-  font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Prompt', sans-serif;
-}
-.xlf-btn-ok:hover { background: #003d68; }
-@media (max-width: 640px) { .xlf-popover { width: min(280px, calc(100vw - 24px)); } }
-</style>
 
 <?!= include('ThaiAddressData'); ?>
+<?!= include('XLFilter'); ?>
+<?!= include('Shared'); ?>
 <script>
-var XLF = (function () {
-  var state = {};
-
-  function ensure(key) {
-    if (!state[key]) state[key] = { filters: {}, sortCol: null, sortAsc: true, colType: {} };
-    return state[key];
-  }
-
-  function escHtml(v) {
-    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function detectColType(rows, col) {
-    var sample = rows.slice(0, 30).map(function (r) { return r[col]; }).filter(function (v) { return v !== '' && v != null; });
-    if (!sample.length) return 'text';
-    var allNum = sample.every(function (v) { return !isNaN(parseFloat(v)) && isFinite(v); });
-    return allNum ? 'number' : 'text';
-  }
-
-  function compareVals(a, b, type, asc) {
-    var va = a, vb = b;
-    if (type === 'number') {
-      va = parseFloat(a) || 0; vb = parseFloat(b) || 0;
-    } else {
-      va = String(a == null ? '' : a).toLowerCase();
-      vb = String(b == null ? '' : b).toLowerCase();
-    }
-    if (va < vb) return asc ? -1 : 1;
-    if (va > vb) return asc ? 1 : -1;
-    return 0;
-  }
-
-  function apply(key, rows, colDefs) {
-    var st = ensure(key);
-    colDefs.forEach(function (cd) {
-      if (!st.colType[cd.col]) {
-        st.colType[cd.col] = (cd.type && cd.type !== 'auto') ? cd.type : detectColType(rows, cd.col);
-      }
-    });
-
-    var result = rows.filter(function (row) {
-      for (var col in st.filters) {
-        var allowed = st.filters[col];
-        if (!allowed || !allowed.size) continue;
-        var v = row[col] == null || row[col] === '' ? '(ว่าง)' : String(row[col]);
-        if (!allowed.has(v)) return false;
-      }
-      return true;
-    });
-
-    if (st.sortCol) {
-      var type = st.colType[st.sortCol] || 'text';
-      result.sort(function (a, b) { return compareVals(a[st.sortCol], b[st.sortCol], type, st.sortAsc); });
-    }
-    return result;
-  }
-
-  function uniqueValues(rows, col) {
-    var seen = {};
-    var out = [];
-    rows.forEach(function (row) {
-      var v = row[col] == null || row[col] === '' ? '(ว่าง)' : String(row[col]);
-      if (!seen[v]) { seen[v] = true; out.push(v); }
-    });
-    out.sort(function (a, b) { return a.localeCompare(b, 'th'); });
-    return out;
-  }
-
-  function hasActiveFilter(key, col) {
-    var st = ensure(key);
-    return !!(st.filters[col] && st.filters[col].size > 0);
-  }
-
-  function anyActiveFilter(key) {
-    var st = ensure(key);
-    return Object.keys(st.filters).some(function (c) { return st.filters[c] && st.filters[c].size > 0; });
-  }
-
-  function clearAll(key) {
-    var st = ensure(key);
-    st.filters = {};
-    st.sortCol = null;
-    st.sortAsc = true;
-  }
-
-  var openPopoverEl = null;
-  var outsideClickHandler = null;
-
-  function closePopover() {
-    if (openPopoverEl && openPopoverEl.parentNode) openPopoverEl.parentNode.removeChild(openPopoverEl);
-    if (outsideClickHandler) {
-      document.removeEventListener('click', outsideClickHandler);
-      outsideClickHandler = null;
-    }
-    openPopoverEl = null;
-  }
-
-  function openFilterPopover(anchorBtn, key, col, rows, onChange) {
-    var wasOpenForThis = openPopoverEl && openPopoverEl.dataset.col === col && openPopoverEl.dataset.key === key;
-    closePopover();
-    if (wasOpenForThis) return;
-
-    var st = ensure(key);
-    var type = st.colType[col] || 'text';
-
-    // ★ FIX: คำนวณตัวเลือกจากแถวที่ผ่านการกรองของทุกคอลัมน์อื่นแล้ว (ไม่รวมคอลัมน์ตัวเอง)
-    //   เพื่อให้ dropdown แสดงเฉพาะค่าที่ยังมีอยู่จริงในผลลัพธ์ปัจจุบัน (Excel-style cascading filter)
-    var contextRows = rows.filter(function (row) {
-      for (var otherCol in st.filters) {
-        if (otherCol === col) continue;
-        var allowed = st.filters[otherCol];
-        if (!allowed || !allowed.size) continue;
-        var v = row[otherCol] == null || row[otherCol] === '' ? '(ว่าง)' : String(row[otherCol]);
-        if (!allowed.has(v)) return false;
-      }
-      return true;
-    });
-
-    var allValues = uniqueValues(contextRows, col);
-    var currentAllowed = st.filters[col];
-    var checkedSet = currentAllowed ? new Set(currentAllowed) : new Set(allValues);
-
-    var pop = document.createElement('div');
-    pop.className = 'xlf-popover';
-    pop.dataset.col = col;
-    pop.dataset.key = key;
-
-    var sortLabelAsc  = type === 'number' ? 'เรียงน้อย → มาก' : 'เรียง ก → ฮ';
-    var sortLabelDesc = type === 'number' ? 'เรียงมาก → น้อย' : 'เรียง ฮ → ก';
-
-    pop.innerHTML =
-      '<button type="button" class="xlf-sort-btn" data-dir="asc">▲ ' + sortLabelAsc + '</button>' +
-      '<button type="button" class="xlf-sort-btn" data-dir="desc">▼ ' + sortLabelDesc + '</button>' +
-      '<div class="xlf-divider"></div>' +
-      '<input type="text" class="xlf-search" placeholder="ค้นหาค่า...">' +
-      '<div class="xlf-selectall-row">' +
-        '<label><input type="checkbox" class="xlf-check-all" checked> เลือกทั้งหมด</label>' +
-      '</div>' +
-      '<div class="xlf-list"></div>' +
-      '<div class="xlf-actions">' +
-        '<button type="button" class="xlf-btn-clear">ล้างตัวกรองนี้</button>' +
-        '<button type="button" class="xlf-btn-ok">ตกลง</button>' +
-      '</div>';
-
-    document.body.appendChild(pop);
-    openPopoverEl = pop;
-
-    var listEl = pop.querySelector('.xlf-list');
-    function renderList(filterText) {
-      var ft = (filterText || '').toLowerCase();
-      listEl.innerHTML = '';
-      allValues.filter(function (v) { return v.toLowerCase().indexOf(ft) > -1; })
-        .forEach(function (v) {
-          var row = document.createElement('label');
-          row.className = 'xlf-item';
-          var cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.checked = checkedSet.has(v);
-          cb.addEventListener('change', function () {
-            if (cb.checked) checkedSet.add(v); else checkedSet.delete(v);
-            syncCheckAll();
-          });
-          var span = document.createElement('span');
-          span.textContent = v;
-          row.appendChild(cb);
-          row.appendChild(span);
-          listEl.appendChild(row);
-        });
-    }
-    function syncCheckAll(filterText) {
-      var ft = (filterText || '').toLowerCase();
-      var visible = allValues.filter(function (v) { return v.toLowerCase().indexOf(ft) > -1; });
-      var allEl = pop.querySelector('.xlf-check-all');
-      allEl.checked = visible.length > 0 && visible.every(function (v) { return checkedSet.has(v); });
-    }
-    renderList('');
-    syncCheckAll('');
-
-    pop.querySelector('.xlf-search').addEventListener('input', function (e) { renderList(e.target.value); syncCheckAll(e.target.value); });
-    pop.querySelector('.xlf-check-all').addEventListener('change', function (e) {
-      var ft = pop.querySelector('.xlf-search').value.toLowerCase();
-      var visible = allValues.filter(function (v) { return v.toLowerCase().indexOf(ft) > -1; });
-      if (e.target.checked) visible.forEach(function (v) { checkedSet.add(v); });
-      else visible.forEach(function (v) { checkedSet.delete(v); });
-      renderList(pop.querySelector('.xlf-search').value);
-    });
-    pop.querySelectorAll('.xlf-sort-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        st.sortCol = col;
-        st.sortAsc = btn.dataset.dir === 'asc';
-        closePopover();
-        onChange();
-      });
-    });
-    pop.querySelector('.xlf-btn-clear').addEventListener('click', function () {
-      delete st.filters[col];
-      closePopover();
-      onChange();
-    });
-    pop.querySelector('.xlf-btn-ok').addEventListener('click', function () {
-      // ★ FIX (v2): ตัดสาเหตุที่แท้จริง — ถ้ายังไม่เคยมี filter ในคอลัมน์นี้มาก่อน (currentAllowed เป็น null)
-      //   checkedSet เริ่มต้นจะเท่ากับ "ทุกค่าทั้งคอลัมน์" (allValues) ซึ่งรวมค่าที่ไม่เคยปรากฏให้ผู้ใช้เห็นเลย
-      //   ถ้าผู้ใช้ค้นหาแล้ว uncheck แค่บางตัวที่เห็น ค่าที่เหลือทั้งหมด (ที่ไม่เคยเห็น) จะยังติด checked อยู่
-      //   วิธีแก้: ใช้ค่าที่ปรากฏจริงในลิสต์ปัจจุบัน (ทุกตัวที่เคย/กำลังมองเห็นระหว่างเปิด popover นี้) เป็นขอบเขตหลัก
-      var currentSearchText = pop.querySelector('.xlf-search').value.trim().toLowerCase();
-      var visibleScope = currentSearchText
-        ? allValues.filter(function (v) { return String(v).toLowerCase().indexOf(currentSearchText) > -1; })
-        : allValues;
-
-      // ค่าที่ถูกติ๊กไว้ "ภายในขอบเขตที่เห็นตอนนี้"
-      var checkedInVisible = visibleScope.filter(function (v) { return checkedSet.has(v); });
-
-      // ค่าที่เคย filter ไว้ก่อนหน้า (จาก currentAllowed) แต่ตอนนี้ไม่อยู่ในขอบเขตที่เห็น ให้คงไว้เหมือนเดิม
-      var previouslyKeptOutside = currentAllowed
-        ? Array.from(currentAllowed).filter(function (v) { return visibleScope.indexOf(v) === -1; })
-        : [];
-
-      var finalSet = new Set(previouslyKeptOutside.concat(checkedInVisible));
-
-      if (finalSet.size === allValues.length) delete st.filters[col];
-      else if (finalSet.size === 0) st.filters[col] = new Set(['\u0000__NONE__']); // กันกรณีไม่เลือกอะไรเลย ให้ผลลัพธ์เป็นค่าว่าง
-      else st.filters[col] = finalSet;
-
-      closePopover();
-      onChange();
-    });
-    var r = anchorBtn.getBoundingClientRect();
-    var top = r.bottom + window.scrollY + 4;
-    var left = r.left + window.scrollX;
-    var pw = pop.offsetWidth || 220;
-    if (left + pw > window.scrollX + document.documentElement.clientWidth - 8) {
-      left = window.scrollX + document.documentElement.clientWidth - pw - 8;
-    }
-    pop.style.top = top + 'px';
-    pop.style.left = Math.max(8, left) + 'px';
-
-    setTimeout(function () {
-      outsideClickHandler = function (e) {
-        if (!pop.contains(e.target) && e.target !== anchorBtn) {
-          closePopover();
-        }
-      };
-      document.addEventListener('click', outsideClickHandler);
-    }, 0);
-  }
-
-  function th(label, key, col) {
-    var active = hasActiveFilter(key, col);
-    var st = ensure(key);
-    var sortMark = st.sortCol === col ? (st.sortAsc ? ' ▲' : ' ▼') : '';
-    return '<th class="xlf-th">' +
-             '<span class="xlf-th-label">' + escHtml(label) + sortMark + '</span>' +
-             '<button type="button" class="xlf-th-btn' + (active ? ' active' : '') + '" ' +
-                     'data-xlf-key="' + escHtml(key) + '" data-xlf-col="' + escHtml(col) + '" ' +
-                     'aria-label="กรอง/เรียง ' + escHtml(label) + '" title="กรอง/เรียง">▾</button>' +
-           '</th>';
-  }
-
-  function bindHeaderClicks(tableSelector, getRowsFn, onChange) {
-    document.addEventListener('click', function (e) {
-      var btn = e.target.closest('.xlf-th-btn');
-      if (!btn) return;
-      var table = btn.closest(tableSelector);
-      if (!table) return;
-      e.stopPropagation();
-      var key = btn.dataset.xlfKey, col = btn.dataset.xlfCol;
-      openFilterPopover(btn, key, col, getRowsFn(), onChange);
-    });
-  }
-
-  return {
-    apply: apply,
-    th: th,
-    bindHeaderClicks: bindHeaderClicks,
-    anyActiveFilter: anyActiveFilter,
-    clearAll: clearAll,
-    closePopover: closePopover
-  };
-})();
+  var AUTH_TOKEN  = "<?= authToken ?>";
+  var WEB_APP_URL = "<?= webAppUrl ?>";
 
 /* ══════════════════════════════════════════════════════════════
    แปลงตัวเลขเป็นคำอ่านภาษาไทย (บาทถ้วน) — ใช้ตอนพิมพ์ใบกำกับภาษี
@@ -1044,7 +603,6 @@ function setAddressDropdowns(prefix, provinceVal, districtVal, subdistrictVal, p
   }
 }
 
-function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtMoney(n) { return '\u0e3f ' + (parseFloat(n) || 0).toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function fmtMoneyPlain(n) { return (parseFloat(n) || 0).toLocaleString('th-TH', {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function formatTaxIdInput(el) { el.value = el.value.replace(/\D/g, '').slice(0, 13); }
@@ -1075,12 +633,11 @@ function switchTab(which) {
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
 function loadAll(yearParam) {
   var tbody = document.getElementById('taxBody');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="9">⏳ กำลังโหลดข้อมูล...</td></tr>';
-  document.getElementById('recordCount').innerText = 'กำลังโหลด...';
+  tbody.innerHTML = skeletonRows(9,5);
+  document.getElementById('recordCount').innerText = 'กำลังโหลด';
   document.getElementById('pageYearLoadingBadge').style.display = 'inline';
 
-  google.script.run
-    .withSuccessHandler(function(data) {
+  callApi('getTaxInvoicePageData', [yearParam || ''], function(data) {
       invoicesCache      = (data && data.invoices)       || [];
       sellerInfo          = (data && data.seller)          || sellerInfo;
       customersCache       = (data && data.customers)       || [];
@@ -1097,13 +654,12 @@ function loadAll(yearParam) {
 
       // ★ เลือก "ทุกปี" แล้ว -> บังคับซ่อนแท็บแดชบอร์ด กลับไปแท็บรายการเสมอ (ตามที่ตกลง)
       updateDashTabAvailability();
-    })
-    .withFailureHandler(function(err) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="9">❌ โหลดข้อมูลไม่สำเร็จ: ' + esc(JSON.stringify(err)) + '</td></tr>';
-      document.getElementById('recordCount').innerText = '❌ โหลดไม่สำเร็จ';
+    }, function(err) {
+      tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
+        actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
+      document.getElementById('recordCount').innerText = 'ผิดพลาด';
       document.getElementById('pageYearLoadingBadge').style.display = 'none';
-    })
-    .getTaxInvoicePageData(yearParam || '');
+    });
 }
 
 // ★ สร้าง dropdown ปีจาก availableYears ที่ backend ส่งมา (อ่านแค่ 1 document metadata ไม่ใช่ทุกใบ)
@@ -1194,9 +750,9 @@ function openQuickAddCustomer() {
   clearFieldError('qcName');
   clearFieldError('qcTaxId');
   document.getElementById('qcAlert').style.display = 'none';
-  document.getElementById('quickCustomerModal').classList.add('active');
+  openModal('quickCustomerModal');
 }
-function closeQuickAddCustomer() { document.getElementById('quickCustomerModal').classList.remove('active'); }
+function closeQuickAddCustomer() { closeModal('quickCustomerModal'); }
 
 function submitQuickAddCustomer() {
   var alertEl = document.getElementById('qcAlert');
@@ -1238,37 +794,31 @@ function submitQuickAddCustomer() {
     status      : 'Active'
   };
 
-  google.script.run
-    .withSuccessHandler(function(res) {
+  callApi('saveCustomer', [payload], function(res) {
       btn.disabled = false;
       btn.innerText = '💾 บันทึกลูกค้า';
       if (res.success) {
         // ★ ต้องโหลดรายชื่อลูกค้าใหม่จาก server เพราะเราไม่มีสำเนา backend ฝั่ง client
         //   แล้วค่อย auto-select ลูกค้าที่เพิ่งเพิ่ม + auto-fill ให้ทันที
-        google.script.run
-          .withSuccessHandler(function(freshCustomers) {
+        callApi('getCustomersFull', [], function(freshCustomers) {
             customersCache = freshCustomers || [];
             populateCustomerDropdown();
             document.getElementById('modalCustomerSelect').value = res.id;
             onCustomerSelect();
             closeQuickAddCustomer();
-          })
-          .withFailureHandler(function() { closeQuickAddCustomer(); })
-          .getCustomersFull();
+          }, function() { closeQuickAddCustomer(); });
       } else {
         alertEl.className = 'modal-alert error';
         alertEl.innerText = '❌ ' + res.message;
         alertEl.style.display = 'block';
       }
-    })
-    .withFailureHandler(function(err) {
+    }, function(err) {
       btn.disabled = false;
       btn.innerText = '💾 บันทึกลูกค้า';
       alertEl.className = 'modal-alert error';
       alertEl.innerText = '❌ บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
       alertEl.style.display = 'block';
-    })
-    .saveCustomer(payload);
+    });
 }
 
 /* ═══ ตาราง ═══ */
@@ -1310,18 +860,18 @@ function renderRows() {
     var tr = document.createElement('tr');
     tr.innerHTML =
       '<td style="text-align:center; color:#94a3b8;">' + (i + 1) + '</td>' +
-      '<td><span class="code-badge">' + esc(item.invoiceNo) + '</span></td>' +
+      '<td><span class="chip-code">' + esc(item.invoiceNo) + '</span></td>' +
       '<td>' + esc(item.invoiceDate) + '</td>' +
       '<td style="font-weight:600;">' + esc(item.buyerName || '—') + '</td>' +
-      '<td>' + (item.buyerTaxId ? '<span style="font-family:monospace; font-size:12px;">' + esc(item.buyerTaxId) + '</span>' : '<span class="empty-val">—</span>') + '</td>' +
+      '<td>' + (item.buyerTaxId ? '<span style="font-family:monospace; font-size:12px;">' + esc(item.buyerTaxId) + '</span>' : '<span class="cell-empty">—</span>') + '</td>' +
       '<td class="amount-cell">' + fmtMoney(item.subtotal) + '</td>' +
       '<td class="amount-cell">' + fmtMoney(item.vatAmount) + '</td>' +
       '<td class="amount-cell" style="color:#005088;">' + fmtMoney(item.grandTotal) + '</td>' +
       '<td class="col-sticky-right" style="text-align:center;">' +
-        '<div class="action-buttons">' +
-          '<button class="btn-print-icon" title="ดูรายงาน / สั่งพิมพ์ย้อนหลัง" onclick="openViewModal(\'' + item.id + '\')">🖨️</button>' +
-          '<button class="btn-edit-icon" title="แก้ไข" onclick="openEditModal(\'' + item.id + '\')">✏️</button>' +
-          '<button class="btn-delete-icon" title="ลบ" onclick="confirmDeleteModal(\'' + item.id + '\')">🗑️</button>' +
+        '<div class="row-actions">' +
+          '<button class="btn btn-icon print" title="ดูรายงาน / สั่งพิมพ์ย้อนหลัง" onclick="openViewModal(\'' + item.id + '\')">🖨️</button>' +
+          '<button class="btn btn-icon edit" title="แก้ไข" onclick="openEditModal(\'' + item.id + '\')">✏️</button>' +
+          '<button class="btn btn-icon del" title="ลบ" onclick="confirmDeleteModal(\'' + item.id + '\')">🗑️</button>' +
         '</div>' +
       '</td>';
     tbody.appendChild(tr);
@@ -1442,12 +992,12 @@ function openAddModal() {
   document.getElementById('modalTitle').innerText = '🧾 เพิ่มใบกำกับภาษี';
   document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
   document.getElementById('modalAlert').style.display = 'none';
-  document.getElementById('invoiceModal').classList.add('active');
+  openModal('invoiceModal');
 }
 
 function openEditModal(docId) {
   var item = invoicesCache.find(function(x) { return x.id === docId; });
-  if (!item) { alert('ไม่พบข้อมูลใบกำกับภาษีนี้'); return; }
+  if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
   editingDocId = docId;
   document.getElementById('modalDocId').value = item.id;
   document.getElementById('modalInvoiceNo').value = item.invoiceNo || '';
@@ -1465,10 +1015,10 @@ function openEditModal(docId) {
   document.getElementById('modalTitle').innerText = '✏️ แก้ไขใบกำกับภาษี (' + item.invoiceNo + ')';
   document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
   document.getElementById('modalAlert').style.display = 'none';
-  document.getElementById('invoiceModal').classList.add('active');
+  openModal('invoiceModal');
 }
 
-function closeModal() { document.getElementById('invoiceModal').classList.remove('active'); editingDocId = null; }
+function closeInvoiceModal() { closeModal('invoiceModal'); editingDocId = null; }
 
 function handleSubmit() {
   var alertEl = document.getElementById('modalAlert');
@@ -1499,8 +1049,7 @@ function handleSubmit() {
     note         : document.getElementById('modalNote').value.trim()
   };
 
-  google.script.run
-    .withSuccessHandler(function(res) {
+  callApi('saveTaxInvoice', [payload], function(res) {
       btn.disabled = false;
       btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
       alertEl.style.display = 'block';
@@ -1511,20 +1060,18 @@ function handleSubmit() {
           ? ' (หมายเหตุ: ใบนี้อยู่ปี พ.ศ. ' + savedYearBE + ' จะไม่แสดงในมุมมองปี พ.ศ. ' + currentPageYear + ' ปัจจุบัน)' : '';
         alertEl.innerText = '✅ ' + res.message + (res.id ? ' (' + res.id + ')' : '') + noteYearShift;
         loadAll(currentPageYear === 'all' ? 'all' : currentPageYear);
-        setTimeout(function() { closeModal(); }, 1400);
+        setTimeout(function() { closeInvoiceModal(); }, 1400);
       } else {
         alertEl.className = 'modal-alert error';
         alertEl.innerText = '❌ ' + res.message;
       }
-    })
-    .withFailureHandler(function(err) {
+    }, function(err) {
       btn.disabled = false;
       btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
       alertEl.className = 'modal-alert error';
       alertEl.innerText = '❌ บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
       alertEl.style.display = 'block';
-    })
-    .saveTaxInvoice(payload);
+    });
 }
 
 /* ═══ พิมพ์ / A4 multi-page ═══ */
@@ -1594,7 +1141,7 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage) {
 
 function openViewModal(docId) {
   var item = invoicesCache.find(function(x) { return x.id === docId; });
-  if (!item) { alert('ไม่พบข้อมูลใบกำกับภาษีนี้'); return; }
+  if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
   currentPrintInvoice = item;
 
   var items = item.items || [];
@@ -1609,10 +1156,10 @@ function openViewModal(docId) {
   document.getElementById('viewModalTitle').innerText = '🔍 ใบกำกับภาษี ' + item.invoiceNo;
   document.getElementById('printPageInfo').innerText =
     totalPages > 1 ? 'เอกสารทั้งหมด ' + totalPages + ' หน้า (ขนาด A4) — พิมพ์ได้ครบทุกหน้าอัตโนมัติ' : 'เอกสาร 1 หน้า (ขนาด A4)';
-  document.getElementById('viewModal').classList.add('active');
+  openModal('viewModal');
 }
 
-function closeViewModal() { document.getElementById('viewModal').classList.remove('active'); currentPrintInvoice = null; }
+function closeViewModal() { closeModal('viewModal'); currentPrintInvoice = null; }
 
 // ★ ดาวน์โหลดใบกำกับภาษีเป็นไฟล์ PDF จริง (ไม่ใช่ HTML) — ใช้ html2canvas แปลงแต่ละหน้า A4 เป็นภาพ
 //   แล้วประกอบด้วย jsPDF เป็น PDF หลายหน้าตามจำนวนหน้าจริงของใบกำกับภาษี (รองรับ multi-page อัตโนมัติ)
@@ -1621,11 +1168,11 @@ function downloadInvoiceFile() {
   if (!currentPrintInvoice) return;
 
   if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
-    alert('⚠️ ไม่สามารถโหลดตัวสร้าง PDF ได้ (อาจเป็นเพราะอินเทอร์เน็ตขัดข้อง) กรุณาใช้ปุ่ม "สั่งพิมพ์" แล้วเลือก "Save as PDF" แทน');
+    swyWarning('ไม่สามารถโหลดตัวสร้าง PDF ได้', 'อาจเป็นเพราะอินเทอร์เน็ตขัดข้อง กรุณาใช้ปุ่ม "สั่งพิมพ์" แล้วเลือก "Save as PDF" แทน');
     return;
   }
 
-  var btn = document.querySelector('#viewModal .btn-cancel[onclick="downloadInvoiceFile()"]');
+  var btn = document.querySelector('#viewModal .btn btn-ghost[onclick="downloadInvoiceFile()"]');
   var originalText = btn ? btn.innerText : '';
   if (btn) { btn.disabled = true; btn.innerText = '⏳ กำลังสร้าง PDF...'; }
 
@@ -1658,7 +1205,7 @@ function downloadInvoiceFile() {
       renderPage(index + 1);
     }).catch(function(err) {
       console.error('สร้าง PDF หน้า ' + (index + 1) + ' ไม่สำเร็จ:', err);
-      alert('❌ เกิดข้อผิดพลาดตอนสร้าง PDF: ' + (err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
+      swyError('เกิดข้อผิดพลาดตอนสร้าง PDF', esc(err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
       if (btn) { btn.disabled = false; btn.innerText = originalText; }
     });
   }
@@ -1669,32 +1216,30 @@ function downloadInvoiceFile() {
 /* ═══ ลบ ═══ */
 function confirmDeleteModal(docId) {
   var item = invoicesCache.find(function(x) { return x.id === docId; });
-  if (!item) { alert('ไม่พบข้อมูลใบกำกับภาษีนี้'); return; }
+  if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
   targetDeleteId = docId;
   document.getElementById('deleteTargetInfo').innerHTML = '<b>' + esc(item.invoiceNo) + '</b> — ' + esc(item.buyerName || '—') + ' (' + fmtMoney(item.grandTotal) + ')';
-  document.getElementById('deleteModal').classList.add('active');
+  openModal('deleteModal');
 }
-function closeDeleteModal() { document.getElementById('deleteModal').classList.remove('active'); targetDeleteId = null; }
+function closeDeleteModal() { closeModal('deleteModal'); targetDeleteId = null; }
 
 function execDelete() {
   if (!targetDeleteId) return;
   var btn = document.getElementById('btnConfirmDelete');
   btn.disabled = true;
   btn.innerText = 'กำลังลบ...';
-  google.script.run
-    .withSuccessHandler(function(res) {
+  callApi('deleteTaxInvoice', [targetDeleteId], function(res) {
       btn.disabled = false;
       btn.innerText = 'ลบข้อมูล';
       closeDeleteModal();
-      if (res && res.success) { loadAll(currentPageYear === 'all' ? 'all' : currentPageYear); } else { alert(res ? res.message : 'ลบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'); }
-    })
-    .withFailureHandler(function(err) {
+      if (res && res.success) { toast('ลบใบกำกับภาษีเรียบร้อย'); loadAll(currentPageYear === 'all' ? 'all' : currentPageYear); }
+      else { swyError('ลบไม่สำเร็จ', (res && res.message) || 'กรุณาลองใหม่อีกครั้ง'); }
+    }, function(err) {
       btn.disabled = false;
       btn.innerText = 'ลบข้อมูล';
       closeDeleteModal();
-      alert('ลบไม่สำเร็จ: ' + JSON.stringify(err));
-    })
-    .deleteTaxInvoice(targetDeleteId);
+      swyError('ลบไม่สำเร็จ', esc(JSON.stringify(err)));
+    });
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1870,18 +1415,18 @@ function renderDrillList(title, summaryHtml, list) {
         '<td>' + esc(fmtDateShort(it.invoiceDate)) + '</td>' +
         '<td>' + esc(it.buyerName || '-') + '</td>' +
         '<td style="text-align:right; font-family:monospace;">' + fmtMoney(it.grandTotal || 0) + '</td>' +
-        '<td style="text-align:center;"><button type="button" class="btn-icon" onclick="event.stopPropagation(); openViewModal(\'' + it.id + '\')" title="ดู/พิมพ์">🔍</button></td>' +
+        '<td style="text-align:center;"><button type="button" class="btn-icon-sm" onclick="event.stopPropagation(); openViewModal(\'' + it.id + '\')" title="ดู/พิมพ์">🔍</button></td>' +
       '</tr>';
     }).join('');
   }
 
   var totalAmt = sorted.reduce(function(s, it) { return s + (it.grandTotal || 0); }, 0);
   document.getElementById('drillFooterInfo').innerText = sorted.length + ' รายการ • รวม ' + fmtMoney(totalAmt) + ' บาท';
-  document.getElementById('drillModal').classList.add('active');
+  openModal('drillModal');
 }
 
 function closeDrillModal() {
-  document.getElementById('drillModal').classList.remove('active');
+  closeModal('drillModal');
 }
 
 function fmtDateShort(dateStr) {
@@ -1932,7 +1477,7 @@ function drillCustomerList(yearBE) {
     }).join('');
   }
   document.getElementById('drillFooterInfo').innerText = sorted.length + ' ราย • รวม ' + fmtMoney(yearItems.reduce(function(s, it) { return s + (it.grandTotal || 0); }, 0)) + ' บาท';
-  document.getElementById('drillModal').classList.add('active');
+  openModal('drillModal');
 }
 
 // 3) คลิกชื่อลูกค้า (จาก Top 10 หรือจากรายชื่อลูกค้าทั้งหมด) → ใบกำกับภาษีของลูกค้ารายนั้น
