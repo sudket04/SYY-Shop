@@ -64,6 +64,8 @@
   .qty-box button{border:none;background:var(--bg);color:#475569;font-weight:600;padding:6px 11px;cursor:pointer;font-size:14px;font-family:'Prompt',sans-serif}
   .qty-box input{border:none;border-left:1px solid var(--line);border-right:1px solid var(--line);width:52px;text-align:center;padding:6px 4px;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;color:var(--ink);outline:none}
   .price-input{border:1px solid #cbd5e1;border-radius:8px;padding:6px 10px;font-size:13px;width:92px;text-align:right;font-family:'Prompt',sans-serif;outline:none}
+  .price-locked{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;background:var(--bg);color:#475569;font-weight:600;cursor:not-allowed}
+  .price-locked::before{content:'🔒';font-size:10px}
   .b-total{margin-left:auto;font-size:14px;font-weight:600;color:var(--ok)}
 
   .totals{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
@@ -520,13 +522,6 @@
     renderBasket();
   }
 
-  function setPrice(code, val) {
-    var line = basket.find(function (b) { return b.productCode === code; });
-    if (!line) return;
-    line.unitPrice = parseFloat(val) || 0;
-    renderBasket();
-  }
-
   function clearBasket() {
     if (!basket.length) return;
     basket = [];
@@ -557,7 +552,7 @@
               '<button type="button" onclick="changeQty(\'' + esc(b.productCode) + '\',1)">+</button>' +
             '</div>' +
             '<span style="font-size:11.5px;color:var(--faint)">ชิ้น ×</span>' +
-            '<input type="number" step="0.01" min="0" class="price-input" value="' + b.unitPrice.toFixed(2) + '" onchange="setPrice(\'' + esc(b.productCode) + '\',this.value)">' +
+            '<span class="price-input price-locked" title="ราคาอ้างอิงจาก Master Product แก้ไขไม่ได้">' + money(b.unitPrice) + '</span>' +
             '<span class="b-total">' + money(b.qty * b.unitPrice) + '</span>' +
           '</div>' +
         '</div>';
@@ -598,11 +593,12 @@
     if (!basket.length) { swyWarning('ยังไม่มีรายการ', 'ค้นหาสินค้าแล้วกด “+ ใส่บิล” ก่อน'); return; }
 
     var payload = {
-      reason : document.getElementById('inpReason').value,
-      refNo  : document.getElementById('inpRefNo').value.trim(),
-      note   : document.getElementById('inpNote').value.trim(),
-      items  : basket.map(function (b) {
-        return { productCode: b.productCode, productName: b.productName, qty: b.qty, unitPrice: b.unitPrice };
+      reason  : document.getElementById('inpReason').value,
+      refNo   : document.getElementById('inpRefNo').value.trim(),
+      note    : document.getElementById('inpNote').value.trim(),
+      quoteId : pendingQuoteId || null, // server ใช้ตรวจสอบใบเสนอราคาจริงเพื่ออนุญาตราคาที่เสนอไปแทนราคา Master Product
+      items   : basket.map(function (b) {
+        return { productCode: b.productCode, productName: b.productName, qty: b.qty };
       })
     };
 

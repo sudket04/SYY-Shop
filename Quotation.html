@@ -22,7 +22,7 @@
   .search-wrap .ico{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--faint);pointer-events:none}
   .search-input{width:100%;border:2px solid #cbd5e1;border-radius:10px;padding:11px 14px 11px 38px;font-family:'Prompt',sans-serif;font-size:14px;outline:none;background:#fff;transition:.15s}
   .search-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,80,136,.12)}
-  .result-list{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;margin-top:8px}
+  .result-list{display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto;margin-top:4px}
   .res-row{border:1px solid var(--line);border-radius:8px;padding:9px 11px;display:flex;gap:10px;align-items:center;background:#fff;cursor:pointer}
   .res-row:hover,.res-row.sel{border-color:var(--primary);background:#f0f9ff}
   .res-row.out{opacity:.6;cursor:not-allowed}
@@ -33,6 +33,16 @@
   .pn-badge{font-family:'Courier New',monospace;font-size:10.5px;color:#475569;background:var(--line-soft);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
   .bc-badge{font-family:'Courier New',monospace;font-size:10.5px;color:#be185d;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:6px;padding:2px 7px}
   .res-side{text-align:right;flex-shrink:0;font-size:12px;color:var(--muted)}
+  .pill-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 2px}
+  .result-count{font-size:11.5px;color:var(--faint);margin:8px 0 6px}
+  .brand-chip{font-size:10.5px;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:20px;padding:2px 8px}
+  .zone-chip{font-size:10.5px;color:#0f766e;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;padding:2px 8px}
+  .model-chip{font-size:10.5px;color:#4338ca;background:#eef2ff;border:1px solid #c7d2fe;border-radius:20px;padding:2px 8px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .part-badge{border-radius:20px;padding:2px 8px;font-size:10.5px;font-weight:600}
+  .part-genuine{background:#dbeafe;color:#1e40af}
+  .part-copy{background:var(--warn-bg);color:#92400e}
+  .btn-add-mini{background:var(--primary-soft);color:var(--primary);border:none;border-radius:7px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;flex-shrink:0}
+  .res-row.sel .btn-add-mini{background:var(--primary);color:#fff}
 
   .item-basket-head{display:grid;grid-template-columns:1fr 92px 110px 110px 32px;gap:8px;padding:0 4px 6px;font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
   .item-basket-row{display:grid;grid-template-columns:1fr 92px 110px 110px 32px;gap:8px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--line-soft)}
@@ -176,8 +186,24 @@
             <div class="card-pad" style="padding-top:12px">
               <div class="search-wrap">
                 <span class="ico">⌕</span>
-                <input type="text" id="searchInput" class="search-input" placeholder="ค้นหา ชื่อ · รหัส · P/N แล้วเลือกจากรายการด้านล่าง" oninput="onSearchInput()" onkeydown="onSearchKey(event)">
+                <input type="text" id="searchInput" class="search-input" placeholder="ค้นหา/สแกน ชื่อ · รหัส · P/N · บาร์โค้ด แล้วเลือกจากรายการด้านล่าง" oninput="onSearchInput()" onkeydown="onSearchKey(event)">
               </div>
+
+              <div class="pill-row">
+                <button class="pill active" data-stock="all" onclick="setStockFilter('all',this)">ทั้งหมด</button>
+                <button class="pill" data-stock="instock" onclick="setStockFilter('instock',this)">✅ มีของ</button>
+                <button class="pill" data-stock="low" onclick="setStockFilter('low',this)">⚠️ สต็อกต่ำ</button>
+                <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+                  <select id="filterCategory" class="select" style="max-width:150px" onchange="renderResults()"><option value="">หมวดหมู่: ทั้งหมด</option></select>
+                  <select id="filterPartType" class="select" style="max-width:130px" onchange="renderResults()">
+                    <option value="">ประเภท: ทั้งหมด</option>
+                    <option value="แท้">แท้</option>
+                    <option value="เทียบ">เทียบ</option>
+                  </select>
+                </span>
+              </div>
+
+              <div class="result-count" id="resultCount"></div>
               <div class="result-list" id="resultList"></div>
 
               <div class="item-basket-head" style="margin-top:14px">
@@ -290,6 +316,7 @@ var WEB_APP_URL = "<?= webAppUrl ?>";
 var customers = [], products = [], quotations = [], sellerInfo = {}, marginMin = 15, statuses = [];
 var basket = [];             // {productCode, productName, partNumber, qty, unitPrice, costPrice, stock}
 var results = [], selIdx = 0, searchTimer = null;
+var stockFilter = 'all';
 var editingDocId = null;
 var listStatusFilter = '';
 
@@ -323,8 +350,10 @@ function loadPageData(afterLoad) {
     marginMin  = data.marginMin  || 15;
     statuses   = data.statuses   || [];
     renderCustomerOptions();
+    buildCategoryFilter();
     renderStatusFilterBar();
     renderList();
+    renderResults();
     if (typeof afterLoad === 'function') afterLoad();
   }, function (err) {
     if (btn) btnDone(btn);
@@ -354,7 +383,26 @@ function switchTab(t) {
   if (t === 'list') renderList();
 }
 
-/* ═══ ค้นหาสินค้า ═══ */
+/* ═══ ค้นหาสินค้า (รูปแบบเดียวกับหน้าตัดสต๊อก — ตัวกรอง/เรียงมีของก่อน/แสดงทั้งหมดโดยไม่พิมพ์ค้นหาก็ได้) ═══ */
+function buildCategoryFilter() {
+  var seen = {}, cats = [];
+  products.forEach(function (p) {
+    var c = String(p.categoryName || '').trim();
+    if (c && !seen[c]) { seen[c] = true; cats.push(c); }
+  });
+  cats.sort(function (a, b) { return a.localeCompare(b, 'th'); });
+  var sel = document.getElementById('filterCategory');
+  sel.innerHTML = '<option value="">หมวดหมู่: ทั้งหมด</option>' +
+    cats.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
+}
+
+function setStockFilter(v, el) {
+  stockFilter = v;
+  document.querySelectorAll('[data-stock]').forEach(function (b) { b.classList.remove('active'); });
+  el.classList.add('active');
+  renderResults();
+}
+
 function onSearchInput() {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(function () { selIdx = 0; renderResults(); }, 150);
@@ -369,6 +417,7 @@ function moveSel(delta) {
   selIdx = Math.max(0, Math.min(results.length - 1, selIdx + delta));
   renderResults();
 }
+function stockRank(p) { return num(p.currentStock) > 0 ? 0 : 1; } // มีของ (0) ขึ้นก่อน หมด (1)
 function scoreProduct(p, terms) {
   var code = String(p.productCode || '').toLowerCase();
   var pn   = String(p.partNumber  || '').toLowerCase();
@@ -380,34 +429,81 @@ function scoreProduct(p, terms) {
   terms.forEach(function (t) {
     if (code === t || pn === t || (bc && bc === t)) s += 100;
     else if (code.indexOf(t) === 0 || pn.indexOf(t) === 0) s += 60;
+    else if (String(p.productName || '').toLowerCase().indexOf(t) === 0) s += 30;
     else s += 10;
   });
+  if (num(p.currentStock) > 0) s += 5;
   return s;
 }
+
 function renderResults() {
   var q = document.getElementById('searchInput').value.toLowerCase().trim();
-  var listEl = document.getElementById('resultList');
-  if (!q) { listEl.innerHTML = ''; results = []; return; }
-  var terms = q.split(/\s+/);
-  results = products.map(function (p) { return { p: p, s: scoreProduct(p, terms) }; })
-                     .filter(function (x) { return x.s >= 0; })
-                     .sort(function (a, b) { return b.s - a.s; })
-                     .map(function (x) { return x.p; })
-                     .slice(0, 8);
-  if (selIdx >= results.length) selIdx = 0;
-  if (!results.length) { listEl.innerHTML = '<div style="padding:10px;font-size:12.5px;color:var(--faint)">ไม่พบสินค้าที่ตรงเงื่อนไข</div>'; return; }
-  listEl.innerHTML = results.map(function (p, i) {
+  var terms = q ? q.split(/\s+/) : [];
+  var category = document.getElementById('filterCategory').value;
+  var partType = document.getElementById('filterPartType').value;
+  var listEl  = document.getElementById('resultList');
+  var countEl = document.getElementById('resultCount');
+
+  var pool = products.filter(function (p) {
     var st = num(p.currentStock);
+    if (stockFilter === 'instock' && st <= 0) return false;
+    if (stockFilter === 'low' && st > num(p.minStock)) return false;
+    if (partType && p.partType !== partType) return false;
+    if (category && p.categoryName !== category) return false;
+    return true;
+  });
+
+  if (terms.length) {
+    results = pool.map(function (p) { return { p: p, s: scoreProduct(p, terms) }; })
+                  .filter(function (x) { return x.s >= 0; })
+                  .sort(function (a, b) {
+                    if (b.s !== a.s) return b.s - a.s;
+                    var r = stockRank(a.p) - stockRank(b.p);
+                    if (r !== 0) return r;
+                    return String(a.p.productName || '').localeCompare(String(b.p.productName || ''), 'th');
+                  })
+                  .map(function (x) { return x.p; });
+  } else {
+    results = pool.slice().sort(function (a, b) {
+      var r = stockRank(a) - stockRank(b);
+      if (r !== 0) return r;
+      return String(a.productName || '').localeCompare(String(b.productName || ''), 'th');
+    });
+  }
+  if (selIdx >= results.length) selIdx = 0;
+
+  if (!products.length) { countEl.innerText = 'ยังไม่มีข้อมูลสินค้าในระบบ'; listEl.innerHTML = ''; return; }
+  if (!results.length) {
+    countEl.innerText = 'ไม่พบสินค้าที่ตรงเงื่อนไข';
+    listEl.innerHTML = '<div style="padding:10px;font-size:12.5px;color:var(--faint)">📭 ลองพิมพ์เฉพาะรหัส P/N หรือลดตัวกรองลง</div>';
+    return;
+  }
+  countEl.innerHTML = 'พบ ' + results.length + ' รายการ — เลือกด้วย ↑ ↓ แล้วกด Enter';
+
+  listEl.innerHTML = results.map(function (p, i) {
+    var st = num(p.currentStock), mn = num(p.minStock);
+    var stCls = st <= 0 ? 'badge-mute' : (st <= mn ? 'badge-danger' : 'badge-ok');
+    var stTxt = st <= 0 ? 'หมด' : (st <= mn ? 'เหลือ ' + st : 'คงเหลือ ' + st);
+    var partTxt = p.partType === 'แท้' ? '<span class="part-badge part-genuine">แท้</span>'
+                : p.partType === 'เทียบ' ? '<span class="part-badge part-copy">เทียบ</span>' : '';
     return '<div class="res-row' + (i === selIdx ? ' sel' : '') + '" onclick="addToBasket(\'' + esc(p.productCode) + '\')">' +
       '<div class="res-main">' +
-        '<div class="res-name">' + esc(p.productName) + '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+          '<span class="res-name">' + esc(p.productName) + '</span>' + partTxt +
+        '</div>' +
         '<div class="res-chips">' +
           '<span class="code-badge">' + esc(p.productCode) + '</span>' +
           (p.partNumber ? '<span class="pn-badge">P/N ' + esc(p.partNumber) + '</span>' : '') +
           (p.barcode ? '<span class="bc-badge">🔖 ' + esc(p.barcode) + '</span>' : '') +
+          (p.brandName ? '<span class="brand-chip">🏷️ ' + esc(p.brandName) + '</span>' : '') +
+          (p.carModel ? '<span class="model-chip" title="' + esc(p.carModel) + '">' + esc(p.carModel) + '</span>' : '') +
         '</div>' +
       '</div>' +
-      '<div class="res-side">' + money(p.sellingPrice) + '<br>คงเหลือ ' + st + '</div>' +
+      '<div class="res-side">' +
+        '<div>' + money(p.sellingPrice) + '</div>' +
+        '<span class="badge ' + stCls + '" style="font-size:10.5px">' + stTxt + '</span>' +
+      '</div>' +
+      '<button class="btn-add-mini" type="button" onclick="event.stopPropagation();addToBasket(\'' + esc(p.productCode) + '\')">+ เพิ่ม</button>' +
     '</div>';
   }).join('');
 }

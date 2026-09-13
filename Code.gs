@@ -3828,10 +3828,11 @@ function getProductStockMap_(codes) {
     var f  = row.found.fields || {};
     var id = row.found.name.split("/").pop();
     map[id] = {
-      name      : parseFirestoreValue(f.Product_Name) || id,
-      stock     : parseFloat(parseFirestoreValue(f.Current_Stock)) || 0,
-      minStock  : parseFloat(parseFirestoreValue(f.Min_Stock))     || 0,
-      costPrice : parseFloat(parseFirestoreValue(f.Cost_Price))    || 0
+      name         : parseFirestoreValue(f.Product_Name) || id,
+      stock        : parseFloat(parseFirestoreValue(f.Current_Stock)) || 0,
+      minStock     : parseFloat(parseFirestoreValue(f.Min_Stock))     || 0,
+      costPrice    : parseFloat(parseFirestoreValue(f.Cost_Price))    || 0,
+      sellingPrice : parseFloat(parseFirestoreValue(f.Selling_Price)) || 0
     };
   });
   return map;
@@ -3863,15 +3864,40 @@ function issueStock(d, callerUsername) {
     if (ISSUE_REASONS.indexOf(reason) === -1) return fail("กรุณาเลือกเหตุผลที่ตัดสต๊อกให้ถูกต้อง");
 
     // รวมรายการซ้ำรหัสเดียวกันเข้าด้วยกัน กันตัดสองรอบ
+    // ★ ไม่รับ unitPrice จาก client เลย — ราคาตัดสต๊อกต้องอ้างอิง Master_Products.Selling_Price เท่านั้น
+    //   (ล็อกที่ฝั่ง server ไม่ใช่แค่ซ่อนช่องกรอกที่ UI เพราะ apiGateway ยังเรียกได้ตรงถ้ารู้ token)
     var merged = {};
     items.forEach(function (it) {
       var code = String(it.productCode);
-      if (!merged[code]) merged[code] = { productCode: code, productName: it.productName || "", qty: 0, unitPrice: parseFloat(it.unitPrice || 0) };
+      if (!merged[code]) merged[code] = { productCode: code, productName: it.productName || "", qty: 0 };
       merged[code].qty += parseFloat(it.qty || 0);
     });
     var lines = Object.keys(merged).map(function (k) { return merged[k]; });
 
     var stockMap = getProductStockMap_(lines.map(function (l) { return l.productCode; }));
+
+    // ★ ถ้าตัดสต๊อกจากใบเสนอราคาที่ "ปิดงาน-ขายสำเร็จ" แล้ว ใช้ราคาที่เสนอไปจริง (ผ่านการอนุมัติแล้ว)
+    //   เฉพาะสินค้าที่อยู่ในใบเสนอราคานั้น แทนราคา Master Product — ตรวจสอบจากเอกสารจริงบน server
+    //   เองเท่านั้น (ไม่เชื่อราคาที่ client ส่งมาตรงๆ) กันตั้งราคาปลอมโดยอ้างว่ามาจากใบเสนอราคา
+    var quotedPriceMap = {};
+    if (d.quoteId) {
+      try {
+        var qUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+                 + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + d.quoteId;
+        var qRes = UrlFetchApp.fetch(qUrl, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+        if (qRes.getResponseCode() === 200) {
+          var qf = JSON.parse(qRes.getContentText()).fields || {};
+          if (parseFirestoreValue(qf.Status) === "ปิดงาน-ขายสำเร็จ") {
+            var qItems = JSON.parse(parseFirestoreValue(qf.Items_JSON) || "[]");
+            qItems.forEach(function (it) {
+              if (it && it.productCode) quotedPriceMap[it.productCode] = parseFloat(it.unitPrice) || 0;
+            });
+          }
+        }
+      } catch (e) {
+        console.error("issueStock: ตรวจสอบใบเสนอราคาไม่สำเร็จ (จะใช้ราคา Master Product แทน):", e);
+      }
+    }
 
     var notFound     = [];
     var insufficient = [];
@@ -3882,6 +3908,7 @@ function issueStock(d, callerUsername) {
       l.after     = info.stock - l.qty;
       l.minStock  = info.minStock;
       l.costPrice = info.costPrice;
+      l.unitPrice = quotedPriceMap.hasOwnProperty(l.productCode) ? quotedPriceMap[l.productCode] : info.sellingPrice;
       if (!l.productName) l.productName = info.name;
       if (l.after < 0) insufficient.push({ productCode: l.productCode, productName: l.productName, stock: info.stock, need: l.qty });
     });
