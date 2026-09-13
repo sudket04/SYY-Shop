@@ -622,6 +622,7 @@ function getAllProducts() {
           partType     : parseFirestoreValue(f.Part_Type)      || "",
           partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
           barcode      : String(parseFirestoreValue(f.Barcode) || ""),
+          barcodeGenerated : parseFirestoreValue(f.Barcode_Generated) === "true",
           imageUrl     : productImageUrl_(id),
           brandId      : brandId,
           brandName    : brandMap[brandId]   || brandId,
@@ -692,6 +693,7 @@ function getProductById(productCode) {
         partType     : parseFirestoreValue(f.Part_Type)           || "",
         partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
         barcode      : String(parseFirestoreValue(f.Barcode) || ""),
+        barcodeGenerated : parseFirestoreValue(f.Barcode_Generated) === "true",
         imageUrl     : productImageUrl_(productCode),
         brandId      : brandId,
         brandName    : brandMap[brandId]   || brandId,
@@ -839,7 +841,105 @@ function saveProduct(d) {
     if (dupBarcode) return dupBarcode;
   }
 
+  // ★ Barcode_Generated ไม่ได้อยู่ในฟอร์มแก้ไขสินค้า (ตั้งค่าแยกผ่าน generateProductBarcode())
+  //   แต่ saveProduct → saveMasterData เป็น PATCH แบบไม่มี updateMask (ทับทั้งเอกสาร) — ถ้าไม่จัดการ
+  //   ตรงนี้ การแก้ไขสินค้าเรื่องอื่น (เช่นราคา) จะลบธง "สร้างเอง" ทิ้งเงียบๆ ทุกครั้ง ทำให้เมนูพิมพ์
+  //   บาร์โค้ดหายไปทั้งที่บาร์โค้ดยังเป็นอันที่ระบบสร้างอยู่เหมือนเดิม — คงธงไว้ถ้าค่าบาร์โค้ดไม่เปลี่ยน
+  //   จากที่ระบบเคยสร้างให้, ถือเป็นบาร์โค้ดจริงถ้าผู้ใช้พิมพ์/แก้ไขค่าใหม่เอง
+  dataObject.Barcode_Generated = "false";
+  if (docId) {
+    var existingFields = getProductRawFields_(docId);
+    if (existingFields) {
+      var existingBarcode   = String(parseFirestoreValue(existingFields.Barcode) || "").trim();
+      var existingGenerated = parseFirestoreValue(existingFields.Barcode_Generated) === "true";
+      if (existingGenerated && existingBarcode && existingBarcode === dataObject.Barcode) {
+        dataObject.Barcode_Generated = "true";
+      }
+    }
+  }
+
   return saveMasterData("Master_Products", "P", docId, dataObject, d.productName);
+}
+
+function getProductRawFields_(docId) {
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/Master_Products/" + docId;
+    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return null;
+    return JSON.parse(res.getContentText()).fields || {};
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * ★ สร้างบาร์โค้ดให้สินค้าที่ยังไม่มีบาร์โค้ดจริงจากโรงงาน — ใช้ช่วง EAN-13 20-29
+ *   ที่ GS1 กันไว้สำหรับใช้ภายในร้านเท่านั้น (In-Store use) จึงมั่นใจได้ว่าไม่ชนกับบาร์โค้ด
+ *   สินค้าจริงใบไหนในโลก และยังเป็นมาตรฐาน EAN-13 ให้เครื่องสแกน/POS ทั่วไปอ่านได้ปกติ
+ *   เลข 10 หลักถัดจาก prefix ดึงจากตัวเลขในรหัสสินค้าเอง (unique อยู่แล้ว) จึงไม่ต้องมีตัวนับแยก
+ */
+function generateProductBarcode(productCode) {
+  try {
+    productCode = String(productCode || "").trim();
+    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
+
+    var fields = getProductRawFields_(productCode);
+    if (!fields) return { success: false, message: "ไม่พบสินค้านี้ในระบบ — อาจถูกลบไปแล้ว" };
+
+    var existing  = String(parseFirestoreValue(fields.Barcode) || "").trim();
+    var generated = parseFirestoreValue(fields.Barcode_Generated) === "true";
+
+    if (existing && generated) {
+      return { success: true, message: "สินค้านี้มีบาร์โค้ดที่สร้างไว้แล้ว", barcode: existing, generated: true };
+    }
+    if (existing && !generated) {
+      return { success: false, message: 'สินค้านี้มีบาร์โค้ดจริงอยู่แล้ว ("' + existing + '") ไม่ต้องสร้างใหม่' };
+    }
+
+    var numPart = productCode.replace(/\D/g, "");
+    if (!numPart) numPart = String(Math.abs(hashCode_(productCode)));
+    numPart = ("0000000000" + numPart).slice(-10); // เติม 0 ด้านหน้าให้ครบ 10 หลัก (หรือตัดเอา 10 หลักท้ายถ้ายาวเกิน) กันชนกันของรหัสที่ตัวเลขเป็น prefix ของกันเอง
+
+    var body12  = "20" + numPart;
+    var barcode = body12 + computeEan13CheckDigit_(body12);
+
+    // กันชนซ้ำ (ทางทฤษฎีแทบเป็นไปไม่ได้เพราะดึงจากรหัสสินค้าที่ unique อยู่แล้ว แต่เช็คไว้ให้ชัวร์)
+    var dupBarcode = checkBarcodeDuplicate(barcode, productCode);
+    if (dupBarcode) return { success: false, message: "สร้างบาร์โค้ดชนกับสินค้าอื่น กรุณาลองใหม่หรือกรอกเอง" };
+
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/Master_Products/" + productCode
+            + "?updateMask.fieldPaths=Barcode&updateMask.fieldPaths=Barcode_Generated";
+    var res = UrlFetchApp.fetch(url, {
+      method  : "patch",
+      headers : getAuthHeader(),
+      payload : JSON.stringify({ fields: mapToFirestoreFields({ Barcode: barcode, Barcode_Generated: "true" }) }),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) {
+      return { success: false, message: "บันทึกบาร์โค้ดไม่สำเร็จ: " + res.getContentText() };
+    }
+
+    return { success: true, message: "สร้างบาร์โค้ดสำเร็จ", barcode: barcode, generated: true };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+
+function computeEan13CheckDigit_(body12) {
+  var sum = 0;
+  for (var i = 0; i < 12; i++) {
+    var d = parseInt(body12.charAt(i), 10);
+    sum += (i % 2 === 0) ? d : d * 3;
+  }
+  return String((10 - (sum % 10)) % 10);
+}
+
+function hashCode_(str) {
+  var h = 0;
+  for (var i = 0; i < str.length; i++) { h = ((h << 5) - h + str.charCodeAt(i)) | 0; }
+  return h;
 }
 
 function checkPartNumberDuplicate(partNumber, excludeDocId) {
@@ -2823,6 +2923,7 @@ var API_REGISTRY = {
   saveProduct              : "staff",
   uploadProductImage       : "staff",
   deleteProductImage       : "staff",
+  generateProductBarcode   : "staff",
   // ★ FIX: saveMasterData ไม่เคยอยู่ใน registry นี้เลย — apiGateway ปฏิเสธทุกครั้งที่เรียก
   //   (Master_Brands.html และ Master_Categories.html เรียกฟังก์ชันนี้ตรงๆ ไม่ผ่าน saveBrand/saveCategory)
   //   ทำให้กดบันทึกแบรนด์/หมวดหมู่ไม่ได้เลยถ้าไม่แก้ตรงนี้ — SAVE_MASTER_ALLOWED ด้านล่างเป็นด่านกันอยู่แล้วว่าเขียนได้แค่ 2 collection นี้
@@ -2890,6 +2991,7 @@ var ACTIVITY_ACTIONS = {
   saveProduct                 : { action: "save",   label: "บันทึกสินค้า" },
   uploadProductImage          : { action: "update", label: "อัปโหลดรูปสินค้า" },
   deleteProductImage          : { action: "delete", label: "ลบรูปสินค้า" },
+  generateProductBarcode      : { action: "update", label: "สร้างบาร์โค้ดสินค้า" },
   savePurchaseOrder           : { action: "save",   label: "บันทึกใบสั่งซื้อ" },
   saveTaxInvoice               : { action: "save",   label: "บันทึกใบกำกับภาษี" },
   saveQuotation                : { action: "save",   label: "บันทึกใบเสนอราคา" },

@@ -4,6 +4,7 @@
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <?!= include('Styles'); ?>
   <style>
   /* ─── เฉพาะหน้านี้: ค้นหา/pagination/multi-select รุ่นรถ (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
@@ -44,6 +45,7 @@
   @media (max-width:767px){ .search-box{max-width:100%} }
   .models-cell{max-width:280px}
   .chip-model-more{background:var(--line-soft);color:#475569;border-color:var(--line);cursor:help}
+  .barcode-print-area{display:none}
   </style>
 </head>
 <body>
@@ -233,6 +235,73 @@
     </div>
   </div>
 
+  <!-- View Detail Modal -->
+  <div class="modal-overlay" id="viewProductModal">
+    <div class="modal-box" style="width:640px">
+      <div class="modal-header">
+        <span>📦 รายละเอียดสินค้า</span>
+        <button class="modal-close" onclick="closeModal('viewProductModal')">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+          <div id="viewImgBox" style="width:100px;height:100px;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg)">
+            <span style="font-size:28px;color:var(--faint)">📦</span>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <div id="viewProductName" style="font-size:16px;font-weight:700;color:var(--ink)"></div>
+            <div id="viewProductMeta" style="font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.9"></div>
+          </div>
+        </div>
+
+        <div class="section-label">บาร์โค้ด</div>
+        <div id="viewBarcodeSection"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('viewProductModal')">ปิด</button>
+        <button type="button" class="btn btn-primary" onclick="closeModal('viewProductModal'); openEditModal(viewingDocId);">✏️ แก้ไขสินค้านี้</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Print Barcode Modal -->
+  <div class="modal-overlay" id="printBarcodeModal">
+    <div class="modal-box" style="width:420px">
+      <div class="modal-header">
+        <span>🖨️ พิมพ์บาร์โค้ด</span>
+        <button class="modal-close" onclick="closeModal('printBarcodeModal')">×</button>
+      </div>
+      <div class="modal-body">
+        <div style="text-align:center;padding:12px 0;background:#fff;border:1px solid var(--line);border-radius:8px">
+          <svg id="printBarcodePreviewSvg"></svg>
+          <div id="printBarcodeLabelText" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>ขนาดสติกเกอร์ (ม้วน)</label>
+            <select id="printLabelSize" class="form-control">
+              <option value="40x30">40 × 30 มม.</option>
+              <option value="50x30" selected>50 × 30 มม.</option>
+              <option value="50x25">50 × 25 มม.</option>
+              <option value="30x20">30 × 20 มม.</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>จำนวนดวง</label>
+            <input type="number" id="printLabelQty" class="form-control" value="1" min="1" max="100">
+          </div>
+        </div>
+        <div class="field-hint">ตั้งขนาดกระดาษ/label ในหน้าต่างพิมพ์ของเบราว์เซอร์ให้ตรงกับขนาดที่เลือกไว้ด้วย</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('printBarcodeModal')">ยกเลิก</button>
+        <button type="button" class="btn btn-primary" onclick="doPrintBarcode()">🖨️ พิมพ์</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ใช้ตอนสั่งพิมพ์จริงเท่านั้น (ซ่อนอยู่ปกติ — โผล่เฉพาะตอน @media print ผ่าน style ที่ inject ตอนกดพิมพ์) -->
+  <div id="barcodePrintArea" class="barcode-print-area"></div>
+
   <!-- Expanded Card Container -->
   <div class="card">
     <div class="toolbar">
@@ -335,6 +404,7 @@
   // Multi-select state สำหรับรุ่นรถ
   var selectedCarIds  = [];
   var carOptionsCache = [];
+  var viewingDocId    = null;
 
   // ★ ยังไม่เคยอัปโหลดรูป → request รูป 404 ตามคาด — สลับเป็นไอคอน placeholder แทนไอคอนรูปหักของเบราว์เซอร์
   function prodImgFallback(el) { el.outerHTML = '<span style="font-size:16px;color:var(--faint)">📦</span>'; }
@@ -586,6 +656,7 @@
         '<td style="text-align:center;"><span style="font-size:12px; font-weight:600; color:' + (item.status === 'Active' ? '#166534' : '#991b1b') + ';">' + esc(item.status || 'Active') + '</span></td>' +
         '<td class="col-sticky-right" style="text-align:center;">' +
           '<div class="row-actions">' +
+            '<button class="btn btn-icon view" onclick="openViewModal(\'' + codeKey + '\')" title="ดูรายละเอียด">👁️</button>' +
             '<button class="btn btn-icon edit" onclick="openEditModal(\'' + codeKey + '\')" title="แก้ไข">✏️</button>' +
             '<button class="btn btn-icon del" onclick="confirmDeleteModal(\'' + codeKey + '\')" title="ลบ">🗑️</button>' +
           '</div>' +
@@ -883,6 +954,161 @@
         swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
       });
     });
+  }
+
+  // ==========================================
+  // ดูรายละเอียดสินค้า + สร้าง/พิมพ์บาร์โค้ด
+  // ==========================================
+  function viewImgFallback() {
+    document.getElementById('viewImgBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
+  }
+
+  function openViewModal(docId) {
+    var item = productsCache.find(function (c) { return (c.id === docId || c.productCode === docId); });
+    if (!item) { toast('ไม่พบข้อมูลสินค้า', 'err'); return; }
+    viewingDocId = item.id || docId;
+
+    document.getElementById('viewProductName').innerText = item.productName || '(ไม่มีชื่อ)';
+    var metaParts = [
+      'รหัส: ' + esc(item.productCode || item.id),
+      'ประเภท: ' + esc(item.partType || '-'),
+      item.partNumber ? 'P/N: ' + esc(item.partNumber) : null,
+      'แบรนด์: ' + esc(item.brandName || '-'),
+      'หมวดหมู่: ' + esc(item.categoryName || '-'),
+      'ผู้จำหน่าย: ' + esc(item.vendorName || '-'),
+      'โซน: ' + esc(item.zoneName || '-'),
+      item.carModel ? 'รุ่นรถ: ' + esc(item.carModel) : null,
+      'ราคาทุน: ฿' + Number(item.costPrice || 0).toFixed(2),
+      'ราคาขาย: ฿' + Number(item.sellingPrice || 0).toFixed(2),
+      'คงเหลือ: ' + (item.currentStock || 0) + ' ชิ้น',
+      'สถานะ: ' + esc(item.status || 'Active')
+    ].filter(Boolean);
+    document.getElementById('viewProductMeta').innerHTML = metaParts.join('<br>');
+
+    var imgBox = document.getElementById('viewImgBox');
+    imgBox.innerHTML = item.imageUrl
+      ? '<img src="' + esc(item.imageUrl) + '" style="width:100%;height:100%;object-fit:cover" onerror="viewImgFallback()">'
+      : '<span style="font-size:28px;color:var(--faint)">📦</span>';
+
+    renderViewBarcodeSection(item);
+    openModal('viewProductModal');
+  }
+
+  function renderBarcodeSvg(svgId, barcodeValue) {
+    try {
+      JsBarcode('#' + svgId, barcodeValue, { format: 'EAN13', width: 2, height: 55, fontSize: 13, margin: 6 });
+    } catch (e) {
+      var el = document.getElementById(svgId);
+      if (el) el.outerHTML = '<div style="color:var(--danger);font-size:12px">แสดงบาร์โค้ดไม่สำเร็จ: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  function renderViewBarcodeSection(item) {
+    var box = document.getElementById('viewBarcodeSection');
+    if (!item.barcode) {
+      box.innerHTML =
+        '<div class="field-hint" style="margin-bottom:8px">สินค้านี้ยังไม่มีบาร์โค้ด</div>' +
+        '<button type="button" class="btn btn-ghost" id="btnGenBarcode" onclick="generateBarcodeForViewing()">🔄 สร้างบาร์โค้ดอัตโนมัติ (EAN-13 ใช้ภายในร้าน)</button>';
+      return;
+    }
+    if (!item.barcodeGenerated) {
+      box.innerHTML =
+        '<div class="mono" style="font-size:15px;font-weight:700;color:var(--ink)">' + esc(item.barcode) + '</div>' +
+        '<div class="field-hint">บาร์โค้ดจริงจากผู้ผลิต — ไม่มีเมนูพิมพ์ (พิมพ์ให้เฉพาะบาร์โค้ดที่ระบบสร้างเอง)</div>';
+      return;
+    }
+    box.innerHTML =
+      '<div style="text-align:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 0">' +
+        '<svg id="viewBarcodeSvg"></svg>' +
+      '</div>' +
+      '<div class="field-hint" style="text-align:center;margin:6px 0 10px">บาร์โค้ดสร้างโดยระบบ (EAN-13 ช่วงใช้ภายในร้าน) — <span class="mono">' + esc(item.barcode) + '</span></div>' +
+      '<button type="button" class="btn btn-primary" style="width:100%" onclick="openPrintBarcodeModal()">🖨️ พิมพ์บาร์โค้ด</button>';
+    renderBarcodeSvg('viewBarcodeSvg', item.barcode);
+  }
+
+  function generateBarcodeForViewing() {
+    if (!viewingDocId) return;
+    var btn = document.getElementById('btnGenBarcode');
+    btnBusy(btn, 'กำลังสร้าง...');
+    callApi('generateProductBarcode', [viewingDocId], function (res) {
+      btnDone(btn);
+      if (res && res.success) {
+        var cached = productsCache.find(function (p) { return p.id === viewingDocId; });
+        if (cached) { cached.barcode = res.barcode; cached.barcodeGenerated = true; }
+        toast('สร้างบาร์โค้ดสำเร็จ');
+        renderViewBarcodeSection(cached || { barcode: res.barcode, barcodeGenerated: true });
+        filterAndRenderTable();
+      } else {
+        swyError('สร้างบาร์โค้ดไม่สำเร็จ', (res && res.message) || 'ไม่ทราบสาเหตุ');
+      }
+    }, function (err) {
+      btnDone(btn);
+      swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+    });
+  }
+
+  var BARCODE_LABEL_SIZES = {
+    '40x30': { w: 40, h: 30 },
+    '50x30': { w: 50, h: 30 },
+    '50x25': { w: 50, h: 25 },
+    '30x20': { w: 30, h: 20 }
+  };
+
+  function openPrintBarcodeModal() {
+    var item = productsCache.find(function (p) { return p.id === viewingDocId; });
+    if (!item || !item.barcode) return;
+    document.getElementById('printLabelQty').value = 1;
+    document.getElementById('printLabelSize').value = '50x30';
+    renderBarcodeSvg('printBarcodePreviewSvg', item.barcode);
+    document.getElementById('printBarcodeLabelText').innerText = (item.productName || '') + ' · ' + (item.productCode || item.id);
+    openModal('printBarcodeModal');
+  }
+
+  function doPrintBarcode() {
+    var item = productsCache.find(function (p) { return p.id === viewingDocId; });
+    if (!item || !item.barcode) return;
+
+    var sizeKey = document.getElementById('printLabelSize').value;
+    var size = BARCODE_LABEL_SIZES[sizeKey] || BARCODE_LABEL_SIZES['50x30'];
+    var qty = Math.max(1, Math.min(100, parseInt(document.getElementById('printLabelQty').value, 10) || 1));
+
+    var area = document.getElementById('barcodePrintArea');
+    var pagesHtml = '';
+    for (var i = 0; i < qty; i++) {
+      pagesHtml += '<div class="barcode-label-page">' +
+        '<svg class="barcode-label-svg" id="printSvg_' + i + '"></svg>' +
+        '<div class="barcode-label-text">' + esc(item.productName) + '</div>' +
+        '<div class="barcode-label-code mono">' + esc(item.productCode || item.id) + '</div>' +
+      '</div>';
+    }
+    area.innerHTML = pagesHtml;
+
+    var styleTag = document.getElementById('barcodePrintStyle');
+    if (!styleTag) {
+      styleTag = document.createElement('style');
+      styleTag.id = 'barcodePrintStyle';
+      document.head.appendChild(styleTag);
+    }
+    styleTag.innerHTML =
+      '@media print {' +
+        'body *{visibility:hidden}' +
+        '.barcode-print-area{display:block !important;position:absolute;top:0;left:0}' +
+        '.barcode-print-area, .barcode-print-area *{visibility:visible}' +
+        '.barcode-label-page{width:' + size.w + 'mm;height:' + size.h + 'mm;box-sizing:border-box;padding:1.5mm;' +
+          'display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;page-break-after:always}' +
+        '.barcode-label-page:last-child{page-break-after:auto}' +
+        '.barcode-label-svg{max-width:100%}' +
+        '.barcode-label-text{font-size:7px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}' +
+        '.barcode-label-code{font-size:6.5px;color:#555}' +
+        '@page{size:' + size.w + 'mm ' + size.h + 'mm;margin:0}' +
+      '}';
+
+    for (var j = 0; j < qty; j++) {
+      JsBarcode('#printSvg_' + j, item.barcode, { format: 'EAN13', width: 1.4, height: size.h > 25 ? 34 : 26, fontSize: 10, margin: 0 });
+    }
+
+    closeModal('printBarcodeModal');
+    setTimeout(function () { window.print(); }, 80);
   }
 
   // ==========================================
