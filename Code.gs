@@ -34,6 +34,7 @@ function doGet(e) {
     'cars'       : 'Master_Cars',
     'orders'     : 'Purchase_Orders',
     'taxinvoice' : 'Master_Tax_Invoice',
+    'quotation'  : 'Quotation',
     'customers'  : 'Master_Customers',
     'profile'    : 'Profile',
     'manageusers': 'Manage_Users',
@@ -274,7 +275,9 @@ var FORCE_STRING_FIELDS = ["Part_Number", "Product_Name", "Brand_Name", "Categor
                             "Vendor_name", "Phone", "Area", "Build", "Floor", "Rack_no",
                             "Tax_ID", "Branch", "Invoice_No", "Buyer_Tax_ID", "Buyer_Branch",
                             "Customer_Name", "Address_No", "Address_Moo", "Address_Road",
-                            "Subdistrict", "District", "Province", "Postal_Code", "Invoice_Date"];
+                            "Subdistrict", "District", "Province", "Postal_Code", "Invoice_Date",
+                            "Quote_No", "Customer_Tax_ID", "Customer_Phone", "Customer_Branch",
+                            "Customer_PO", "Quote_Date", "Valid_Until"];
 
 function mapToFirestoreFields(dataObject) {
   var fields = {};
@@ -1262,6 +1265,268 @@ function getTaxInvoicePageData(yearFilter) {
 }
 
 function deleteTaxInvoice(docId) { return deleteFirestoreDocument("Master_Tax_Invoice", docId); }
+
+// ==========================================
+// ★ Master — Quotation (ใบเสนอราคา)
+//   ขอบเขตจริง (ตัดจากดีไซน์ต้นฉบับที่มี Reservation/ATP/Sales Order/Credit Limit
+//   ออกไปทั้งหมด — ระบบยังไม่มี collection พวกนั้นจริง เอกสารนี้จึง "ไม่กระทบสต๊อก"
+//   ทุกกรณี ตรงตามที่ดีไซน์ต้นฉบับตั้งใจไว้จริงๆ อยู่แล้ว)
+// ==========================================
+var QUOTATION_COLLECTION = "Quotations";
+var QUOTATION_PREFIX     = "QT";
+var QUOTATION_MARGIN_MIN = 15;   // % กำไรขั้นต้นขั้นต่ำก่อนเตือน (แจ้งเตือนอย่างเดียว ไม่บล็อกการบันทึก)
+var QUOTATION_STATUSES   = ["ร่าง", "ส่งลูกค้าแล้ว", "ปิดงาน-ขายสำเร็จ", "ยกเลิก/ไม่ได้งาน"];
+
+function calcQuoteTotals(items, discPctRaw) {
+  var subtotal = 0, costTotal = 0;
+  (items || []).forEach(function(it) {
+    var qty   = parseFloat(it.qty)       || 0;
+    var price = parseFloat(it.unitPrice) || 0;
+    var cost  = parseFloat(it.costPrice) || 0;
+    subtotal  += qty * price;
+    costTotal += qty * cost;
+  });
+  var discPct    = Math.max(0, Math.min(100, parseFloat(discPctRaw) || 0));
+  var discAmount = Math.round(subtotal * discPct) / 100;
+  var afterDisc  = Math.round((subtotal - discAmount) * 100) / 100;
+  var vat        = Math.round(afterDisc * 0.07 * 100) / 100;
+  var grandTotal = Math.round((afterDisc + vat) * 100) / 100;
+  var profit     = Math.round((afterDisc - costTotal) * 100) / 100;
+  var marginPct  = afterDisc > 0 ? Math.round((profit / afterDisc) * 1000) / 10 : 0;
+  return {
+    subtotal   : Math.round(subtotal * 100) / 100,
+    discPct    : discPct,
+    discAmount : discAmount,
+    afterDisc  : afterDisc,
+    vat        : vat,
+    grandTotal : grandTotal,
+    costTotal  : Math.round(costTotal * 100) / 100,
+    profit     : profit,
+    marginPct  : marginPct
+  };
+}
+
+function buildQuoteNoForMonth(quoteDateStr, runningNumber) {
+  var d = quoteDateStr ? new Date(quoteDateStr + "T00:00:00") : new Date();
+  if (isNaN(d.getTime())) d = new Date();
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var yyBuddhist = String(d.getFullYear() + 543).slice(-2);
+  return QUOTATION_PREFIX + " " + String(runningNumber).padStart(4, '0') + "/" + mm + "/" + yyBuddhist;
+}
+
+function getNextQuoteRunningNumber(quoteDateStr, excludeDocId) {
+  var targetSuffix = buildQuoteNoForMonth(quoteDateStr, 1).split('/').slice(1).join('/');
+  var fetched = fetchAllPagesRaw(QUOTATION_COLLECTION);
+  var maxNum = 0;
+  if (fetched.ok) {
+    fetched.docs.forEach(function(doc) {
+      if (doc.id === excludeDocId) return;
+      var f = doc.fields || {};
+      var no = String(parseFirestoreValue(f.Quote_No) || "");
+      var m = no.match(/^QT\s+(\d{4})\/(\d{2}\/\d{2})$/);
+      if (m && m[2] === targetSuffix) {
+        var num = parseInt(m[1], 10);
+        if (num > maxNum) maxNum = num;
+      }
+    });
+  }
+  return maxNum + 1;
+}
+
+/**
+ * บันทึกใบเสนอราคา — สแนปช็อตข้อมูลลูกค้า ณ เวลาที่เสนอ (กันข้อมูลลูกค้าเปลี่ยนย้อนหลัง
+ * เหมือน saveTaxInvoice) แก้ไขซ้ำ (มี d.docId) จะคงเลขที่เดิม/สถานะเดิม/ผู้สร้างเดิมไว้
+ * เพราะ saveMasterData ใช้ PATCH แบบเขียนทับทั้งฉบับ — ฟิลด์ไหนไม่ส่งไปจะหาย
+ */
+function saveQuotation(d, callerUsername) {
+  d = d || {};
+  var items = Array.isArray(d.items) ? d.items : [];
+  var cleanItems = items.filter(function(it) {
+    return it && String(it.productCode || "").trim() && parseFloat(it.qty) > 0 && parseFloat(it.unitPrice) >= 0;
+  }).map(function(it) {
+    return {
+      productCode : String(it.productCode).trim(),
+      productName : String(it.productName || "").trim(),
+      partNumber  : String(it.partNumber  || "").trim(),
+      qty         : parseFloat(it.qty)       || 0,
+      unitPrice   : parseFloat(it.unitPrice) || 0,
+      costPrice   : parseFloat(it.costPrice) || 0
+    };
+  });
+  if (!cleanItems.length) {
+    return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ" };
+  }
+  if (!String(d.customerId || "").trim()) {
+    return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกลูกค้า" };
+  }
+
+  var cust = getCustomersFull().filter(function(c) { return c.id === d.customerId; })[0];
+  if (!cust) return { success: false, title: "ไม่พบข้อมูล", message: "ไม่พบลูกค้ารายนี้ในระบบ — อาจถูกลบไปแล้ว" };
+
+  var quoteDate  = String(d.quoteDate || "").trim() || new Date().toISOString().slice(0, 10);
+  var validDays  = parseInt(d.validDays, 10) || 15;
+  var validUntil = new Date(quoteDate + "T00:00:00");
+  if (isNaN(validUntil.getTime())) validUntil = new Date();
+  validUntil.setDate(validUntil.getDate() + validDays);
+
+  var totals = calcQuoteTotals(cleanItems, d.discPct);
+  var user   = callerUsername || getCurrentUsername_();
+  var nowIso = new Date().toISOString();
+
+  var quoteNo = "", status = "ร่าง", createdUser = user, createdAt = nowIso;
+  if (d.docId) {
+    var existingUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+                     + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + d.docId;
+    try {
+      var existingRes = UrlFetchApp.fetch(existingUrl, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+      if (existingRes.getResponseCode() === 200) {
+        var ef = JSON.parse(existingRes.getContentText()).fields || {};
+        quoteNo     = parseFirestoreValue(ef.Quote_No)  || "";
+        status      = parseFirestoreValue(ef.Status)    || "ร่าง";
+        createdUser = parseFirestoreValue(ef.User)      || user;
+        createdAt   = parseFirestoreValue(ef.Timestamp) || nowIso;
+      }
+    } catch (e) {
+      console.error("saveQuotation: อ่านข้อมูลเดิมไม่สำเร็จ (จะออกเลขที่ใหม่แทน):", e);
+    }
+  }
+
+  var dataObject = {
+    Quote_Date       : quoteDate,
+    Valid_Days       : validDays,
+    Valid_Until      : validUntil.toISOString().slice(0, 10),
+    Customer_ID      : d.customerId,
+    Customer_Name    : cust.Customer_Name,
+    Customer_Address : cust.Address,
+    Customer_Tax_ID  : cust.Tax_ID,
+    Customer_Branch  : cust.Branch,
+    Customer_Phone   : cust.Phone,
+    Vehicle_Note     : String(d.vehicleNote || "").trim(),
+    Customer_PO      : String(d.customerPo  || "").trim(),
+    Items_JSON       : JSON.stringify(cleanItems),
+    Disc_Pct         : totals.discPct,
+    Subtotal         : totals.subtotal,
+    Disc_Amount      : totals.discAmount,
+    Vat_Amount       : totals.vat,
+    Grand_Total      : totals.grandTotal,
+    Cost_Total       : totals.costTotal,
+    Profit_Total     : totals.profit,
+    Margin_Pct       : totals.marginPct,
+    Status           : status,
+    Note             : String(d.note || "").trim(),
+    User             : createdUser,
+    Timestamp        : createdAt,
+    Updated_At       : nowIso
+  };
+
+  if (d.docId && quoteNo) {
+    dataObject.Quote_No = quoteNo;
+    return saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId, dataObject, null);
+  }
+
+  var lastErr = "";
+  for (var attempt = 0; attempt < 10; attempt++) {
+    var runningNum = getNextQuoteRunningNumber(quoteDate, d.docId || null) + attempt;
+    dataObject.Quote_No = buildQuoteNoForMonth(quoteDate, runningNum);
+
+    var res = saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId || null, dataObject, null);
+    if (res.success) return res;
+    lastErr = res.message;
+    if (String(res.message || "").indexOf("ALREADY_EXISTS") === -1 &&
+        String(res.message || "").indexOf("409") === -1) {
+      break;
+    }
+  }
+  return { success: false, title: "ล้มเหลว", message: lastErr || "ไม่สามารถออกเลขที่ใบเสนอราคาได้ กรุณาลองอีกครั้ง" };
+}
+
+function mapQuotationDoc_(doc) {
+  var f = doc.fields || {};
+  var items = [];
+  try { items = JSON.parse(parseFirestoreValue(f.Items_JSON) || "[]"); } catch (e) {}
+  return {
+    id              : doc.id,
+    quoteNo         : parseFirestoreValue(f.Quote_No)          || doc.id,
+    quoteDate       : parseFirestoreValue(f.Quote_Date)        || "",
+    validUntil      : parseFirestoreValue(f.Valid_Until)       || "",
+    validDays       : parseFloat(parseFirestoreValue(f.Valid_Days)) || 0,
+    customerId      : parseFirestoreValue(f.Customer_ID)       || "",
+    customerName    : parseFirestoreValue(f.Customer_Name)     || "",
+    customerAddress : parseFirestoreValue(f.Customer_Address)  || "",
+    customerTaxId   : parseFirestoreValue(f.Customer_Tax_ID)   || "",
+    customerBranch  : parseFirestoreValue(f.Customer_Branch)   || "",
+    customerPhone   : parseFirestoreValue(f.Customer_Phone)    || "",
+    vehicleNote     : parseFirestoreValue(f.Vehicle_Note)      || "",
+    customerPo      : parseFirestoreValue(f.Customer_PO)       || "",
+    items           : items,
+    discPct         : parseFloat(parseFirestoreValue(f.Disc_Pct))     || 0,
+    subtotal        : parseFloat(parseFirestoreValue(f.Subtotal))     || 0,
+    discAmount      : parseFloat(parseFirestoreValue(f.Disc_Amount))  || 0,
+    vat             : parseFloat(parseFirestoreValue(f.Vat_Amount))   || 0,
+    grandTotal      : parseFloat(parseFirestoreValue(f.Grand_Total))  || 0,
+    costTotal       : parseFloat(parseFirestoreValue(f.Cost_Total))   || 0,
+    profit          : parseFloat(parseFirestoreValue(f.Profit_Total)) || 0,
+    marginPct       : parseFloat(parseFirestoreValue(f.Margin_Pct))   || 0,
+    status          : parseFirestoreValue(f.Status)    || "ร่าง",
+    note            : parseFirestoreValue(f.Note)      || "",
+    user            : parseFirestoreValue(f.User)      || "",
+    timestamp       : parseFirestoreValue(f.Timestamp) || "",
+    updatedAt       : parseFirestoreValue(f.Updated_At)|| ""
+  };
+}
+
+function getQuotationList() {
+  var list = [];
+  try {
+    var fetched = fetchAllPagesRaw(QUOTATION_COLLECTION);
+    if (fetched.ok) {
+      fetched.docs.forEach(function(doc) { list.push(mapQuotationDoc_(doc)); });
+    } else {
+      console.error("getQuotationList: ดึงข้อมูลใบเสนอราคาไม่สำเร็จ");
+    }
+  } catch (e) {
+    console.error("getQuotationList error:", e);
+  }
+  list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
+  return list;
+}
+
+function getQuotationPageData() {
+  return {
+    quotations : getQuotationList(),
+    customers  : getCustomersFull(),
+    products   : getAllProducts(),
+    seller     : TAX_INVOICE_SELLER,
+    marginMin  : QUOTATION_MARGIN_MIN,
+    statuses   : QUOTATION_STATUSES
+  };
+}
+
+function updateQuotationStatus(docId, status) {
+  if (QUOTATION_STATUSES.indexOf(status) === -1) {
+    return { success: false, title: "ไม่ถูกต้อง", message: "สถานะไม่ถูกต้อง" };
+  }
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + docId
+            + "?updateMask.fieldPaths=Status&updateMask.fieldPaths=Updated_At";
+    var res = UrlFetchApp.fetch(url, {
+      method  : "patch",
+      headers : getAuthHeader(),
+      payload : JSON.stringify({ fields: mapToFirestoreFields({ Status: status, Updated_At: new Date().toISOString() }) }),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      clearCollectionCache(QUOTATION_COLLECTION);
+      return { success: true, title: "สำเร็จ", message: "เปลี่ยนสถานะเรียบร้อย" };
+    }
+    return { success: false, title: "ล้มเหลว", message: res.getContentText() };
+  } catch (e) {
+    return { success: false, title: "ข้อผิดพลาด", message: e.message };
+  }
+}
+
+function deleteQuotation(docId) { return deleteFirestoreDocument(QUOTATION_COLLECTION, docId); }
 
 // ==========================================
 // 17. Master — Zones
@@ -2385,6 +2650,7 @@ var API_REGISTRY = {
   getCarsFull              : "viewer",
   getPurchaseOrderPageData : "viewer",
   getTaxInvoicePageData    : "viewer",
+  getQuotationPageData     : "viewer",
 
   // ── เพิ่ม/แก้ไข: staff ขึ้นไป ──
   saveBrand                : "staff",
@@ -2405,9 +2671,12 @@ var API_REGISTRY = {
   getStockMovements        : "viewer",
   getDashboardBootstrap    : "viewer",
 
-  // ── ใบกำกับภาษี — viewer ทำได้ (ข้อยกเว้นเฉพาะ) ──
+  // ── ใบกำกับภาษี / ใบเสนอราคา — viewer ทำได้ (ข้อยกเว้นเฉพาะ เซลส์ต้องออกเอกสารได้เอง) ──
   saveTaxInvoice           : "viewer",
   deleteTaxInvoice         : "viewer",
+  saveQuotation            : "viewer",
+  updateQuotationStatus    : "viewer",
+  deleteQuotation          : "viewer",
 
   // ── ลบข้อมูล + งานระบบ: admin เท่านั้น ──
   deleteBrand              : "admin",
@@ -2457,9 +2726,11 @@ var ACTIVITY_ACTIONS = {
   saveProduct                 : { action: "save",   label: "บันทึกสินค้า" },
   savePurchaseOrder           : { action: "save",   label: "บันทึกใบสั่งซื้อ" },
   saveTaxInvoice               : { action: "save",   label: "บันทึกใบกำกับภาษี" },
+  saveQuotation                : { action: "save",   label: "บันทึกใบเสนอราคา" },
   saveMasterData               : { action: "save",   label: "บันทึกข้อมูล" },
   receiveGoods                 : { action: "update", label: "รับสินค้าเข้าสต็อก" },
   updatePurchaseOrderStatus    : { action: "update", label: "เปลี่ยนสถานะใบสั่งซื้อ" },
+  updateQuotationStatus        : { action: "update", label: "เปลี่ยนสถานะใบเสนอราคา" },
   issueStock                   : { action: "update", label: "ตัดสต๊อกสินค้า" },
   deleteBrand                  : { action: "delete", label: "ลบแบรนด์" },
   deleteCategory                : { action: "delete", label: "ลบหมวดหมู่" },
@@ -2469,7 +2740,8 @@ var ACTIVITY_ACTIONS = {
   deleteCar                      : { action: "delete", label: "ลบข้อมูลรถ" },
   deleteProduct                   : { action: "delete", label: "ลบสินค้า" },
   deletePurchaseOrder              : { action: "delete", label: "ลบใบสั่งซื้อ" },
-  deleteTaxInvoice                  : { action: "delete", label: "ลบใบกำกับภาษี" }
+  deleteTaxInvoice                  : { action: "delete", label: "ลบใบกำกับภาษี" },
+  deleteQuotation                    : { action: "delete", label: "ลบใบเสนอราคา" }
 };
 
 function guessDocId_(fnName, args, result) {
@@ -2535,9 +2807,9 @@ function apiGateway(token, fnName, args, userAgent) {
     }
 
     // inject username ของผู้เรียกจาก session สำหรับฟังก์ชันที่ต้องกันแก้ไขบัญชีตัวเอง
-    // (issueStock/receiveGoods ก็ใช้ช่องทางเดียวกันนี้ เพื่อบันทึก User จริงลง Stock_Movements)
+    // (issueStock/receiveGoods/saveQuotation ก็ใช้ช่องทางเดียวกันนี้ เพื่อบันทึก User จริงลง Stock_Movements/Quotations)
     if (fnName === "resetUserPassword" || fnName === "toggleUserStatus" || fnName === "updateUserAccount" ||
-        fnName === "issueStock" || fnName === "receiveGoods") {
+        fnName === "issueStock" || fnName === "receiveGoods" || fnName === "saveQuotation") {
       a = a.slice();
       a.push(session.username);
     }

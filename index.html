@@ -307,6 +307,7 @@
     <div id="productsForm"    class="form-wrapper"><iframe id="iframe-products"    data-src="<?= webAppUrl ?>?page=products&token=<?= authToken ?>"></iframe></div>
     <div id="ordersForm"      class="form-wrapper"><iframe id="iframe-orders"      data-src="<?= webAppUrl ?>?page=orders&token=<?= authToken ?>"></iframe></div>
     <div id="taxinvoiceForm"  class="form-wrapper"><iframe id="iframe-taxinvoice"  data-src="<?= webAppUrl ?>?page=taxinvoice&token=<?= authToken ?>"></iframe></div>
+    <div id="quotationForm"   class="form-wrapper"><iframe id="iframe-quotation"   data-src="<?= webAppUrl ?>?page=quotation&token=<?= authToken ?>"></iframe></div>
     <div id="brandsForm"      class="form-wrapper"><iframe id="iframe-brands"      data-src="<?= webAppUrl ?>?page=brands&token=<?= authToken ?>"></iframe></div>
     <div id="categoriesForm"  class="form-wrapper"><iframe id="iframe-categories"  data-src="<?= webAppUrl ?>?page=categories&token=<?= authToken ?>"></iframe></div>
     <div id="vendorsForm"     class="form-wrapper"><iframe id="iframe-vendors"     data-src="<?= webAppUrl ?>?page=vendors&token=<?= authToken ?>"></iframe></div>
@@ -433,6 +434,7 @@
         {id:'stockissue', ic:'📤', label:'ตัดสต๊อก / ขายหน้าร้าน', roles:['admin','staff']},
         {id:'products',   ic:'🛒', label:'จัดการสินค้า', badge:'products', roles:['admin','staff']},
         {id:'orders',     ic:'🧾', label:'สั่งซื้อสินค้า', badge:'orders', roles:['admin','staff']},
+        {id:'quotation',  ic:'📄', label:'ใบเสนอราคา'},
         {id:'taxinvoice', ic:'🧮', label:'ใบกำกับภาษี'}
       ]},
     { group:'ข้อมูลหลัก',  items:[
