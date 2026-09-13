@@ -99,6 +99,12 @@
               <div class="field-hint">ไม่บังคับกรอก — แต่ถ้ากรอก ต้องไม่ซ้ำกับสินค้าอื่นในระบบ</div>
             </div>
 
+            <div class="form-group full">
+              <label>บาร์โค้ด (Barcode)</label>
+              <input type="text" id="inp_barcode" class="form-control" placeholder="สแกนด้วยเครื่องอ่านบาร์โค้ดลงช่องนี้ได้เลย หรือกรอกเอง (ไม่บังคับ)">
+              <div class="field-hint">ไม่บังคับ — สินค้าที่ไม่มีบาร์โค้ดจากโรงงาน ใช้ "รหัสสินค้า" สแกน/ค้นหาแทนได้อยู่แล้ว</div>
+            </div>
+
             <div class="form-group">
               <label>แบรนด์</label>
               <select id="inp_brandId" class="form-control">
@@ -170,6 +176,25 @@
             </div>
           </div>
 
+          <div class="section-label">รูปสินค้า</div>
+          <div class="form-grid">
+            <div class="form-group full">
+              <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+                <div id="imgPreviewBox" style="width:110px;height:110px;border:1px dashed #cbd5e1;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--bg);flex-shrink:0">
+                  <span style="font-size:28px;color:var(--faint)">📦</span>
+                </div>
+                <div style="flex:1;min-width:180px">
+                  <input type="file" id="inp_imageFile" accept="image/*" style="display:none" onchange="onProductImageSelected(this)">
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button type="button" class="btn btn-ghost" id="btnPickImage" onclick="document.getElementById('inp_imageFile').click()">🖼️ เลือกรูป</button>
+                    <button type="button" class="btn btn-ghost" id="btnDeleteImage" style="display:none" onclick="deleteProductImageNow()">🗑️ ลบรูป</button>
+                  </div>
+                  <div class="field-hint" id="imageHint">บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้ (ต้องมีรหัสสินค้าก่อน)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="section-label">สถานะ</div>
           <div class="form-grid">
             <div class="form-group full">
@@ -237,6 +262,7 @@
       <table>
         <colgroup>
           <col style="width: 45px;">  <!-- # -->
+          <col style="width: 52px;">  <!-- รูป -->
           <col style="width: 130px;"> <!-- รหัสสินค้า -->
           <col style="width: 250px;"> <!-- ชื่อสินค้า -->
           <col style="width: 90px;">  <!-- ประเภท -->
@@ -254,6 +280,7 @@
         <thead id="productThead">
           <tr>
             <th style="text-align: center;">#</th>
+            <th style="text-align: center;">รูป</th>
             <th>รหัสสินค้า</th>
             <th>ชื่อสินค้า</th>
             <th>ประเภท</th>
@@ -271,7 +298,7 @@
           </tr>
         </thead>
         <tbody id="productBody">
-          <tr class="empty-row"><td colspan="15">⏳ กำลังโหลดข้อมูล...</td></tr>
+          <tr class="empty-row"><td colspan="16">⏳ กำลังโหลดข้อมูล...</td></tr>
         </tbody>
       </table>
     </div>
@@ -308,6 +335,9 @@
   // Multi-select state สำหรับรุ่นรถ
   var selectedCarIds  = [];
   var carOptionsCache = [];
+
+  // ★ ยังไม่เคยอัปโหลดรูป → request รูป 404 ตามคาด — สลับเป็นไอคอน placeholder แทนไอคอนรูปหักของเบราว์เซอร์
+  function prodImgFallback(el) { el.outerHTML = '<span style="font-size:16px;color:var(--faint)">📦</span>'; }
 
   window.onload = function() {
     // ★ โหลดแบบเรียงลำดับ (ไม่ใช่พร้อมกัน) เพื่อลดการอ่าน Firestore ซ้ำ
@@ -397,7 +427,7 @@
 
   function loadTable() {
     var tbody = document.getElementById('productBody');
-    tbody.innerHTML = skeletonRows(15,6);
+    tbody.innerHTML = skeletonRows(16,6);
     document.getElementById('recordCount').innerText = 'กำลังโหลด';
 
     callApi('getAllProducts', [], function(data) {
@@ -406,10 +436,10 @@
           filterAndRenderTable();
         } catch (e) {
           console.error('filterAndRenderTable error:', e);
-          tbody.innerHTML = emptyStateHtml(15,{icon:'⚠️',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
+          tbody.innerHTML = emptyStateHtml(16,{icon:'⚠️',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
         }
       }, function(err) {
-        tbody.innerHTML = emptyStateHtml(15,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
+        tbody.innerHTML = emptyStateHtml(16,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
           actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]});
       });
   }
@@ -433,6 +463,7 @@
     thead.innerHTML =
       '<tr>' +
         '<th style="text-align:center; width:45px;">#</th>' +
+        '<th style="text-align:center; width:52px;">รูป</th>' +
         XLF.th('รหัสสินค้า', 'products', 'productCode') +
         XLF.th('ชื่อสินค้า', 'products', 'productName') +
         XLF.th('ประเภท', 'products', 'partType') +
@@ -459,6 +490,7 @@
         return (item.productName || '').toLowerCase().indexOf(query) > -1 ||
                (item.productCode || item.id || '').toLowerCase().indexOf(query) > -1 ||
                (item.partNumber || '').toLowerCase().indexOf(query) > -1 ||
+               (item.barcode || '').toLowerCase().indexOf(query) > -1 ||
                (item.brandName || '').toLowerCase().indexOf(query) > -1 ||
                (item.categoryName || '').toLowerCase().indexOf(query) > -1 ||
                (item.carModel || '').toLowerCase().indexOf(query) > -1;
@@ -489,9 +521,9 @@
 
     if (total === 0) {
       tbody.innerHTML = productsCache.length
-        ? emptyStateHtml(15,{title:'ไม่พบสินค้าที่ตรงกับตัวกรอง',sub:'ลองลดคำค้นหรือล้างตัวกรอง',
+        ? emptyStateHtml(16,{title:'ไม่พบสินค้าที่ตรงกับตัวกรอง',sub:'ลองลดคำค้นหรือล้างตัวกรอง',
             actions:[{label:'ล้างตัวกรอง',onclick:'XLF.clearAll(\'products\');document.getElementById(\'tableSearchInput\').value=\'\';onSearchInput();'},{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]})
-        : emptyStateHtml(15,{icon:'🛒',title:'ยังไม่มีข้อมูลสินค้า',sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
+        : emptyStateHtml(16,{icon:'🛒',title:'ยังไม่มีข้อมูลสินค้า',sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
             actions:[{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]});
       updatePaginationControls(0, 0, 0);
       return;
@@ -530,9 +562,13 @@
       }
 
       var codeKey = item.id || item.productCode;
+      var imgCell = item.imageUrl
+        ? '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" style="width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--line)" onerror="prodImgFallback(this)">'
+        : '<span style="font-size:16px;color:var(--faint)">📦</span>';
 
       return '<tr>' +
         '<td style="text-align: center; color: #94a3b8;">' + rowNum + '</td>' +
+        '<td style="text-align:center">' + imgCell + '</td>' +
         '<td><span class="chip-code">' + esc(item.productCode || item.id) + '</span></td>' +
         '<td style="font-weight:600;">' + esc(item.productName) + '</td>' +
         '<td>' + partTypeTxt + '</td>' +
@@ -601,6 +637,7 @@
     document.getElementById('inp_productName').value  = '';
     document.getElementById('inp_partType').value     = '';
     document.getElementById('inp_partNumber').value   = '';
+    document.getElementById('inp_barcode').value      = '';
     document.getElementById('inp_brandId').value      = '';
     document.getElementById('inp_categoryId').value   = '';
     document.getElementById('inp_vendorId').value      = '';
@@ -614,7 +651,8 @@
     selectedCarIds = [];
     renderCarChips();
     renderCarDropdownList('');
-    
+    updateImageSectionForEdit(null, '');
+
     document.getElementById('modalTitle').innerText   = '🛒 เพิ่มข้อมูลสินค้า';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
     document.getElementById('modalAlert').style.display = 'none';
@@ -630,6 +668,7 @@
     document.getElementById('inp_productName').value   = item.productName   || '';
     document.getElementById('inp_partType').value      = item.partType      || '';
     document.getElementById('inp_partNumber').value     = item.partNumber    || '';
+    document.getElementById('inp_barcode').value        = item.barcode       || '';
     document.getElementById('inp_brandId').value       = item.brandId       || '';
     document.getElementById('inp_categoryId').value    = item.categoryId    || '';
     document.getElementById('inp_vendorId').value      = item.vendorId      || '';
@@ -643,6 +682,7 @@
     selectedCarIds = Array.isArray(item.carIds) ? item.carIds : (item.carIds ? String(item.carIds).split(',') : []);
     renderCarChips();
     renderCarDropdownList('');
+    updateImageSectionForEdit(editingDocId, item.imageUrl);
 
     document.getElementById('modalTitle').innerText   = '✏️ แก้ไขข้อมูลสินค้า (' + editingDocId + ')';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
@@ -663,7 +703,8 @@
 
     document.getElementById('modalAlert').style.display = 'none';
     document.getElementById('carDropdownList').classList.remove('show');
-    
+    updateImageSectionForEdit(null, '');
+
     var btn = document.getElementById('modalBtnSave');
     btn.disabled = false; btn.innerText = '💾 บันทึก';
     editingDocId = null;
@@ -692,6 +733,7 @@
       productName  : document.getElementById('inp_productName').value.trim(),
       partType     : partType,
       partNumber   : document.getElementById('inp_partNumber').value.trim(),
+      barcode      : document.getElementById('inp_barcode').value.trim(),
       brandId      : document.getElementById('inp_brandId').value,
       categoryId   : document.getElementById('inp_categoryId').value,
       vendorId     : document.getElementById('inp_vendorId').value,
@@ -704,6 +746,7 @@
       status       : document.getElementById('inp_status').value
     };
 
+    var wasNew = !editingDocId;
     callApi('saveProduct', [formData], function(res) {
         btn.disabled  = false;
         btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
@@ -714,7 +757,17 @@
           alertEl.innerText = '✅ ' + res.message + ' (ID: ' + res.id + ')';
           loadTable();
           notifyParentRefresh();
-          setTimeout(function() { closeProductModal(); }, 1200);
+          if (wasNew && res.id) {
+            // ★ เพิ่งสร้างสินค้าใหม่ (เพิ่งมีรหัสสินค้า) — เปิดโอกาสอัปโหลดรูปต่อได้เลยโดยไม่ต้องปิดแล้วเปิดแก้ไขใหม่
+            editingDocId = res.id;
+            document.getElementById('modalDocId').value = res.id;
+            document.getElementById('modalTitle').innerText = '✏️ แก้ไขข้อมูลสินค้า (' + res.id + ')';
+            document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
+            updateImageSectionForEdit(res.id, '');
+            alertEl.innerText += ' — ตอนนี้เพิ่มรูปสินค้าได้แล้ว';
+          } else {
+            setTimeout(function() { closeProductModal(); }, 1200);
+          }
         } else {
           alertEl.className = 'modal-alert error';
           alertEl.innerText = '❌ ' + res.message;
@@ -726,6 +779,110 @@
         alertEl.className     = 'modal-alert error';
         alertEl.innerText     = '❌ Error: ' + JSON.stringify(err);
       });
+  }
+
+  // ==========================================
+  // รูปสินค้า — ย่อขนาด+แปลงเป็น JPEG ฝั่ง browser ก่อนส่งขึ้น Firebase Storage
+  //   (ต้องมีรหัสสินค้าก่อน จึงอัปโหลดได้ — path คงที่ product-images/{รหัส}.jpg บน server)
+  // ==========================================
+  var PROD_IMG_MAX_DIM = 900, PROD_IMG_QUALITY = 0.82;
+
+  function updateImageSectionForEdit(docId, imageUrl) {
+    document.getElementById('btnPickImage').disabled = !docId;
+    document.getElementById('imageHint').innerText = docId
+      ? 'ไฟล์ JPG/PNG ไม่เกิน 5MB — ระบบจะย่อขนาดให้อัตโนมัติก่อนอัปโหลด'
+      : 'บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้ (ต้องมีรหัสสินค้าก่อน)';
+    if (docId && imageUrl) showImagePreview(imageUrl);
+    else resetImagePreview();
+  }
+
+  function resetImagePreview() {
+    document.getElementById('imgPreviewBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
+    document.getElementById('btnDeleteImage').style.display = 'none';
+    document.getElementById('inp_imageFile').value = '';
+  }
+
+  function showImagePreview(url) {
+    document.getElementById('imgPreviewBox').innerHTML =
+      '<img src="' + esc(url) + '" style="width:100%;height:100%;object-fit:cover" onerror="prodModalImgFallback()">';
+    document.getElementById('btnDeleteImage').style.display = '';
+  }
+
+  function prodModalImgFallback() {
+    document.getElementById('imgPreviewBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
+    document.getElementById('btnDeleteImage').style.display = 'none';
+  }
+
+  function onProductImageSelected(input) {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    if (!editingDocId) { swyWarning('บันทึกสินค้าก่อน', 'กรุณาบันทึกข้อมูลสินค้าก่อน จึงจะอัปโหลดรูปได้'); input.value = ''; return; }
+    if (!/^image\//.test(file.type)) { swyWarning('ไฟล์ไม่ถูกต้อง', 'กรุณาเลือกไฟล์รูปภาพเท่านั้น'); input.value = ''; return; }
+    if (file.size > 5 * 1024 * 1024) { swyWarning('ไฟล์ใหญ่เกินไป', 'ขนาดไฟล์ต้นฉบับต้องไม่เกิน 5MB'); input.value = ''; return; }
+
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var img = new Image();
+      img.onload = function () {
+        var w = img.width, h = img.height;
+        if (w > PROD_IMG_MAX_DIM || h > PROD_IMG_MAX_DIM) {
+          if (w >= h) { h = Math.round(h * PROD_IMG_MAX_DIM / w); w = PROD_IMG_MAX_DIM; }
+          else { w = Math.round(w * PROD_IMG_MAX_DIM / h); h = PROD_IMG_MAX_DIM; }
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        var base64 = canvas.toDataURL('image/jpeg', PROD_IMG_QUALITY).split(',')[1];
+        uploadProductImageNow(base64);
+      };
+      img.onerror = function () { swyError('เปิดไฟล์รูปไม่สำเร็จ', 'ไฟล์อาจเสียหายหรือไม่ใช่รูปภาพ'); input.value = ''; };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function uploadProductImageNow(base64) {
+    var pickBtn = document.getElementById('btnPickImage');
+    btnBusy(pickBtn, 'กำลังอัปโหลด...');
+    callApi('uploadProductImage', [editingDocId, base64], function (res) {
+      btnDone(pickBtn);
+      document.getElementById('inp_imageFile').value = '';
+      if (res && res.success) {
+        showImagePreview(res.imageUrl);
+        var cached = productsCache.find(function (p) { return p.id === editingDocId; });
+        if (cached) cached.imageUrl = res.imageUrl;
+        toast('อัปโหลดรูปสำเร็จ');
+        filterAndRenderTable();
+      } else {
+        swyError('อัปโหลดไม่สำเร็จ', (res && res.message) || 'ไม่ทราบสาเหตุ');
+      }
+    }, function (err) {
+      btnDone(pickBtn);
+      document.getElementById('inp_imageFile').value = '';
+      swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+    });
+  }
+
+  function deleteProductImageNow() {
+    if (!editingDocId) return;
+    swyConfirm({ icon: 'warning', title: 'ลบรูปสินค้า?', html: 'ต้องการลบรูปของสินค้านี้ใช่หรือไม่?', confirmText: 'ลบรูป' }).then(function (ok) {
+      if (!ok) return;
+      var btn = document.getElementById('btnDeleteImage');
+      btnBusy(btn, 'กำลังลบ...');
+      callApi('deleteProductImage', [editingDocId], function (res) {
+        btnDone(btn); btn.innerHTML = '🗑️ ลบรูป';
+        if (res && res.success) {
+          resetImagePreview();
+          toast('ลบรูปเรียบร้อย');
+          filterAndRenderTable();
+        } else {
+          swyError('ลบไม่สำเร็จ', (res && res.message) || '');
+        }
+      }, function (err) {
+        btnDone(btn); btn.innerHTML = '🗑️ ลบรูป';
+        swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+      });
+    });
   }
 
   // ==========================================

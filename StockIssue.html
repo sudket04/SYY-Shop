@@ -359,12 +359,13 @@
   function scoreProduct(p, terms) {
     var code = String(p.productCode || '').toLowerCase();
     var pn   = String(p.partNumber  || '').toLowerCase();
-    var hay  = [p.productName, p.productCode, p.partNumber, p.brandName, p.categoryName, p.carModel, p.zoneName, p.partType]
+    var bc   = String(p.barcode     || '').toLowerCase();
+    var hay  = [p.productName, p.productCode, p.partNumber, p.barcode, p.brandName, p.categoryName, p.carModel, p.zoneName, p.partType]
                  .map(function (x) { return String(x || '').toLowerCase(); }).join(' | ');
     for (var i = 0; i < terms.length; i++) { if (hay.indexOf(terms[i]) === -1) return -1; }
     var s = 0;
     terms.forEach(function (t) {
-      if (code === t || pn === t) s += 100;
+      if (code === t || pn === t || (bc && bc === t)) s += 100;
       else if (code.indexOf(t) === 0 || pn.indexOf(t) === 0) s += 60;
       else if (String(p.productName || '').toLowerCase().indexOf(t) === 0) s += 30;
       else s += 10;
@@ -430,6 +431,7 @@
       var partTxt = p.partType === 'แท้' ? '<span class="part-badge part-genuine">แท้</span>'
                   : p.partType === 'เทียบ' ? '<span class="part-badge part-copy">เทียบ</span>' : '';
       return '<div class="res-row ' + (i === selIdx ? 'sel ' : '') + (st <= 0 ? 'out' : '') + '" onclick="addToBasket(\'' + esc(p.productCode) + '\')">' +
+        (p.imageUrl ? '<img src="' + esc(p.imageUrl) + '" alt="" loading="lazy" style="width:40px;height:40px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex-shrink:0" onerror="this.remove()">' : '') +
         '<div class="res-main">' +
           '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
             '<span class="res-name">' + esc(p.productName) + '</span>' + partTxt +

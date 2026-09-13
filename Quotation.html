@@ -371,12 +371,13 @@ function moveSel(delta) {
 function scoreProduct(p, terms) {
   var code = String(p.productCode || '').toLowerCase();
   var pn   = String(p.partNumber  || '').toLowerCase();
-  var hay  = [p.productName, p.productCode, p.partNumber, p.brandName, p.categoryName, p.carModel]
+  var bc   = String(p.barcode     || '').toLowerCase();
+  var hay  = [p.productName, p.productCode, p.partNumber, p.barcode, p.brandName, p.categoryName, p.carModel]
                .map(function (x) { return String(x || '').toLowerCase(); }).join(' | ');
   for (var i = 0; i < terms.length; i++) { if (hay.indexOf(terms[i]) === -1) return -1; }
   var s = 0;
   terms.forEach(function (t) {
-    if (code === t || pn === t) s += 100;
+    if (code === t || pn === t || (bc && bc === t)) s += 100;
     else if (code.indexOf(t) === 0 || pn.indexOf(t) === 0) s += 60;
     else s += 10;
   });

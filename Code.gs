@@ -84,6 +84,89 @@ function getAuthHeader() {
 }
 
 // ==========================================
+// 2a. ★ รูปสินค้า — Firebase Storage (bucket เดียวกับโปรเจกต์ Firestore นี้)
+//   ⚠️ ต้องตรวจสอบชื่อ bucket จริงจาก Firebase Console → Storage ก่อนใช้งาน
+//   (โปรเจกต์ที่สร้างก่อน ต.ค. 2024 มักเป็น "<project-id>.appspot.com",
+//    โปรเจกต์ใหม่กว่านั้นมักเป็น "<project-id>.firebasestorage.app")
+//   และต้องตั้งสิทธิ์อ่านสาธารณะ (allUsers: Storage Object Viewer) ที่ bucket นี้ครั้งเดียว
+//   ใน Google Cloud Console เพื่อให้ URL รูปใช้ได้ตรงๆ โดยไม่ต้องมี token — ดูรายละเอียดใน README
+// ==========================================
+var FIREBASE_STORAGE_BUCKET = "syy-shop.appspot.com";
+
+function productImageUrl_(productCode) {
+  return "https://storage.googleapis.com/" + FIREBASE_STORAGE_BUCKET + "/product-images/" + encodeURIComponent(productCode) + ".jpg";
+}
+
+/**
+ * ★ อัปโหลดรูปสินค้า (client ย่อขนาด+แปลงเป็น JPEG เป็น base64 มาให้แล้ว)
+ *   ใช้ path คงที่ product-images/{productCode}.jpg เสมอ — อัปโหลดรูปใหม่ทับรูปเก่าอัตโนมัติ
+ *   จึงไม่ต้องเก็บ Image_Url/Image_Path เป็นฟิลด์ใน Firestore เลย (คำนวณจาก productCode ได้เสมอ)
+ *   ข้อดี: แก้ไขสินค้าอื่น (ราคา/สต๊อก) ด้วย saveProduct (ซึ่ง PATCH แบบไม่มี updateMask) จะไม่มีทาง
+ *   ไปทับ/ลบข้อมูลรูปทิ้งโดยไม่ตั้งใจ เพราะไม่มีฟิลด์รูปให้ทับตั้งแต่แรก
+ */
+function uploadProductImage(productCode, base64Data) {
+  try {
+    productCode = String(productCode || "").trim();
+    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า — กรุณาบันทึกสินค้าก่อน" };
+    if (!base64Data) return { success: false, message: "ไม่พบข้อมูลรูปภาพ" };
+
+    var bytes = Utilities.base64Decode(base64Data);
+    if (bytes.length > 5 * 1024 * 1024) {
+      return { success: false, message: "ไฟล์รูปใหญ่เกินไป (เกิน 5MB หลังย่อขนาดแล้ว)" };
+    }
+
+    var objectPath = "product-images/" + productCode + ".jpg";
+    var uploadUrl = "https://firebasestorage.googleapis.com/v0/b/" + FIREBASE_STORAGE_BUCKET
+                   + "/o?uploadType=media&name=" + encodeURIComponent(objectPath);
+    var res = UrlFetchApp.fetch(uploadUrl, {
+      method             : "post",
+      headers            : { "Authorization": "Bearer " + ScriptApp.getOAuthToken() },
+      contentType        : "image/jpeg",
+      payload            : bytes,
+      muteHttpExceptions : true
+    });
+    if (res.getResponseCode() !== 200) {
+      return { success: false, message: "อัปโหลดไม่สำเร็จ (HTTP " + res.getResponseCode() + "): " + res.getContentText() };
+    }
+
+    // ตั้ง cache สั้นๆ กันรูปเก่าค้างในเบราว์เซอร์หลังเปลี่ยนรูป — ไม่บล็อกผลลัพธ์ถ้าขั้นนี้ล้มเหลว
+    try {
+      UrlFetchApp.fetch(
+        "https://firebasestorage.googleapis.com/v0/b/" + FIREBASE_STORAGE_BUCKET + "/o/" + encodeURIComponent(objectPath),
+        {
+          method             : "patch",
+          headers            : { "Authorization": "Bearer " + ScriptApp.getOAuthToken() },
+          contentType        : "application/json",
+          payload            : JSON.stringify({ cacheControl: "public, max-age=300" }),
+          muteHttpExceptions : true
+        }
+      );
+    } catch (e2) { /* ไม่กระทบผลอัปโหลดหลัก */ }
+
+    return { success: true, message: "อัปโหลดรูปสำเร็จ", imageUrl: productImageUrl_(productCode) + "?t=" + Date.now() };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+
+function deleteProductImage(productCode) {
+  try {
+    productCode = String(productCode || "").trim();
+    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
+    var objectPath = "product-images/" + productCode + ".jpg";
+    var res = UrlFetchApp.fetch(
+      "https://firebasestorage.googleapis.com/v0/b/" + FIREBASE_STORAGE_BUCKET + "/o/" + encodeURIComponent(objectPath),
+      { method: "delete", headers: { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true }
+    );
+    var code = res.getResponseCode();
+    if (code === 200 || code === 204 || code === 404) return { success: true, message: "ลบรูปเรียบร้อย" };
+    return { success: false, message: "ลบไม่สำเร็จ (HTTP " + code + "): " + res.getContentText() };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+
+// ==========================================
 // 2b. ★ Cache Layer — ลด Firestore Reads (Firebase Spark Plan / Free Quota)
 // ==========================================
 var CACHE_TTL_SECONDS     = 21600;
@@ -277,7 +360,7 @@ var FORCE_STRING_FIELDS = ["Part_Number", "Product_Name", "Brand_Name", "Categor
                             "Customer_Name", "Address_No", "Address_Moo", "Address_Road",
                             "Subdistrict", "District", "Province", "Postal_Code", "Invoice_Date",
                             "Quote_No", "Customer_Tax_ID", "Customer_Phone", "Customer_Branch",
-                            "Customer_PO", "Quote_Date", "Valid_Until"];
+                            "Customer_PO", "Quote_Date", "Valid_Until", "Barcode"];
 
 function mapToFirestoreFields(dataObject) {
   var fields = {};
@@ -538,6 +621,8 @@ function getAllProducts() {
           productName  : parseFirestoreValue(f.Product_Name)   || "",
           partType     : parseFirestoreValue(f.Part_Type)      || "",
           partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
+          barcode      : String(parseFirestoreValue(f.Barcode) || ""),
+          imageUrl     : productImageUrl_(id),
           brandId      : brandId,
           brandName    : brandMap[brandId]   || brandId,
           categoryId   : catId,
@@ -606,6 +691,8 @@ function getProductById(productCode) {
         productName  : parseFirestoreValue(f.Product_Name)        || "",
         partType     : parseFirestoreValue(f.Part_Type)           || "",
         partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
+        barcode      : String(parseFirestoreValue(f.Barcode) || ""),
+        imageUrl     : productImageUrl_(productCode),
         brandId      : brandId,
         brandName    : brandMap[brandId]   || brandId,
         categoryId   : catId,
@@ -724,6 +811,7 @@ function saveProduct(d) {
     Product_Name      : String(d.productName   || ""),
     Part_Type         : String(d.partType      || ""),
     Part_Number       : String(d.partNumber    || "").trim(),
+    Barcode           : String(d.barcode       || "").trim(),
     Brand_ID          : String(d.brandId       || ""),
     Category_ID       : String(d.categoryId    || ""),
     Default_Vendor_ID : String(d.vendorId      || ""),
@@ -745,6 +833,10 @@ function saveProduct(d) {
   if (dataObject.Part_Number) {
     var dupCheck = checkPartNumberDuplicate(dataObject.Part_Number, docId);
     if (dupCheck) return dupCheck;
+  }
+  if (dataObject.Barcode) {
+    var dupBarcode = checkBarcodeDuplicate(dataObject.Barcode, docId);
+    if (dupBarcode) return dupBarcode;
   }
 
   return saveMasterData("Master_Products", "P", docId, dataObject, d.productName);
@@ -768,6 +860,28 @@ function checkPartNumberDuplicate(partNumber, excludeDocId) {
 
   if (isDuplicate) {
     return { success: false, title: "ข้อมูลซ้ำ!", message: 'รหัสจากผู้ผลิต (Part Number) "' + partNumber + '" มีอยู่ในระบบแล้ว' };
+  }
+  return null;
+}
+
+function checkBarcodeDuplicate(barcode, excludeDocId) {
+  var compareVal = String(barcode || "").trim().toLowerCase();
+  if (!compareVal) return null;
+
+  var fetched = fetchAllPagesRaw("Master_Products");
+  if (!fetched.ok) {
+    console.error("checkBarcodeDuplicate: ดึงข้อมูลสินค้าไม่สำเร็จ ข้ามการตรวจสอบซ้ำ");
+    return null;
+  }
+
+  var isDuplicate = fetched.docs.some(function(doc) {
+    if (doc.id === excludeDocId) return false;
+    var existingVal = String(parseFirestoreValue((doc.fields || {}).Barcode) || "").trim().toLowerCase();
+    return existingVal && existingVal === compareVal;
+  });
+
+  if (isDuplicate) {
+    return { success: false, title: "ข้อมูลซ้ำ!", message: 'บาร์โค้ด "' + barcode + '" มีอยู่ในระบบแล้ว' };
   }
   return null;
 }
@@ -2707,6 +2821,8 @@ var API_REGISTRY = {
   saveZone                 : "staff",
   saveCar                  : "staff",
   saveProduct              : "staff",
+  uploadProductImage       : "staff",
+  deleteProductImage       : "staff",
   // ★ FIX: saveMasterData ไม่เคยอยู่ใน registry นี้เลย — apiGateway ปฏิเสธทุกครั้งที่เรียก
   //   (Master_Brands.html และ Master_Categories.html เรียกฟังก์ชันนี้ตรงๆ ไม่ผ่าน saveBrand/saveCategory)
   //   ทำให้กดบันทึกแบรนด์/หมวดหมู่ไม่ได้เลยถ้าไม่แก้ตรงนี้ — SAVE_MASTER_ALLOWED ด้านล่างเป็นด่านกันอยู่แล้วว่าเขียนได้แค่ 2 collection นี้
@@ -2772,6 +2888,8 @@ var ACTIVITY_ACTIONS = {
   saveZone                    : { action: "save",   label: "บันทึกโซนจัดเก็บ" },
   saveCar                     : { action: "save",   label: "บันทึกข้อมูลรถ" },
   saveProduct                 : { action: "save",   label: "บันทึกสินค้า" },
+  uploadProductImage          : { action: "update", label: "อัปโหลดรูปสินค้า" },
+  deleteProductImage          : { action: "delete", label: "ลบรูปสินค้า" },
   savePurchaseOrder           : { action: "save",   label: "บันทึกใบสั่งซื้อ" },
   saveTaxInvoice               : { action: "save",   label: "บันทึกใบกำกับภาษี" },
   saveQuotation                : { action: "save",   label: "บันทึกใบเสนอราคา" },
