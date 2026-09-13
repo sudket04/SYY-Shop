@@ -31,6 +31,7 @@
   .res-chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
   .code-badge{font-family:'Courier New',monospace;font-size:10.5px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:6px;padding:2px 7px}
   .pn-badge{font-family:'Courier New',monospace;font-size:10.5px;color:#475569;background:var(--line-soft);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+  .bc-badge{font-family:'Courier New',monospace;font-size:10.5px;color:#be185d;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:6px;padding:2px 7px}
   .res-side{text-align:right;flex-shrink:0;font-size:12px;color:var(--muted)}
 
   .item-basket-head{display:grid;grid-template-columns:1fr 92px 110px 110px 32px;gap:8px;padding:0 4px 6px;font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
@@ -403,6 +404,7 @@ function renderResults() {
         '<div class="res-chips">' +
           '<span class="code-badge">' + esc(p.productCode) + '</span>' +
           (p.partNumber ? '<span class="pn-badge">P/N ' + esc(p.partNumber) + '</span>' : '') +
+          (p.barcode ? '<span class="bc-badge">🔖 ' + esc(p.barcode) + '</span>' : '') +
         '</div>' +
       '</div>' +
       '<div class="res-side">' + money(p.sellingPrice) + '<br>คงเหลือ ' + st + '</div>' +
@@ -418,7 +420,7 @@ function addToBasket(code) {
   if (line) { line.qty += 1; }
   else {
     basket.push({
-      productCode: p.productCode, productName: p.productName, partNumber: p.partNumber || '',
+      productCode: p.productCode, productName: p.productName, partNumber: p.partNumber || '', barcode: p.barcode || '',
       qty: 1, unitPrice: num(p.sellingPrice), costPrice: num(p.costPrice), stock: num(p.currentStock)
     });
   }
@@ -462,7 +464,8 @@ function renderBasket() {
         '<div>' +
           '<div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(b.productName) + '</div>' +
           '<div class="res-chips"><span class="code-badge">' + esc(b.productCode) + '</span>' +
-            (b.partNumber ? '<span class="pn-badge">P/N ' + esc(b.partNumber) + '</span>' : '') + '</div>' +
+            (b.partNumber ? '<span class="pn-badge">P/N ' + esc(b.partNumber) + '</span>' : '') +
+            (b.barcode ? '<span class="bc-badge">🔖 ' + esc(b.barcode) + '</span>' : '') + '</div>' +
           '<div class="stock-note' + (lowStock ? ' low' : '') + '">' +
             (lowStock ? '⚠️ สต๊อกคงเหลือไม่พอ (คงเหลือ ' + b.stock + ')' : 'คงเหลือ ' + b.stock + ' ชิ้น') +
           '</div>' +
@@ -538,6 +541,7 @@ function loadQuotationIntoBuild(docId) {
   basket = (q.items || []).map(function (it) {
     var p = products.find(function (x) { return x.productCode === it.productCode; });
     return { productCode: it.productCode, productName: it.productName, partNumber: it.partNumber || '',
+             barcode: p ? (p.barcode || '') : '',
              qty: it.qty, unitPrice: it.unitPrice, costPrice: it.costPrice, stock: p ? num(p.currentStock) : 0 };
   });
   document.getElementById('selCustomer').value = q.customerId;

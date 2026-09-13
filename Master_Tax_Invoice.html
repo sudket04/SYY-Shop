@@ -22,6 +22,16 @@
   .btn-icon.print:hover{background:#7c3aed;color:#fff}
   .btn-icon-sm{background:var(--info-bg);border:1px solid #bfdbfe;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:13px;line-height:1}
   .btn-icon-sm:hover{background:#dbeafe}
+  .product-search-wrap{position:relative;margin-bottom:8px}
+  .product-result-list{display:none;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+  .product-res-row{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;gap:10px;align-items:center;background:#fff;cursor:pointer}
+  .product-res-row:hover,.product-res-row.sel{border-color:var(--primary);background:#f0f9ff}
+  .product-res-main{flex:1;min-width:0}
+  .product-res-name{font-size:13px;font-weight:600;color:var(--ink)}
+  .product-res-chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+  .product-code-badge{font-family:'Courier New',monospace;font-size:10.5px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:6px;padding:2px 7px}
+  .product-bc-badge{font-family:'Courier New',monospace;font-size:10.5px;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:2px 7px}
+  .product-res-side{text-align:right;flex-shrink:0;font-size:12px;color:var(--muted);white-space:nowrap}
   .item-basket-head{display:grid;grid-template-columns:1fr 70px 100px 120px 110px 36px;gap:8px;padding:0 4px 6px;font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
   .item-basket-row{display:grid;grid-template-columns:1fr 70px 100px 120px 110px 36px;gap:8px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--line-soft)}
   .item-basket-row .line-total{font-family:'Courier New',monospace;font-weight:700;color:#166534;text-align:right;font-size:13px}
@@ -177,6 +187,13 @@
         </div>
 
         <div class="section-label">รายการสินค้า / บริการ</div>
+        <div class="product-search-wrap">
+          <input type="text" id="productSearchInput" class="form-control"
+                 placeholder="🔍 ค้นหา/สแกนสินค้าจากคลัง (ชื่อ · รหัส · P/N · บาร์โค้ด) — เลือกแล้วเติมเป็นรายการอัตโนมัติ"
+                 oninput="onProductSearchInput()" onkeydown="onProductSearchKey(event)" autocomplete="off">
+          <div class="product-result-list" id="productResultList"></div>
+        </div>
+        <div class="field-hint" style="margin:-4px 0 8px">ไม่บังคับ — จะพิมพ์รายการเองในตะกร้าด้านล่างโดยไม่ค้นหาก็ได้ (เช่น ค่าแรง/บริการที่ไม่มีในคลังสินค้า)</div>
         <div class="item-basket-head">
           <span>รายการ</span><span>จำนวน</span><span>หน่วยนับ</span><span>ราคา/หน่วย</span><span>รวม (บาท)</span><span></span>
         </div>
@@ -500,6 +517,7 @@ var COMPANY_LOGO_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMsAAAD
 
 var invoicesCache  = [];
 var customersCache = [];
+var productsCache  = [];
 var sellerInfo     = { name: '', branch: '', address: '', taxId: '' };
 // ★ ปีที่กำลังแสดงอยู่ตอนนี้ ('all' = ทุกปี, หรือตัวเลข พ.ศ.) — เริ่มต้นเป็นปีล่าสุดเสมอ
 var currentPageYear   = null;
@@ -641,6 +659,7 @@ function loadAll(yearParam) {
       invoicesCache      = (data && data.invoices)       || [];
       sellerInfo          = (data && data.seller)          || sellerInfo;
       customersCache       = (data && data.customers)       || [];
+      productsCache       = (data && data.products)        || [];
       availableYearsCache = (data && data.availableYears) || [new Date().getFullYear() + 543];
 
       // ★ บันทึกว่าตอนนี้กำลังดูปีไหนอยู่ (ใช้ทั้งใน dashboard และ drill-down)
@@ -880,6 +899,87 @@ function renderRows() {
 }
 
 XLF.bindHeaderClicks('#taxThead', function() { return invoicesCache; }, renderRows);
+
+/* ═══ ค้นหา/สแกนสินค้าจากคลัง — เลือกแล้วเติมเป็นรายการในตะกร้า (ไม่ผูกกับ productCode ใดๆ
+   หลังจากนั้น เพราะใบกำกับภาษีนี้ไม่มีผลต่อสต๊อกจริง — เป็นแค่ตัวช่วยกรอกให้เร็วขึ้นเท่านั้น) ═══ */
+var productSearchResults = [], productSearchSelIdx = 0;
+
+function scoreProductForInvoice(p, terms) {
+  var code = String(p.productCode || '').toLowerCase();
+  var pn   = String(p.partNumber  || '').toLowerCase();
+  var bc   = String(p.barcode     || '').toLowerCase();
+  var hay  = [p.productName, p.productCode, p.partNumber, p.barcode, p.brandName, p.categoryName]
+               .map(function (x) { return String(x || '').toLowerCase(); }).join(' | ');
+  for (var i = 0; i < terms.length; i++) { if (hay.indexOf(terms[i]) === -1) return -1; }
+  var s = 0;
+  terms.forEach(function (t) {
+    if (code === t || pn === t || (bc && bc === t)) s += 100;
+    else if (code.indexOf(t) === 0 || pn.indexOf(t) === 0) s += 60;
+    else s += 10;
+  });
+  return s;
+}
+
+function onProductSearchInput() {
+  productSearchSelIdx = 0;
+  renderProductSearchResults();
+}
+
+function renderProductSearchResults() {
+  var q = document.getElementById('productSearchInput').value.toLowerCase().trim();
+  var listEl = document.getElementById('productResultList');
+  if (!q) { listEl.style.display = 'none'; listEl.innerHTML = ''; productSearchResults = []; return; }
+
+  var terms = q.split(/\s+/);
+  productSearchResults = productsCache.map(function (p) { return { p: p, s: scoreProductForInvoice(p, terms) }; })
+    .filter(function (x) { return x.s >= 0; })
+    .sort(function (a, b) { return b.s - a.s; })
+    .map(function (x) { return x.p; })
+    .slice(0, 8);
+  if (productSearchSelIdx >= productSearchResults.length) productSearchSelIdx = 0;
+
+  listEl.style.display = 'flex';
+  if (!productSearchResults.length) {
+    listEl.innerHTML = '<div style="padding:10px;font-size:12.5px;color:var(--faint)">ไม่พบสินค้าที่ตรงเงื่อนไข</div>';
+    return;
+  }
+  listEl.innerHTML = productSearchResults.map(function (p, i) {
+    return '<div class="product-res-row' + (i === productSearchSelIdx ? ' sel' : '') + '" onclick="pickProductForInvoice(' + i + ')">' +
+      '<div class="product-res-main">' +
+        '<div class="product-res-name">' + esc(p.productName) + '</div>' +
+        '<div class="product-res-chips">' +
+          '<span class="product-code-badge">' + esc(p.productCode) + '</span>' +
+          (p.barcode ? '<span class="product-bc-badge">🏷️ ' + esc(p.barcode) + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="product-res-side">' + fmtMoneyPlain(p.sellingPrice) + ' บาท<br>คงเหลือ ' + (p.currentStock || 0) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function onProductSearchKey(e) {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (productSearchResults.length) { productSearchSelIdx = Math.min(productSearchResults.length - 1, productSearchSelIdx + 1); renderProductSearchResults(); }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (productSearchResults.length) { productSearchSelIdx = Math.max(0, productSearchSelIdx - 1); renderProductSearchResults(); }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (productSearchResults[productSearchSelIdx]) pickProductForInvoice(productSearchSelIdx);
+  }
+}
+
+function pickProductForInvoice(i) {
+  var p = productSearchResults[i];
+  if (!p) return;
+  addItemRow({ name: p.productName, qty: 1, unit: 'ชิ้น', unitPrice: p.sellingPrice });
+  document.getElementById('productSearchInput').value = '';
+  document.getElementById('productResultList').style.display = 'none';
+  document.getElementById('productResultList').innerHTML = '';
+  productSearchResults = [];
+  document.getElementById('productSearchInput').focus();
+}
 
 /* ═══ ตะกร้ารายการสินค้า ═══ */
 function addItemRow(prefill) {

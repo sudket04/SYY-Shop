@@ -41,6 +41,7 @@
 
   .code-badge{font-family:'Courier New',monospace;font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:6px;padding:2px 8px}
   .pn-badge{font-family:'Courier New',monospace;font-size:11px;color:#475569;background:var(--line-soft);border:1px solid var(--line);border-radius:6px;padding:2px 8px}
+  .bc-badge{font-family:'Courier New',monospace;font-size:11px;color:#be185d;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:6px;padding:2px 8px}
   .zone-chip{font-size:11px;color:#0f766e;background:#f0fdfa;border:1px solid #99f6e4;border-radius:20px;padding:2px 9px}
   .brand-chip{font-size:11px;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:20px;padding:2px 9px}
   .model-chip{font-size:11px;color:#4338ca;background:#eef2ff;border:1px solid #c7d2fe;border-radius:20px;padding:2px 9px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -268,6 +269,7 @@
         basket.push({
           productCode : p.productCode,
           productName : p.productName,
+          barcode     : p.barcode || '',
           qty         : qty,
           unitPrice   : parseFloat(it.unitPrice) || num(p.sellingPrice),
           costPrice   : num(p.costPrice),
@@ -439,6 +441,7 @@
           '<div class="res-chips">' +
             '<span class="code-badge">' + esc(p.productCode) + '</span>' +
             (p.partNumber ? '<span class="pn-badge">P/N ' + esc(p.partNumber) + '</span>' : '') +
+            (p.barcode ? '<span class="bc-badge">🔖 ' + esc(p.barcode) + '</span>' : '') +
             (p.brandName ? '<span class="brand-chip">🏷️ ' + esc(p.brandName) + '</span>' : '') +
             (p.zoneName ? '<span class="zone-chip">📦 ' + esc(p.zoneName) + '</span>' : '') +
             (p.carModel ? '<span class="model-chip" title="' + esc(p.carModel) + '">' + esc(p.carModel) + '</span>' : '') +
@@ -480,6 +483,7 @@
       basket.push({
         productCode : p.productCode,
         productName : p.productName,
+        barcode     : p.barcode || '',
         qty         : 1,
         unitPrice   : num(p.sellingPrice),
         costPrice   : num(p.costPrice),
@@ -542,7 +546,7 @@
           '<div class="b-line-top">' +
             '<div style="min-width:0">' +
               '<div class="b-name">' + esc(b.productName) + '</div>' +
-              '<div class="b-sub">' + esc(b.productCode) + ' · คงเหลือ ' + b.stock + '</div>' +
+              '<div class="b-sub">' + esc(b.productCode) + (b.barcode ? ' · 🔖 ' + esc(b.barcode) : '') + ' · คงเหลือ ' + b.stock + '</div>' +
             '</div>' +
             '<button class="btn-x" type="button" onclick="removeLine(\'' + esc(b.productCode) + '\')">✕</button>' +
           '</div>' +

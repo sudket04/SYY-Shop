@@ -1483,6 +1483,7 @@ function getTaxInvoicePageData(yearFilter) {
     invoices       : invoices,
     seller         : TAX_INVOICE_SELLER,
     customers      : getCustomersFull(),
+    products       : getAllProducts(),
     availableYears : getTaxInvoiceAvailableYears()
   };
 }
