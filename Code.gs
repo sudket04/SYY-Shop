@@ -2403,6 +2403,7 @@ var API_REGISTRY = {
   updatePurchaseOrderStatus: "staff",
   issueStock               : "staff",
   getStockMovements        : "viewer",
+  getDashboardBootstrap    : "viewer",
 
   // ── ใบกำกับภาษี — viewer ทำได้ (ข้อยกเว้นเฉพาะ) ──
   saveTaxInvoice           : "viewer",
@@ -3499,6 +3500,59 @@ function getStockMovements(limit, productCode) {
     console.error("getStockMovements error:", e);
   }
   return out;
+}
+
+/**
+ * ★ ดึงประวัติเข้า-ออกทั้งหมด (ไม่จำกัด limit เหมือน getStockMovements) — ใช้สร้าง Dashboard สต๊อก
+ * คืนค่าดิบ ให้ฝั่งหน้าเว็บไปคำนวณ KPI / กราฟ / stock health เองแบบ client-side ทั้งหมด
+ * (โหลดครั้งเดียวตอนเปิดหน้า / กดรีเฟรช ไม่ต้องยิง API ซ้ำตอนสลับตัวกรอง)
+ */
+function fetchAllStockMovements_() {
+  var out = [];
+  var fetched = fetchAllPagesRaw(STOCK_MOVEMENT_COLLECTION);
+  if (!fetched.ok) return out;
+
+  fetched.docs.forEach(function (doc) {
+    var f  = doc.fields || {};
+    var ts = parseFirestoreValue(f.Timestamp);
+    if (!ts) return; // เอกสารเพี้ยน/ไม่มีเวลา ข้ามไปกันกราฟพัง
+
+    out.push({
+      docNo       : parseFirestoreValue(f.Doc_No)       || "",
+      type        : parseFirestoreValue(f.Type)         || "OUT",
+      productCode : parseFirestoreValue(f.Product_Code) || "",
+      productName : parseFirestoreValue(f.Product_Name) || "",
+      qty         : parseFloat(parseFirestoreValue(f.Qty))        || 0,
+      stockAfter  : parseFloat(parseFirestoreValue(f.Stock_After))|| 0,
+      unitPrice   : parseFloat(parseFirestoreValue(f.Unit_Price)) || 0,
+      costPrice   : parseFloat(parseFirestoreValue(f.Cost_Price)) || 0,
+      reason      : parseFirestoreValue(f.Reason) || "",
+      refNo       : parseFirestoreValue(f.Ref_No) || "",
+      note        : parseFirestoreValue(f.Note)   || "",
+      user        : parseFirestoreValue(f.User)   || "",
+      timestamp   : ts
+    });
+  });
+  return out;
+}
+
+/**
+ * ★ ข้อมูลตั้งต้นของ Dashboard สต๊อก (หน้า index) — เรียกครั้งเดียวตอนโหลดหน้า/กดรีเฟรช
+ * รวม: สินค้าทั้งหมด + ประวัติเข้า-ออกทั้งหมด + แผนที่ "เลขที่ PO -> ชื่อผู้จัดจำหน่าย"
+ * (ไว้โยงใบรับเข้าสต๊อก ซึ่ง Ref_No ของ Stock_Movements ประเภท IN คือเลขที่ PO)
+ */
+function getDashboardBootstrap() {
+  var poVendorMap = {};
+  try {
+    getPurchaseOrders().forEach(function (po) { poVendorMap[po.poId] = po.vendorName; });
+  } catch (e) {
+    console.error("getDashboardBootstrap: โหลดผู้จัดจำหน่ายของ PO ไม่สำเร็จ:", e);
+  }
+  return {
+    products     : getAllProducts(),
+    movements    : fetchAllStockMovements_(),
+    poVendorMap  : poVendorMap
+  };
 }
 
 /**
