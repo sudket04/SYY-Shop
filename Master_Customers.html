@@ -26,7 +26,7 @@
     <div class="toolbar">
       <div class="search">
         <span class="ico">⌕</span>
-        <input type="text" id="searchInput" class="input" placeholder="ค้นหาชื่อ / รหัส / เบอร์โทร" oninput="onSearch()" autocomplete="off">
+        <input type="text" id="searchInput" class="input" placeholder="ค้นหาชื่อ / รหัส / ประเภท / เบอร์โทร" oninput="onSearch()" autocomplete="off">
       </div>
       <span class="count" id="filterInfo"></span>
     </div>
@@ -39,7 +39,7 @@
     <div class="table-wrap">
       <table>
         <colgroup>
-          <col style="width:44px"><col style="width:90px"><col style="width:190px"><col style="width:130px">
+          <col style="width:44px"><col style="width:90px"><col style="width:190px"><col style="width:120px"><col style="width:130px">
           <col style="width:150px"><col><col style="width:90px"><col style="width:90px">
         </colgroup>
         <thead id="theadMain"></thead>
@@ -68,6 +68,17 @@
             <label>ชื่อลูกค้า *</label>
             <input type="text" id="fCustomerName" class="form-control" required placeholder="ชื่อบุคคล/บริษัทลูกค้า..." oninput="clearErr('fCustomerName')">
             <span class="field-error" id="err_fCustomerName">กรุณากรอกชื่อลูกค้า</span>
+          </div>
+          <div class="form-group">
+            <label>ประเภทลูกค้า *</label>
+            <select id="fCustomerType" class="form-control select" required onchange="clearErr('fCustomerType')">
+              <option value="">-- เลือกประเภทลูกค้า --</option>
+              <option value="ลูกค้าทั่วไป">ลูกค้าทั่วไป</option>
+              <option value="อู่ซ่อมรถ">อู่ซ่อมรถ</option>
+              <option value="บริษัท/องค์กร">บริษัท/องค์กร</option>
+              <option value="หน่วยงานราชการ">หน่วยงานราชการ</option>
+            </select>
+            <span class="field-error" id="err_fCustomerType">กรุณาเลือกประเภทลูกค้า</span>
           </div>
           <div class="form-group full">
             <label>เบอร์โทรศัพท์</label>
@@ -173,6 +184,7 @@
   var COLS        = [
     { col:'id',            label:'รหัส' },
     { col:'Customer_Name', label:'ชื่อลูกค้า' },
+    { col:'Customer_Type', label:'ประเภท' },
     { col:'Phone',         label:'เบอร์โทร' },
     { col:'_taxStatus',    label:'เลขผู้เสียภาษี' },
     { col:'Address',       label:'ที่อยู่' },
@@ -183,7 +195,7 @@
 
   window.onload = function(){
     initDensity();
-    document.getElementById('tbodyMain').innerHTML = skeletonRows(8,5);
+    document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     renderHead();
     loadTable();
     populateProvinceDropdown('f');
@@ -200,7 +212,7 @@
 
   function loadTable(){
     document.getElementById('recordCount').innerText='กำลังโหลด';
-    document.getElementById('tbodyMain').innerHTML = skeletonRows(8,5);
+    document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
       cache = (data || []).map(function(item){
         item._taxStatus = (item.Tax_ID && item.Tax_ID.length === 13) ? 'มีเลขผู้เสียภาษี' : 'ไม่มีเลขผู้เสียภาษี';
@@ -208,7 +220,7 @@
       });
       renderRows();
     }, function(err){
-      document.getElementById('tbodyMain').innerHTML = emptyStateHtml(8,{
+      document.getElementById('tbodyMain').innerHTML = emptyStateHtml(9,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]
       });
@@ -233,7 +245,7 @@
     renderHead();
     var q=document.getElementById('searchInput').value.toLowerCase().trim();
     var searched = !q ? cache.slice() : cache.filter(function(it){
-      return (it.id+it.Customer_Name+it.Phone+it.Address).toLowerCase().indexOf(q)>-1;
+      return (it.id+it.Customer_Name+it.Customer_Type+it.Phone+it.Address).toLowerCase().indexOf(q)>-1;
     });
 
     var rows = XLF.apply(TABLE_KEY, searched, COLS);
@@ -251,9 +263,9 @@
     var tbody=document.getElementById('tbodyMain');
     if(!rows.length){
       tbody.innerHTML = cache.length
-        ? emptyStateHtml(8,{ title:'ไม่พบรายการที่ตรงกับที่ค้นหา', sub:'ลองลดคำค้นหรือล้างตัวกรอง',
+        ? emptyStateHtml(9,{ title:'ไม่พบรายการที่ตรงกับที่ค้นหา', sub:'ลองลดคำค้นหรือล้างตัวกรอง',
             actions:[{label:'ล้างตัวกรอง',onclick:'clearAllFilters()'},{label:'+ เพิ่ม'+ENTITY,primary:true,onclick:'openAddModal()'}] })
-        : emptyStateHtml(8,{ icon:'🧍', title:'ยังไม่มีข้อมูล'+ENTITY, sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
+        : emptyStateHtml(9,{ icon:'🧍', title:'ยังไม่มีข้อมูล'+ENTITY, sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
             actions:[{label:'+ เพิ่ม'+ENTITY,primary:true,onclick:'openAddModal()'}] });
       return;
     }
@@ -266,10 +278,12 @@
       var taxTxt = (it.Tax_ID && it.Tax_ID.length===13)
         ? '<div class="mono" style="font-size:12px">'+esc(it.Tax_ID)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(it.Branch||'สำนักงานใหญ่')+'</div>'
         : '<span class="badge badge-mute">— ไม่มี —</span>';
+      var typeTxt = it.Customer_Type ? '<span class="badge badge-info">'+esc(it.Customer_Type)+'</span>' : '<span class="cell-empty">—</span>';
       return '<tr>'+
         '<td class="text-center"><span class="rownum">'+(i+1)+'</span></td>'+
         '<td><span class="chip-code">'+esc(it.id)+'</span></td>'+
         '<td style="font-weight:600;color:var(--ink)">'+esc(it.Customer_Name)+'</td>'+
+        '<td>'+typeTxt+'</td>'+
         '<td>'+phoneTxt+'</td>'+
         '<td>'+taxTxt+'</td>'+
         '<td>'+addrTxt+'</td>'+
@@ -396,6 +410,7 @@
     document.getElementById('mainForm').reset();
     document.getElementById('fDocId').value='';
     document.getElementById('fCustomerName').value='';
+    document.getElementById('fCustomerType').value='';
     document.getElementById('fPhone').value='';
     ['fAddressNo','fAddressMoo','fAddressRoad'].forEach(function(id){ document.getElementById(id).value=''; });
     document.getElementById('fTaxId').value='';
@@ -403,6 +418,7 @@
     document.getElementById('fStatus').value='Active';
     setAddressDropdowns('f','','','','');
     clearErr('fCustomerName');
+    clearErr('fCustomerType');
   }
 
   function openAddModal(){
@@ -421,6 +437,7 @@
     resetForm();
     document.getElementById('fDocId').value=it.id;
     document.getElementById('fCustomerName').value=it.Customer_Name||'';
+    document.getElementById('fCustomerType').value=it.Customer_Type||'';
     document.getElementById('fPhone').value=formatPhoneDisplay(it.Phone||'');
     document.getElementById('fAddressNo').value=it.Address_No||'';
     document.getElementById('fAddressMoo').value=it.Address_Moo||'';
@@ -454,9 +471,17 @@
       return;
     }
 
+    var customerType=document.getElementById('fCustomerType').value;
+    if(!customerType){
+      document.getElementById('fCustomerType').classList.add('is-invalid');
+      document.getElementById('err_fCustomerType').classList.add('show');
+      return;
+    }
+
     var payload = {
       docId       : editingId || null,
       customerName: customerName,
+      customerType: customerType,
       phone       : document.getElementById('fPhone').value.trim(),
       addressNo   : document.getElementById('fAddressNo').value.trim(),
       addressMoo  : document.getElementById('fAddressMoo').value.trim(),

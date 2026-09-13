@@ -710,6 +710,7 @@ function populateCustomerDropdown() {
     sorted.map(function(c) {
       // ★ แสดงข้อมูลเต็มในตัวเลือก ไม่ใช่แค่ชื่อ — ให้เห็นชัดว่าเลือกใครก่อนกด
       var parts = [c.Customer_Name || c.id];
+      if (c.Customer_Type) parts.push(c.Customer_Type);
       if (c.Phone) parts.push(c.Phone);
       if (c.Tax_ID) parts.push('ภาษี ' + c.Tax_ID);
       return '<option value="' + esc(c.id) + '">' + esc(parts.join(' | ')) + '</option>';

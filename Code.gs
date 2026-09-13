@@ -893,6 +893,8 @@ function deleteVendor(docId) { return deleteFirestoreDocument("Master_Vendors", 
 // ==========================================
 // ★ Master — Customers
 // ==========================================
+var CUSTOMER_TYPES = ["ลูกค้าทั่วไป", "อู่ซ่อมรถ", "บริษัท/องค์กร", "หน่วยงานราชการ"];
+
 function saveCustomer(d) {
   var taxId = String(d.taxId || "").replace(/\D/g, '');
 
@@ -905,8 +907,14 @@ function saveCustomer(d) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณากรอกชื่อลูกค้า" };
   }
 
+  var customerType = String(d.customerType || "").trim();
+  if (CUSTOMER_TYPES.indexOf(customerType) === -1) {
+    return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกประเภทลูกค้า" };
+  }
+
   var dataObject = {
     Customer_Name : customerName,
+    Customer_Type : customerType,
     Address_No    : String(d.addressNo   || ""),
     Address_Moo   : String(d.addressMoo  || ""),
     Address_Road  : String(d.addressRoad || ""),
@@ -934,6 +942,7 @@ function getCustomersFull() {
       list.push({
         id            : doc.id,
         Customer_Name : parseFirestoreValue(f.Customer_Name) || "",
+        Customer_Type : parseFirestoreValue(f.Customer_Type) || "",
         Address_No    : parseFirestoreValue(f.Address_No)    || "",
         Address_Moo   : parseFirestoreValue(f.Address_Moo)   || "",
         Address_Road  : parseFirestoreValue(f.Address_Road)  || "",
@@ -1397,6 +1406,7 @@ function saveQuotation(d, callerUsername) {
     Valid_Until      : validUntil.toISOString().slice(0, 10),
     Customer_ID      : d.customerId,
     Customer_Name    : cust.Customer_Name,
+    Customer_Type    : cust.Customer_Type,
     Customer_Address : cust.Address,
     Customer_Tax_ID  : cust.Tax_ID,
     Customer_Branch  : cust.Branch,
@@ -1452,6 +1462,7 @@ function mapQuotationDoc_(doc) {
     validDays       : parseFloat(parseFirestoreValue(f.Valid_Days)) || 0,
     customerId      : parseFirestoreValue(f.Customer_ID)       || "",
     customerName    : parseFirestoreValue(f.Customer_Name)     || "",
+    customerType    : parseFirestoreValue(f.Customer_Type)     || "",
     customerAddress : parseFirestoreValue(f.Customer_Address)  || "",
     customerTaxId   : parseFirestoreValue(f.Customer_Tax_ID)   || "",
     customerBranch  : parseFirestoreValue(f.Customer_Branch)   || "",

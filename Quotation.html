@@ -327,7 +327,8 @@ function renderCustomerOptions() {
   var sorted = customers.slice().sort(function (a, b) { return String(a.Customer_Name).localeCompare(String(b.Customer_Name), 'th'); });
   sel.innerHTML = '<option value="">-- เลือกลูกค้า --</option>' +
     sorted.map(function (c) {
-      return '<option value="' + esc(c.id) + '">' + esc(c.Customer_Name) + (c.Branch ? ' (' + esc(c.Branch) + ')' : '') + '</option>';
+      var label = c.Customer_Name + (c.Branch ? ' (' + c.Branch + ')' : '') + (c.Customer_Type ? ' · ' + c.Customer_Type : '');
+      return '<option value="' + esc(c.id) + '">' + esc(label) + '</option>';
     }).join('');
   if (current) sel.value = current;
 }
@@ -666,7 +667,7 @@ function renderDoc() {
       '</div>' +
       '<div class="print-parties">' +
         '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-          '<span><b>นามผู้ซื้อ</b> ' + esc(cust.Customer_Name || '—') + '</span>' +
+          '<span><b>นามผู้ซื้อ</b> ' + esc(cust.Customer_Name || '—') + (cust.Customer_Type ? ' (' + esc(cust.Customer_Type) + ')' : '') + '</span>' +
           '<span style="margin-left:auto"><b>เลขประจำตัวผู้เสียภาษี</b> ' + esc(cust.Tax_ID || '—') + '</span>' +
         '</div>' +
         '<div><b>ที่อยู่</b> ' + esc(cust.Address || '—') + '</div>' +
@@ -750,7 +751,7 @@ function renderList() {
     }).join('');
     return '<tr>' +
       '<td class="mono">' + esc(q.quoteNo) + '</td>' +
-      '<td>' + esc(q.customerName) + '</td>' +
+      '<td>' + esc(q.customerName) + (q.customerType ? '<div style="font-size:11px;color:var(--faint)">' + esc(q.customerType) + '</div>' : '') + '</td>' +
       '<td>' + esc(thDate(q.quoteDate)) + '</td>' +
       '<td class="text-right mono">' + money(q.grandTotal) + '</td>' +
       '<td class="text-center"><select class="select ' + cls + '" style="min-height:30px;padding:4px 8px;font-size:11.5px;border:none;font-weight:600" onchange="changeStatus(\'' + q.id + '\',this.value)">' + statusOptions + '</select></td>' +
