@@ -123,7 +123,7 @@
             <button class="pill" data-stock="instock"    onclick="setStockFilter('instock',this)">✅ มีของ <span id="cntIn"></span></button>
             <button class="pill" data-stock="low"        onclick="setStockFilter('low',this)">⚠️ สต็อกต่ำ <span id="cntLow"></span></button>
             <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-              <select id="filterCarBrand" class="select" style="max-width:170px" onchange="renderResults()"><option value="">ยี่ห้อรถ: ทั้งหมด</option></select>
+              <select id="filterCategory" class="select" style="max-width:170px" onchange="renderResults()"><option value="">หมวดหมู่: ทั้งหมด</option></select>
               <select id="filterPartType" class="select" style="max-width:170px" onchange="renderResults()">
                 <option value="">ประเภท: ทั้งหมด</option>
                 <option value="แท้">แท้</option>
@@ -150,10 +150,11 @@
                 <label>เหตุผลที่ตัด *</label>
                 <select id="inpReason" class="form-control" onchange="renderPreview()">
                   <option value="ขายหน้าร้าน">🛒 ขายหน้าร้าน</option>
-                  <option value="เบิกใช้ในร้าน">🔧 เบิกใช้ในร้าน</option>
-                  <option value="ตัวอย่าง/เคลม">📦 ตัวอย่าง / เคลม</option>
-                  <option value="ชำรุด-เสียหาย">💥 ชำรุด - เสียหาย</option>
-                  <option value="ปรับยอดตรวจนับ">🧮 ปรับยอดตรวจนับ</option>
+                  <option value="ขาย Online">🌐 ขาย Online</option>
+                  <option value="เบิกใช้ภายใน">🔧 เบิกใช้ภายใน</option>
+                  <option value="คืน Supplier">↩️ คืน Supplier</option>
+                  <option value="สินค้าชำรุด">💥 สินค้าชำรุด</option>
+                  <option value="สูญหาย">❓ สูญหาย</option>
                 </select>
               </div>
               <div class="form-group">
@@ -235,7 +236,6 @@
   var mvFilter    = 'all';
   var movements   = [];
   var searchTimer = null;
-  var MAX_RESULTS = 30;
   var MV_LIMIT    = 1000;   // ค่าสูงสุดที่ getStockMovements ยอมให้ดึง — เอาประวัติให้ครบที่สุดเท่าที่ทำได้
 
   document.getElementById('userChip').innerText = '👤 ' + (USER_NAME || '—') + (USER_ROLE ? ' · ' + USER_ROLE : '');
@@ -271,7 +271,7 @@
   function loadProducts() {
     callApi('getAllProducts', [], function (data) {
       products = (data || []).filter(function (p) { return (p.status || 'Active') === 'Active'; });
-      buildCarBrandFilter();
+      buildCategoryFilter();
       updateCounts();
       renderResults();
     }, function (err) {
@@ -280,18 +280,16 @@
     });
   }
 
-  function buildCarBrandFilter() {
-    var seen = {}, brands = [];
+  function buildCategoryFilter() {
+    var seen = {}, cats = [];
     products.forEach(function (p) {
-      String(p.carModel || '').split(',').forEach(function (m) {
-        var brand = m.trim().split(' ')[0];
-        if (brand && !seen[brand]) { seen[brand] = true; brands.push(brand); }
-      });
+      var c = String(p.categoryName || '').trim();
+      if (c && !seen[c]) { seen[c] = true; cats.push(c); }
     });
-    brands.sort(function (a, b) { return a.localeCompare(b, 'th'); });
-    var sel = document.getElementById('filterCarBrand');
-    sel.innerHTML = '<option value="">ยี่ห้อรถ: ทั้งหมด</option>' +
-      brands.map(function (b) { return '<option value="' + esc(b) + '">' + esc(b) + '</option>'; }).join('');
+    cats.sort(function (a, b) { return a.localeCompare(b, 'th'); });
+    var sel = document.getElementById('filterCategory');
+    sel.innerHTML = '<option value="">หมวดหมู่: ทั้งหมด</option>' +
+      cats.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
   }
 
   function updateCounts() {
@@ -332,10 +330,12 @@
     return s;
   }
 
+  function stockRank(p) { return num(p.currentStock) > 0 ? 0 : 1; } // มีของ (0) ขึ้นก่อน หมด (1)
+
   function renderResults() {
     var q = document.getElementById('searchInput').value.toLowerCase().trim();
     var terms = q ? q.split(/\s+/) : [];
-    var carBrand = document.getElementById('filterCarBrand').value.toLowerCase();
+    var category = document.getElementById('filterCategory').value;
     var partType = document.getElementById('filterPartType').value;
 
     var pool = products.filter(function (p) {
@@ -343,20 +343,30 @@
       if (stockFilter === 'instock' && st <= 0) return false;
       if (stockFilter === 'low' && st > num(p.minStock)) return false;
       if (partType && p.partType !== partType) return false;
-      if (carBrand && String(p.carModel || '').toLowerCase().indexOf(carBrand) === -1) return false;
+      if (category && p.categoryName !== category) return false;
       return true;
     });
 
     if (terms.length) {
       pool = pool.map(function (p) { return { p: p, s: scoreProduct(p, terms) }; })
                  .filter(function (x) { return x.s >= 0; })
-                 .sort(function (a, b) { return b.s - a.s; })
+                 .sort(function (a, b) {
+                   if (b.s !== a.s) return b.s - a.s;
+                   var r = stockRank(a.p) - stockRank(b.p);
+                   if (r !== 0) return r;
+                   return String(a.p.productName || '').localeCompare(String(b.p.productName || ''), 'th');
+                 })
                  .map(function (x) { return x.p; });
     } else {
-      pool = pool.slice().sort(function (a, b) { return String(a.productName || '').localeCompare(String(b.productName || ''), 'th'); });
+      pool = pool.slice().sort(function (a, b) {
+        var r = stockRank(a) - stockRank(b);
+        if (r !== 0) return r;
+        return String(a.productName || '').localeCompare(String(b.productName || ''), 'th');
+      });
     }
 
-    results = pool.slice(0, MAX_RESULTS);
+    // ★ ไม่ตัดทอนรายการ — แสดงสินค้าที่ตรงเงื่อนไขทั้งหมด เลื่อนดูได้ครบใน .result-list ที่ scroll ได้เอง
+    results = pool;
     if (selIdx >= results.length) selIdx = 0;
 
     var countEl = document.getElementById('resultCount');
@@ -368,7 +378,7 @@
       listEl.innerHTML = '<div class="empty-box">📭 ลองพิมพ์เฉพาะรหัส P/N หรือลดตัวกรองลง</div>';
       return;
     }
-    countEl.innerHTML = 'พบ ' + pool.length + ' รายการ' + (pool.length > MAX_RESULTS ? ' (แสดง ' + MAX_RESULTS + ' อันดับแรก)' : '') + ' — เลือกด้วย ↑ ↓ แล้วกด Enter';
+    countEl.innerHTML = 'พบ ' + results.length + ' รายการ — เลือกด้วย ↑ ↓ แล้วกด Enter';
 
     listEl.innerHTML = results.map(function (p, i) {
       var st = num(p.currentStock), mn = num(p.minStock);

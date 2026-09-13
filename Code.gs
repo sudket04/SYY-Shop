@@ -3520,7 +3520,7 @@ function testActivityLog() {
 var STOCK_MOVEMENT_COLLECTION = "Stock_Movements";
 
 // เหตุผลที่อนุญาต — ถ้าส่งค่าอื่นมาจะถูกปฏิเสธ (กันข้อมูลเพี้ยนจาก client)
-var ISSUE_REASONS = ["ขายหน้าร้าน", "เบิกใช้ในร้าน", "ตัวอย่าง/เคลม", "ชำรุด-เสียหาย", "ปรับยอดตรวจนับ"];
+var ISSUE_REASONS = ["ขายหน้าร้าน", "ขาย Online", "เบิกใช้ภายใน", "คืน Supplier", "สินค้าชำรุด", "สูญหาย"];
 
 function fsDocPath_(collection, docId) {
   return "projects/" + PROJECT_ID + "/databases/(default)/documents/" + collection + "/" + docId;
