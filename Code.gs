@@ -1482,7 +1482,11 @@ function mapQuotationDoc_(doc) {
     note            : parseFirestoreValue(f.Note)      || "",
     user            : parseFirestoreValue(f.User)      || "",
     timestamp       : parseFirestoreValue(f.Timestamp) || "",
-    updatedAt       : parseFirestoreValue(f.Updated_At)|| ""
+    updatedAt       : parseFirestoreValue(f.Updated_At)|| "",
+    stockIssued     : parseFirestoreValue(f.Stock_Issued) === "true",
+    stockIssueDoc   : parseFirestoreValue(f.Stock_Issue_Doc) || "",
+    stockIssuedBy   : parseFirestoreValue(f.Stock_Issued_By) || "",
+    stockIssuedAt   : parseFirestoreValue(f.Stock_Issued_At) || ""
   };
 }
 
@@ -1538,6 +1542,38 @@ function updateQuotationStatus(docId, status) {
 }
 
 function deleteQuotation(docId) { return deleteFirestoreDocument(QUOTATION_COLLECTION, docId); }
+
+/**
+ * ★ ทำเครื่องหมายว่าใบเสนอราคานี้ถูกตัดสต๊อกไปแล้ว (เรียกจากหน้าตัดสต๊อกหลังยืนยันตัดสต๊อกสำเร็จ
+ *   ที่มาจากปุ่ม "ตัดสต๊อกจากใบนี้" ในหน้าใบเสนอราคา) — ใช้ updateMask ให้กระทบแค่ 4 ฟิลด์นี้
+ *   ไม่ทับข้อมูลอื่นของใบเสนอราคา (ต่างจาก saveMasterData ที่ PATCH แบบไม่มี updateMask)
+ */
+function markQuotationStockIssued(docId, docNo, callerUsername) {
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + docId
+            + "?updateMask.fieldPaths=Stock_Issued&updateMask.fieldPaths=Stock_Issue_Doc"
+            + "&updateMask.fieldPaths=Stock_Issued_By&updateMask.fieldPaths=Stock_Issued_At";
+    var res = UrlFetchApp.fetch(url, {
+      method  : "patch",
+      headers : getAuthHeader(),
+      payload : JSON.stringify({ fields: mapToFirestoreFields({
+        Stock_Issued    : "true",
+        Stock_Issue_Doc : String(docNo || ""),
+        Stock_Issued_By : callerUsername || getCurrentUsername_(),
+        Stock_Issued_At : new Date().toISOString()
+      }) }),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      clearCollectionCache(QUOTATION_COLLECTION);
+      return { success: true };
+    }
+    return { success: false, message: res.getContentText() };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
 
 // ==========================================
 // 17. Master — Zones
@@ -2688,6 +2724,7 @@ var API_REGISTRY = {
   saveQuotation            : "viewer",
   updateQuotationStatus    : "viewer",
   deleteQuotation          : "viewer",
+  markQuotationStockIssued : "staff",
 
   // ── ลบข้อมูล + งานระบบ: admin เท่านั้น ──
   deleteBrand              : "admin",
@@ -2742,6 +2779,7 @@ var ACTIVITY_ACTIONS = {
   receiveGoods                 : { action: "update", label: "รับสินค้าเข้าสต็อก" },
   updatePurchaseOrderStatus    : { action: "update", label: "เปลี่ยนสถานะใบสั่งซื้อ" },
   updateQuotationStatus        : { action: "update", label: "เปลี่ยนสถานะใบเสนอราคา" },
+  markQuotationStockIssued     : { action: "update", label: "ตัดสต๊อกจากใบเสนอราคา" },
   issueStock                   : { action: "update", label: "ตัดสต๊อกสินค้า" },
   deleteBrand                  : { action: "delete", label: "ลบแบรนด์" },
   deleteCategory                : { action: "delete", label: "ลบหมวดหมู่" },
@@ -2820,7 +2858,8 @@ function apiGateway(token, fnName, args, userAgent) {
     // inject username ของผู้เรียกจาก session สำหรับฟังก์ชันที่ต้องกันแก้ไขบัญชีตัวเอง
     // (issueStock/receiveGoods/saveQuotation ก็ใช้ช่องทางเดียวกันนี้ เพื่อบันทึก User จริงลง Stock_Movements/Quotations)
     if (fnName === "resetUserPassword" || fnName === "toggleUserStatus" || fnName === "updateUserAccount" ||
-        fnName === "issueStock" || fnName === "receiveGoods" || fnName === "saveQuotation") {
+        fnName === "issueStock" || fnName === "receiveGoods" || fnName === "saveQuotation" ||
+        fnName === "markQuotationStockIssued") {
       a = a.slice();
       a.push(session.username);
     }

@@ -237,6 +237,7 @@
   var movements   = [];
   var searchTimer = null;
   var MV_LIMIT    = 1000;   // ค่าสูงสุดที่ getStockMovements ยอมให้ดึง — เอาประวัติให้ครบที่สุดเท่าที่ทำได้
+  var pendingQuoteId = null; // ใบเสนอราคาที่ส่งรายการมาเติมตะกร้า (ถ้ามี) — ใช้ทำเครื่องหมายว่าตัดสต๊อกแล้วหลังยืนยันสำเร็จ
 
   document.getElementById('userChip').innerText = '👤 ' + (USER_NAME || '—') + (USER_ROLE ? ' · ' + USER_ROLE : '');
 
@@ -245,6 +246,46 @@
     loadProducts();
     document.getElementById('searchInput').focus();
   };
+
+  // ★ รับรายการจากใบเสนอราคา (ผ่านเชลล์ index.html ที่ forward ต่อมา) มาเติมตะกร้าอัตโนมัติ
+  window.addEventListener('message', function (e) {
+    var d = e.data || {};
+    if (d.action === 'PREFILL_BASKET') applyPrefillBasket(d);
+  });
+
+  function applyPrefillBasket(d) {
+    switchTab('issue');
+    var items = Array.isArray(d.items) ? d.items : [];
+    var notFound = [];
+    items.forEach(function (it) {
+      var p = products.find(function (x) { return x.productCode === it.productCode; });
+      if (!p) { notFound.push(it.productName || it.productCode); return; }
+      var qty = Math.max(1, parseFloat(it.qty) || 1);
+      var existing = basket.find(function (b) { return b.productCode === p.productCode; });
+      if (existing) {
+        existing.qty += qty;
+      } else {
+        basket.push({
+          productCode : p.productCode,
+          productName : p.productName,
+          qty         : qty,
+          unitPrice   : parseFloat(it.unitPrice) || num(p.sellingPrice),
+          costPrice   : num(p.costPrice),
+          stock       : num(p.currentStock),
+          minStock    : num(p.minStock)
+        });
+      }
+    });
+    if (d.refNo) document.getElementById('inpRefNo').value = d.refNo;
+    if (d.note)  document.getElementById('inpNote').value  = d.note;
+    pendingQuoteId = d.quoteId || null;
+    renderBasket();
+    if (notFound.length) {
+      swyWarning('บางรายการไม่พบในระบบสินค้า', esc(notFound.join(', ')) + ' — กรุณาตรวจสอบและเพิ่มรายการนี้ด้วยตนเอง');
+    } else {
+      swySuccess('ดึงรายการจากใบเสนอราคาแล้ว', 'ตรวจสอบจำนวน/ราคาให้ตรงก่อนกดยืนยันตัดสต๊อก');
+    }
+  }
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'F2') { e.preventDefault(); document.getElementById('searchInput').focus(); document.getElementById('searchInput').select(); return; }
@@ -274,6 +315,8 @@
       buildCategoryFilter();
       updateCounts();
       renderResults();
+      // ★ แจ้งเชลล์ (index.html) ว่าโหลดสินค้าเสร็จแล้ว พร้อมรับรายการจากใบเสนอราคามาเติมตะกร้า
+      try { window.parent.postMessage({ action: 'STOCKISSUE_READY' }, '*'); } catch (e) {}
     }, function (err) {
       document.getElementById('resultCount').innerText = '❌ โหลดข้อมูลสินค้าไม่สำเร็จ';
       document.getElementById('resultList').innerHTML = '<div class="empty-box">' + esc(JSON.stringify(err)) + '</div>';
@@ -481,6 +524,7 @@
   function clearBasket() {
     if (!basket.length) return;
     basket = [];
+    pendingQuoteId = null;
     document.getElementById('inpRefNo').value = '';
     document.getElementById('inpNote').value  = '';
     renderBasket();
@@ -577,6 +621,15 @@
           swySuccess('ตัดสต๊อกสำเร็จ', 'เลขที่รายการ <b>' + esc(res.docNo || '-') + '</b><br>' + summary);
           if (alsoInvoice) {
             try { window.parent.postMessage({ action: 'OPEN_TAX_INVOICE', items: payload.items, note: payload.refNo }, '*'); } catch (e) {}
+          }
+          // ★ ถ้าตะกร้านี้มาจากใบเสนอราคา ทำเครื่องหมายในใบเสนอราคาว่าตัดสต๊อกแล้ว กันตัดซ้ำ/ลืมตัด
+          //   เป็นแค่บันทึกอ้างอิง ไม่กระทบผลตัดสต๊อกที่สำเร็จไปแล้ว จึงไม่โชว์ error ให้ผู้ใช้เห็นถ้าล้มเหลว
+          if (pendingQuoteId) {
+            var quoteIdDone = pendingQuoteId;
+            pendingQuoteId = null;
+            callApi('markQuotationStockIssued', [quoteIdDone, res.docNo], function () {}, function (err) {
+              console.error('markQuotationStockIssued ล้มเหลว:', err);
+            });
           }
           basket = [];
           document.getElementById('inpRefNo').value = '';

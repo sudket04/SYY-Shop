@@ -237,6 +237,7 @@
     <div class="tab-panel" id="panelDoc">
       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:center;margin-bottom:14px">
         <button class="btn btn-primary" onclick="window.print()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
+        <button class="btn btn-ghost" id="btnIssueFromDoc" style="display:none" onclick="issueStockFromQuote(editingDocId)">📤 ตัดสต๊อกจากใบนี้</button>
       </div>
       <div id="printArea"></div>
     </div>
@@ -733,9 +734,18 @@ function renderDoc() {
   if (!isNaN(validUntil.getTime())) validUntil.setDate(validUntil.getDate() + validDays);
 
   var quoteNo = 'ฉบับร่าง (ยังไม่บันทึก)';
+  var docQ = null;
   if (editingDocId) {
-    var q = quotations.find(function (x) { return x.id === editingDocId; });
-    if (q) quoteNo = q.quoteNo;
+    docQ = quotations.find(function (x) { return x.id === editingDocId; });
+    if (docQ) quoteNo = docQ.quoteNo;
+  }
+
+  var btnIssue = document.getElementById('btnIssueFromDoc');
+  if (docQ && docQ.status === 'ปิดงาน-ขายสำเร็จ') {
+    btnIssue.style.display = '';
+    btnIssue.innerHTML = docQ.stockIssued ? '✅ ตัดสต๊อกแล้ว (' + esc(docQ.stockIssueDoc) + ') · ตัดซ้ำ' : '📤 ตัดสต๊อกจากใบนี้';
+  } else {
+    btnIssue.style.display = 'none';
   }
 
   var ctx = {
@@ -812,6 +822,9 @@ function renderList() {
       '<td class="text-center"><div class="row-actions">' +
         '<button class="btn btn-icon view" title="ดู/พิมพ์" onclick="viewQuotation(\'' + q.id + '\')">👁️</button>' +
         '<button class="btn btn-icon edit" title="แก้ไข" onclick="editQuotation(\'' + q.id + '\')">✏️</button>' +
+        (q.status === 'ปิดงาน-ขายสำเร็จ'
+          ? '<button class="btn btn-icon" title="' + (q.stockIssued ? 'ตัดสต๊อกแล้ว (' + esc(q.stockIssueDoc) + ') — คลิกเพื่อตัดซ้ำ' : 'ตัดสต๊อกจากใบนี้') + '" onclick="issueStockFromQuote(\'' + q.id + '\')">' + (q.stockIssued ? '✅' : '📤') + '</button>'
+          : '') +
         '<button class="btn btn-icon del" title="ลบ" onclick="confirmDeleteQuotation(\'' + q.id + '\')">🗑️</button>' +
       '</div></td>' +
     '</tr>';
@@ -825,6 +838,46 @@ function changeStatus(docId, status) {
     if (res && res.success) { toast(res.message || 'เปลี่ยนสถานะเรียบร้อย'); loadPageData(); }
     else swyError(res && res.title || 'ล้มเหลว', res && res.message);
   }, function (err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
+}
+
+/* ═══ ตัดสต๊อกจากใบเสนอราคา (ปิดงาน-ขายสำเร็จ) ═══
+   ส่งรายการสินค้าไปเปิดหน้า "ตัดสต๊อก / ขายหน้าร้าน" ให้อัตโนมัติ ผ่าน postMessage ไปยังเชลล์ (index.html)
+   ที่จะ forward ต่อให้ iframe ตัดสต๊อก — กันพิมพ์รายการซ้ำมือและกันตัดราคาไม่ตรงกับที่เสนอ */
+function issueStockFromQuote(docId) {
+  var q = quotations.find(function (x) { return x.id === docId; });
+  if (!q) { toast('ไม่พบใบเสนอราคานี้', 'err'); return; }
+  if (q.status !== 'ปิดงาน-ขายสำเร็จ') {
+    swyWarning('ยังไม่ปิดงาน', 'เปลี่ยนสถานะใบนี้เป็น "ปิดงาน-ขายสำเร็จ" ก่อน จึงจะตัดสต๊อกจากใบเสนอราคาได้');
+    return;
+  }
+  if (!q.items || !q.items.length) { swyWarning('ไม่มีรายการสินค้า', 'ใบเสนอราคานี้ไม่มีรายการสินค้า'); return; }
+
+  function go() {
+    var items = q.items.map(function (it) {
+      return { productCode: it.productCode, productName: it.productName, qty: it.qty, unitPrice: it.unitPrice };
+    });
+    try {
+      window.parent.postMessage({
+        action  : 'OPEN_STOCK_ISSUE',
+        items   : items,
+        refNo   : q.quoteNo,
+        note    : 'ตามใบเสนอราคา ' + q.quoteNo + (q.customerName ? ' · ลูกค้า ' + q.customerName : ''),
+        quoteId : q.id
+      }, '*');
+    } catch (e) {}
+  }
+
+  if (q.stockIssued) {
+    swyConfirm({
+      icon: 'warning',
+      title: 'ใบนี้ตัดสต๊อกไปแล้ว',
+      html: 'ใบเสนอราคา <b>' + esc(q.quoteNo) + '</b> เคยถูกตัดสต๊อกไปแล้ว<br>เลขที่รายการตัดสต๊อก: <b>' + esc(q.stockIssueDoc || '-') + '</b>' +
+            '<br><br>ต้องการเปิดหน้าตัดสต๊อกพร้อมรายการนี้อีกครั้งหรือไม่? (ระวังตัดซ้ำ)',
+      confirmText: 'เปิดอีกครั้ง'
+    }).then(function (ok) { if (ok) go(); });
+  } else {
+    go();
+  }
 }
 
 function confirmDeleteQuotation(docId) {

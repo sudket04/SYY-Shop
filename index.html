@@ -469,8 +469,29 @@
     dashLoad();
   });
 
+  // ★ ส่งต่อรายการจากใบเสนอราคา (ปิดงาน-ขายสำเร็จ) ไปเติมตะกร้าในหน้าตัดสต๊อกให้อัตโนมัติ
+  //   iframe ตัดสต๊อกโหลดครั้งเดียวแล้วอยู่ยาว (ไม่ reload ซ้ำตอนสลับเมนู) จึงต้องรอสัญญาณ
+  //   STOCKISSUE_READY ก่อน ถ้ายังไม่เคยพร้อมค่อย queue ไว้แล้วส่งทีหลัง
+  var stockIssueReady = false, pendingStockIssuePrefill = null;
+  function sendStockIssuePrefill(payload){
+    var frame = document.getElementById('iframe-stockissue');
+    if(frame && frame.contentWindow){
+      frame.contentWindow.postMessage({ action:'PREFILL_BASKET', items:payload.items, refNo:payload.refNo, note:payload.note, quoteId:payload.quoteId }, '*');
+    }
+  }
   window.addEventListener('message', function(e){
-    if(e.data && e.data.action==='REFRESH_MAIN_TABLE'){ loadMasters(); dashLoad(); }
+    var d = e.data || {};
+    if(d.action==='REFRESH_MAIN_TABLE'){ loadMasters(); dashLoad(); }
+    else if(d.action==='OPEN_STOCK_ISSUE'){
+      switchPage('stockissue');
+      var payload = { items:d.items, refNo:d.refNo, note:d.note, quoteId:d.quoteId };
+      if(stockIssueReady) sendStockIssuePrefill(payload);
+      else pendingStockIssuePrefill = payload;
+    }
+    else if(d.action==='STOCKISSUE_READY'){
+      stockIssueReady = true;
+      if(pendingStockIssuePrefill){ sendStockIssuePrefill(pendingStockIssuePrefill); pendingStockIssuePrefill = null; }
+    }
   });
 
   document.addEventListener('keydown', function(e){
