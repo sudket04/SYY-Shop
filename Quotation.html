@@ -64,13 +64,20 @@
   .stat-mini .vl{font-size:22px;font-weight:700;color:var(--primary);margin-top:3px}
   .stat-mini .su{font-size:11.5px;color:var(--faint);margin-top:2px}
 
-  /* ── ใบพิมพ์ A4 ── */
-  .a4-page{width:210mm;min-height:auto;margin:0 auto 16px;background:#fff;padding:14mm;box-sizing:border-box;box-shadow:0 2px 12px rgba(0,0,0,.15);font-size:12.5px;color:#1e293b}
+  /* ── ใบพิมพ์ A4 (รองรับหลายหน้า — เหมือน Master_Tax_Invoice.html) ──
+     เติมแถวว่างเต็มหน้าสุดท้ายด้วย JS (ไม่ใช้ flex ดันลงล่าง) เพราะตอนพิมพ์จริง
+     .a4-page ต้องเป็น min-height:auto (ให้ page-break ทำงานถูก) แปลว่า flex margin-top:auto
+     จะไม่มีอะไรให้ดัน — ใช้เทคนิคเติมแถวว่างแทน ที่ทดสอบแล้วว่าใช้ได้จริงกับใบกำกับภาษี ── */
+  .a4-page{width:210mm;min-height:297mm;margin:0 auto 16px;background:#fff;padding:14mm;box-sizing:border-box;box-shadow:0 2px 12px rgba(0,0,0,.15);font-size:12.5px;color:#1e293b;position:relative}
+  .a4-page + .a4-page{page-break-before:always}
   @media print{
     body *{visibility:hidden}
     #printArea, #printArea *{visibility:visible}
     #printArea{position:absolute;top:0;left:0;width:100%}
-    .a4-page{width:auto;margin:0;padding:0;box-shadow:none}
+    .a4-page{width:auto;min-height:auto;margin:0;padding:0;box-shadow:none;page-break-after:always}
+    .a4-page:last-child{page-break-after:auto}
+    .print-items-table thead{display:table-header-group}
+    .print-items-table tr{page-break-inside:avoid}
     @page{size:A4;margin:10mm}
   }
   .print-logo-box{width:60px;height:60px;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--faint);text-align:center;flex-shrink:0;line-height:1.3}
@@ -88,6 +95,8 @@
   .print-totals{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-top:14px}
   .print-baht-text{font-size:11px;color:var(--muted);text-align:right;margin-top:4px}
   .print-sign-row{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:34px;text-align:center;font-size:11.5px;color:#475569}
+  .a4-foot-note{position:absolute;bottom:8mm;left:14mm;right:14mm;font-size:10.5px;color:var(--faint);display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:4px}
+  .print-continued{text-align:center;color:var(--faint);font-size:12px;margin-top:14px}
 
   .status-draft{background:var(--line-soft);color:#475569}
   .status-sent{background:var(--info-bg);color:var(--info)}
@@ -621,6 +630,99 @@ function numberToThaiText(numVal) {
   return bahtText + (satang === 0 ? 'ถ้วน' : convertGroup(String(satang)) + 'สตางค์');
 }
 
+var QT_ROWS_PER_PAGE = 8;   // แถวสินค้าสูงสุดต่อหน้า (แถวสูงกว่าใบกำกับภาษีเพราะมีบรรทัดรหัส/P-N ย่อยใต้ชื่อ)
+
+function buildQuoteHead(ctx) {
+  return '<div class="print-head">' +
+      '<div class="print-logo-box">โลโก้<br>บริษัท</div>' +
+      '<div class="print-head-center">' +
+        '<div class="print-doc-title">ใบเสนอราคา (ต้นฉบับ)</div>' +
+        '<div class="print-doc-sub">QUOTATION</div>' +
+        '<div class="print-company-name">' + esc(ctx.sellerInfo.name || '') + (ctx.sellerInfo.branch ? ' (' + esc(ctx.sellerInfo.branch) + ')' : '') + '</div>' +
+        '<div class="print-company-line">' + esc(ctx.sellerInfo.address || '') + '</div>' +
+        '<div class="print-company-line">เลขประจำตัวผู้เสียภาษีอากร ' + esc(ctx.sellerInfo.taxId || '') + '</div>' +
+      '</div>' +
+      '<div class="print-no-box">' +
+        '<div style="border:1px solid var(--primary);border-radius:6px;padding:6px 9px;font-size:11.5px;color:var(--primary);font-weight:600;text-align:center" class="mono">เลขที่ ' + esc(ctx.quoteNo) + '</div>' +
+        '<div style="font-size:11px;color:#475569;margin-top:6px;line-height:1.8">' +
+          '<div style="display:flex;justify-content:space-between"><span>วันที่</span><span>' + ctx.quoteDateTxt + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between"><span>ยืนราคาถึง</span><span>' + ctx.validUntilTxt + '</span></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="print-parties">' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+        '<span><b>นามผู้ซื้อ</b> ' + esc(ctx.cust.Customer_Name || '—') + (ctx.cust.Customer_Type ? ' (' + esc(ctx.cust.Customer_Type) + ')' : '') + '</span>' +
+        '<span style="margin-left:auto"><b>เลขประจำตัวผู้เสียภาษี</b> ' + esc(ctx.cust.Tax_ID || '—') + '</span>' +
+      '</div>' +
+      '<div><b>ที่อยู่</b> ' + esc(ctx.cust.Address || '—') + '</div>' +
+      (ctx.vehicleNote || ctx.customerPo
+        ? '<div style="display:flex;gap:10px;flex-wrap:wrap;border-top:1px dashed var(--line);margin-top:5px;padding-top:5px">' +
+            (ctx.vehicleNote ? '<span><b>รถ/ทะเบียน</b> ' + esc(ctx.vehicleNote) + '</span>' : '') +
+            (ctx.customerPo ? '<span><b>PO ลูกค้า</b> ' + esc(ctx.customerPo) + '</span>' : '') +
+          '</div>'
+        : '') +
+    '</div>';
+}
+
+function buildQuoteBottomBlock(ctx) {
+  return '<div class="print-totals">' +
+      '<div style="flex:1;min-width:250px;font-size:11px;color:#475569;line-height:1.9">' +
+        '<div style="font-size:10px;font-weight:600;color:var(--faint);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:5px">เงื่อนไขการเสนอราคา</div>' +
+        '1. ราคานี้ยืนถึงวันที่ระบุด้านบน หลังจากนั้นขอสงวนสิทธิ์ปรับราคา<br>' +
+        '2. ราคารวมภาษีมูลค่าเพิ่มตามที่แสดง<br>' +
+        (ctx.note ? '3. หมายเหตุ: ' + esc(ctx.note) : '') +
+      '</div>' +
+      '<div style="width:260px;min-width:220px">' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>รวมเป็นเงิน</span><span class="mono">' + moneyPlain(ctx.t.subtotal) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>ส่วนลด ' + ctx.t.discPct + '%</span><span class="mono">' + moneyPlain(ctx.t.discAmount) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-top:1px solid var(--line)"><span>ภาษีมูลค่าเพิ่ม 7%</span><span class="mono">' + moneyPlain(ctx.t.vat) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:var(--primary);border-top:2px solid var(--primary);margin-top:5px;padding-top:8px"><span>ยอดสุทธิ</span><span class="mono">' + moneyPlain(ctx.t.grandTotal) + '</span></div>' +
+        '<div class="print-baht-text">(' + numberToThaiText(ctx.t.grandTotal) + ')</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="print-sign-row">' +
+      '<div><div style="border-bottom:1px dotted var(--faint);height:44px"></div>ผู้เสนอราคา · ' + esc(ctx.sellerInfo.name || '') + '</div>' +
+      '<div><div style="border-bottom:1px dotted var(--faint);height:44px"></div>ผู้อนุมัติสั่งซื้อ · ลูกค้า</div>' +
+    '</div>';
+}
+
+function buildQuotePage(ctx, pageItems, pageNo, totalPages, isLastPage) {
+  var rowsHtml = pageItems.map(function (b, idx) {
+    var runningNo = (pageNo - 1) * QT_ROWS_PER_PAGE + idx + 1;
+    return '<tr>' +
+      '<td class="text-center" style="color:var(--faint)">' + runningNo + '</td>' +
+      '<td>' + esc(b.productName) + '<div class="mono" style="font-size:10.5px;color:var(--faint);margin-top:2px">' + esc(b.productCode) + (b.partNumber ? ' · P/N ' + esc(b.partNumber) : '') + '</div></td>' +
+      '<td class="text-center">' + b.qty + '</td>' +
+      '<td class="text-right mono">' + moneyPlain(b.unitPrice) + '</td>' +
+      '<td class="text-right mono">' + moneyPlain(b.qty * b.unitPrice) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  if (!pageItems.length && pageNo === 1) {
+    rowsHtml = '<tr><td colspan="5" class="text-center" style="color:var(--faint);padding:20px">ยังไม่มีรายการสินค้า</td></tr>';
+  } else if (isLastPage) {
+    // เติมแถวว่างเต็มหน้าสุดท้าย ให้ยอดรวม/ลายเซ็นอยู่ตำแหน่งเดิมเสมอไม่ว่าจะมีกี่รายการ
+    for (var i = pageItems.length; i < QT_ROWS_PER_PAGE; i++) {
+      rowsHtml += '<tr><td style="color:var(--faint)">&nbsp;</td><td></td><td></td><td></td><td></td></tr>';
+    }
+  }
+
+  var bottomHtml = isLastPage
+    ? buildQuoteBottomBlock(ctx)
+    : '<div class="print-continued">— มีต่อหน้าถัดไป —</div>';
+
+  return '<div class="a4-page">' +
+    buildQuoteHead(ctx) +
+    '<table class="print-items-table">' +
+      '<thead><tr><th style="width:34px">#</th><th class="text-left">รายการ</th><th style="width:64px">จำนวน</th><th style="width:92px">ราคา/หน่วย</th><th style="width:104px">จำนวนเงิน</th></tr></thead>' +
+      '<tbody>' + rowsHtml + '</tbody>' +
+    '</table>' +
+    bottomHtml +
+    (totalPages > 1 ? '<div class="a4-foot-note"><span>' + esc(ctx.quoteNo) + '</span><span>หน้า ' + pageNo + ' / ' + totalPages + '</span></div>' : '') +
+  '</div>';
+}
+
 function renderDoc() {
   var customerId = document.getElementById('selCustomer').value;
   var cust = customers.find(function (c) { return c.id === customerId; }) || {};
@@ -636,72 +738,24 @@ function renderDoc() {
     if (q) quoteNo = q.quoteNo;
   }
 
-  var rowsHtml = basket.map(function (b, i) {
-    return '<tr>' +
-      '<td class="text-center" style="color:var(--faint)">' + (i + 1) + '</td>' +
-      '<td>' + esc(b.productName) + '<div class="mono" style="font-size:10.5px;color:var(--faint);margin-top:2px">' + esc(b.productCode) + (b.partNumber ? ' · P/N ' + esc(b.partNumber) : '') + '</div></td>' +
-      '<td class="text-center">' + b.qty + '</td>' +
-      '<td class="text-right mono">' + moneyPlain(b.unitPrice) + '</td>' +
-      '<td class="text-right mono">' + moneyPlain(b.qty * b.unitPrice) + '</td>' +
-    '</tr>';
-  }).join('') || '<tr><td colspan="5" class="text-center" style="color:var(--faint);padding:20px">ยังไม่มีรายการสินค้า</td></tr>';
+  var ctx = {
+    cust: cust, t: t, quoteNo: quoteNo,
+    quoteDateTxt: thaiDateLong(quoteDate),
+    validUntilTxt: isNaN(validUntil.getTime()) ? '-' : thaiDateLong(validUntil.toISOString().slice(0, 10)),
+    vehicleNote: document.getElementById('inpVehicleNote').value,
+    customerPo: document.getElementById('inpCustomerPo').value,
+    note: document.getElementById('inpNote').value,
+    sellerInfo: sellerInfo
+  };
 
-  document.getElementById('printArea').innerHTML =
-    '<div class="a4-page">' +
-      '<div class="print-head">' +
-        '<div class="print-logo-box">โลโก้<br>บริษัท</div>' +
-        '<div class="print-head-center">' +
-          '<div class="print-doc-title">ใบเสนอราคา (ต้นฉบับ)</div>' +
-          '<div class="print-doc-sub">QUOTATION</div>' +
-          '<div class="print-company-name">' + esc(sellerInfo.name || '') + (sellerInfo.branch ? ' (' + esc(sellerInfo.branch) + ')' : '') + '</div>' +
-          '<div class="print-company-line">' + esc(sellerInfo.address || '') + '</div>' +
-          '<div class="print-company-line">เลขประจำตัวผู้เสียภาษีอากร ' + esc(sellerInfo.taxId || '') + '</div>' +
-        '</div>' +
-        '<div class="print-no-box">' +
-          '<div style="border:1px solid var(--primary);border-radius:6px;padding:6px 9px;font-size:11.5px;color:var(--primary);font-weight:600;text-align:center" class="mono">เลขที่ ' + esc(quoteNo) + '</div>' +
-          '<div style="font-size:11px;color:#475569;margin-top:6px;line-height:1.8">' +
-            '<div style="display:flex;justify-content:space-between"><span>วันที่</span><span>' + thaiDateLong(quoteDate) + '</span></div>' +
-            '<div style="display:flex;justify-content:space-between"><span>ยืนราคาถึง</span><span>' + (isNaN(validUntil.getTime()) ? '-' : thaiDateLong(validUntil.toISOString().slice(0, 10))) + '</span></div>' +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-      '<div class="print-parties">' +
-        '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-          '<span><b>นามผู้ซื้อ</b> ' + esc(cust.Customer_Name || '—') + (cust.Customer_Type ? ' (' + esc(cust.Customer_Type) + ')' : '') + '</span>' +
-          '<span style="margin-left:auto"><b>เลขประจำตัวผู้เสียภาษี</b> ' + esc(cust.Tax_ID || '—') + '</span>' +
-        '</div>' +
-        '<div><b>ที่อยู่</b> ' + esc(cust.Address || '—') + '</div>' +
-        (document.getElementById('inpVehicleNote').value || document.getElementById('inpCustomerPo').value
-          ? '<div style="display:flex;gap:10px;flex-wrap:wrap;border-top:1px dashed var(--line);margin-top:5px;padding-top:5px">' +
-              (document.getElementById('inpVehicleNote').value ? '<span><b>รถ/ทะเบียน</b> ' + esc(document.getElementById('inpVehicleNote').value) + '</span>' : '') +
-              (document.getElementById('inpCustomerPo').value ? '<span><b>PO ลูกค้า</b> ' + esc(document.getElementById('inpCustomerPo').value) + '</span>' : '') +
-            '</div>'
-          : '') +
-      '</div>' +
-      '<table class="print-items-table">' +
-        '<thead><tr><th style="width:34px">#</th><th class="text-left">รายการ</th><th style="width:64px">จำนวน</th><th style="width:92px">ราคา/หน่วย</th><th style="width:104px">จำนวนเงิน</th></tr></thead>' +
-        '<tbody>' + rowsHtml + '</tbody>' +
-      '</table>' +
-      '<div class="print-totals">' +
-        '<div style="flex:1;min-width:250px;font-size:11px;color:#475569;line-height:1.9">' +
-          '<div style="font-size:10px;font-weight:600;color:var(--faint);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:5px">เงื่อนไขการเสนอราคา</div>' +
-          '1. ราคานี้ยืนถึงวันที่ระบุด้านบน หลังจากนั้นขอสงวนสิทธิ์ปรับราคา<br>' +
-          '2. ราคารวมภาษีมูลค่าเพิ่มตามที่แสดง<br>' +
-          (document.getElementById('inpNote').value ? '3. หมายเหตุ: ' + esc(document.getElementById('inpNote').value) : '') +
-        '</div>' +
-        '<div style="width:260px;min-width:220px">' +
-          '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>รวมเป็นเงิน</span><span class="mono">' + moneyPlain(t.subtotal) + '</span></div>' +
-          '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0"><span>ส่วนลด ' + t.discPct + '%</span><span class="mono">' + moneyPlain(t.discAmount) + '</span></div>' +
-          '<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-top:1px solid var(--line)"><span>ภาษีมูลค่าเพิ่ม 7%</span><span class="mono">' + moneyPlain(t.vat) + '</span></div>' +
-          '<div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:var(--primary);border-top:2px solid var(--primary);margin-top:5px;padding-top:8px"><span>ยอดสุทธิ</span><span class="mono">' + moneyPlain(t.grandTotal) + '</span></div>' +
-          '<div class="print-baht-text">(' + numberToThaiText(t.grandTotal) + ')</div>' +
-        '</div>' +
-      '</div>' +
-      '<div class="print-sign-row">' +
-        '<div><div style="border-bottom:1px dotted var(--faint);height:44px"></div>ผู้เสนอราคา · ' + esc(sellerInfo.name || '') + '</div>' +
-        '<div><div style="border-bottom:1px dotted var(--faint);height:44px"></div>ผู้อนุมัติสั่งซื้อ · ลูกค้า</div>' +
-      '</div>' +
-    '</div>';
+  var totalPages = Math.max(1, Math.ceil(basket.length / QT_ROWS_PER_PAGE));
+  var pagesHtml = '';
+  for (var p = 1; p <= totalPages; p++) {
+    var pageItems = basket.slice((p - 1) * QT_ROWS_PER_PAGE, p * QT_ROWS_PER_PAGE);
+    pagesHtml += buildQuotePage(ctx, pageItems, p, totalPages, p === totalPages);
+  }
+
+  document.getElementById('printArea').innerHTML = pagesHtml;
 }
 
 /* ═══ ทะเบียนใบเสนอราคา ═══ */
