@@ -3772,6 +3772,8 @@ function getStockMovements(limit, productCode) {
         productName : parseFirestoreValue(f.Product_Name),
         qty         : parseFloat(parseFirestoreValue(f.Qty)) || 0,
         stockAfter  : parseFirestoreValue(f.Stock_After),
+        unitPrice   : parseFloat(parseFirestoreValue(f.Unit_Price)) || 0,
+        costPrice   : parseFloat(parseFirestoreValue(f.Cost_Price)) || 0,
         reason      : parseFirestoreValue(f.Reason),
         refNo       : parseFirestoreValue(f.Ref_No),
         note        : parseFirestoreValue(f.Note),

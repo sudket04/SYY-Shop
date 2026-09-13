@@ -446,7 +446,7 @@
         {id:'cars',       ic:'🚗', label:'ข้อมูลรถ',       roles:['admin','staff']}
       ]},
     { group:'ระบบ',        items:[
-        {id:'backup',      ic:'💾', label:'สำรองข้อมูล',      action:'openBackup',  roles:['admin','staff']},
+        {id:'backup',      ic:'💾', label:'สำรองข้อมูล',      action:'openBackup',  roles:['admin']},
         {id:'manageusers', ic:'👤', label:'จัดการบัญชีผู้ใช้',  roles:['admin']},
         {id:'activitylog', ic:'📋', label:'Activity Log',    action:'openLog',     roles:['admin']}
       ]}
@@ -571,17 +571,14 @@
 
   /* ═══ ข้อมูล ═══ */
   function loadMasters(done){
-    google.script.run
-      .withSuccessHandler(function(res){
-        masters=res||{};
-        fillSelect('mBrandId',    masters.brands);
-        fillSelect('mCategoryId', masters.categories);
-        fillSelect('mVendorId',   masters.vendors);
-        fillSelect('mZoneId',     masters.zones);
-        if(done) done();
-      })
-      .withFailureHandler(function(){ if(done) done(); })
-      .getAllMasterDropdowns();
+    callApi('getAllMasterDropdowns', [], function(res){
+      masters=res||{};
+      fillSelect('mBrandId',    masters.brands);
+      fillSelect('mCategoryId', masters.categories);
+      fillSelect('mVendorId',   masters.vendors);
+      fillSelect('mZoneId',     masters.zones);
+      if(done) done();
+    }, function(){ if(done) done(); });
   }
   function fillSelect(id,items){
     var sel=document.getElementById(id);
@@ -1397,24 +1394,7 @@
     var carIds=[];
     try{ carIds=JSON.parse(document.getElementById('editForm').dataset.carIds||'[]'); }catch(x){}
 
-    google.script.run
-      .withSuccessHandler(function(res){
-        btnDone(btn);
-        if(res && res.success){
-          closeModal('editModal');
-          toast('บันทึกสินค้าเรียบร้อย');
-          dashLoad();
-        } else {
-          alertEl.className='modal-alert error';
-          alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');
-        }
-      })
-      .withFailureHandler(function(err){
-        btnDone(btn);
-        alertEl.className='modal-alert error';
-        alertEl.innerText='❌ '+JSON.stringify(err);
-      })
-      .saveProduct({
+    callApi('saveProduct', [{
         productCode : document.getElementById('mCode').value,
         productName : document.getElementById('mName').value,
         partType    : document.getElementById('mPartType').value,
@@ -1429,6 +1409,20 @@
         currentStock: num(document.getElementById('mStock').value),
         minStock    : num(document.getElementById('mMinStock').value),
         status      : document.getElementById('mStatus').value
+      }], function(res){
+        btnDone(btn);
+        if(res && res.success){
+          closeModal('editModal');
+          toast('บันทึกสินค้าเรียบร้อย');
+          dashLoad();
+        } else {
+          alertEl.className='modal-alert error';
+          alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');
+        }
+      }, function(err){
+        btnDone(btn);
+        alertEl.className='modal-alert error';
+        alertEl.innerText='❌ '+JSON.stringify(err);
       });
   }
 
@@ -1455,33 +1449,27 @@
   function loadBackupList(){
     var el=document.getElementById('backupList');
     el.innerHTML='<div style="padding:16px"><span class="sk" style="width:80%"></span></div>';
-    google.script.run
-      .withSuccessHandler(function(files){
-        if(!files||!files.length){ el.innerHTML='<div class="empty-state"><div class="ic">📭</div><div class="ti">ยังไม่มีไฟล์สำรอง</div></div>'; return; }
-        el.innerHTML=files.map(function(f){
-          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:13px">'+
-            '<div><div style="font-weight:600;color:var(--ink)">'+esc(thDate(f.date,true))+' น.</div>'+
-            '<div style="font-size:11px;color:var(--faint)">'+esc(f.sizeKB)+' KB</div></div>'+
-            '<a href="'+esc(f.url)+'" target="_blank">เปิดใน Drive</a></div>';
-        }).join('');
-      })
-      .withFailureHandler(function(err){ el.innerHTML='<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดรายการไม่สำเร็จ</div></div>'; })
-      .listBackupFiles();
+    callApi('listBackupFiles', [], function(files){
+      if(!files||!files.length){ el.innerHTML='<div class="empty-state"><div class="ic">📭</div><div class="ti">ยังไม่มีไฟล์สำรอง</div></div>'; return; }
+      el.innerHTML=files.map(function(f){
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:13px">'+
+          '<div><div style="font-weight:600;color:var(--ink)">'+esc(thDate(f.date,true))+' น.</div>'+
+          '<div style="font-size:11px;color:var(--faint)">'+esc(f.sizeKB)+' KB</div></div>'+
+          '<a href="'+esc(f.url)+'" target="_blank">เปิดใน Drive</a></div>';
+      }).join('');
+    }, function(err){ el.innerHTML='<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดรายการไม่สำเร็จ</div></div>'; });
   }
   function runBackupNow(){
     var btn=document.getElementById('btnBackupNow');
     btnBusy(btn,'กำลังสำรองข้อมูล...');
-    google.script.run
-      .withSuccessHandler(function(res){
-        btnDone(btn);
-        if(res && res.success){
-          var n=Object.keys(res.collections||{}).reduce(function(s,k){return s+res.collections[k];},0);
-          toast('สำรองข้อมูลสำเร็จ ('+n+' รายการ · '+res.fileSizeKB+' KB)');
-        } else toast('สำรองสำเร็จบางส่วน — '+((res&&res.errors)||[]).join(', '),'warn',5000);
-        loadBackupList();
-      })
-      .withFailureHandler(function(err){ btnDone(btn); swyError('สำรองข้อมูลไม่สำเร็จ',esc(JSON.stringify(err))); })
-      .backupNow();
+    callApi('backupNow', [], function(res){
+      btnDone(btn);
+      if(res && res.success){
+        var n=Object.keys(res.collections||{}).reduce(function(s,k){return s+res.collections[k];},0);
+        toast('สำรองข้อมูลสำเร็จ ('+n+' รายการ · '+res.fileSizeKB+' KB)');
+      } else toast('สำรองสำเร็จบางส่วน — '+((res&&res.errors)||[]).join(', '),'warn',5000);
+      loadBackupList();
+    }, function(err){ btnDone(btn); swyError('สำรองข้อมูลไม่สำเร็จ',esc(JSON.stringify(err))); });
   }
 
   /* ═══ Activity log ═══ */
