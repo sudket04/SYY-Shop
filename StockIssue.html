@@ -93,6 +93,16 @@
 
   .spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;margin-right:6px;vertical-align:-2px}
   @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ── รายละเอียดสินค้า (คลิกแถวเปิดดู) — สไตล์เดียวกับหน้าจัดการสินค้า ── */
+  .view-field-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .view-field-tile{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:#fff}
+  .view-field-tile .vft-label{font-size:10.5px;color:var(--faint)}
+  .view-field-tile .vft-value{font-size:13px;color:var(--ink);margin-top:3px}
+  .view-field-tile.wide{grid-column:span 2}
+  .view-price-pill{border-radius:10px;padding:8px 14px;min-width:96px}
+  .view-price-pill .vpp-label{font-size:10.5px;opacity:.85}
+  .view-price-pill .vpp-value{font-size:15px;font-weight:700;margin-top:2px}
   </style>
 </head>
 <body>
@@ -225,6 +235,34 @@
           </table>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ รายละเอียดสินค้า (คลิกที่แถวผลการค้นหาเพื่อเปิดดู) — อ่านอย่างเดียว ไม่มีแก้ไข ═══ -->
+<div class="modal-overlay" id="productDetailModal">
+  <div class="modal-box" style="width:640px">
+    <div class="modal-header">
+      <span>📦 รายละเอียดสินค้า</span>
+      <button class="modal-close" onclick="closeProductDetail()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px">
+        <div id="pdImgBox" style="width:120px;height:120px;border:1px solid var(--line);border-radius:12px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg);box-shadow:0 1px 3px rgba(0,0,0,.08)">
+          <span style="font-size:32px;color:var(--faint)">📦</span>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <div id="pdName" style="font-size:17px;font-weight:700;color:var(--ink)"></div>
+          <div id="pdSub" style="font-size:12.5px;color:var(--muted);margin-top:4px"></div>
+          <div id="pdPriceRow" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"></div>
+        </div>
+      </div>
+      <div class="section-label">ข้อมูลสินค้า</div>
+      <div id="pdFieldGrid" class="view-field-grid"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-ghost" onclick="closeProductDetail()">ปิด</button>
+      <button type="button" class="btn btn-primary" id="pdBtnAdd" onclick="addFromDetail()">+ เพิ่มสินค้า</button>
     </div>
   </div>
 </div>
@@ -458,7 +496,7 @@
       var stTxt = st <= 0 ? 'หมด (0)' : (st <= mn ? 'เหลือ ' + st + ' · ต่ำกว่าขั้นต่ำ' : 'คงเหลือ ' + st);
       var partTxt = p.partType === 'แท้' ? '<span class="part-badge part-genuine">แท้</span>'
                   : p.partType === 'เทียบ' ? '<span class="part-badge part-copy">เทียบ</span>' : '';
-      return '<div class="res-row ' + (i === selIdx ? 'sel ' : '') + (st <= 0 ? 'out' : '') + '" onclick="addToBasket(\'' + esc(p.productCode) + '\')">' +
+      return '<div class="res-row ' + (i === selIdx ? 'sel ' : '') + (st <= 0 ? 'out' : '') + '" onclick="openProductDetail(\'' + esc(p.productCode) + '\')">' +
         (p.imageUrl ? '<img src="' + esc(p.imageUrl) + '" alt="" loading="lazy" style="width:40px;height:40px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex-shrink:0" onerror="this.remove()">' : '') +
         '<div class="res-main">' +
           '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
@@ -477,10 +515,11 @@
           '<div class="res-price">' + money(p.sellingPrice) + '</div>' +
           '<span class="stock-badge badge ' + stCls + '">' + stTxt + '</span>' +
         '</div>' +
-        // ★ ตั้งใจไม่ใส่ attribute disabled จริง — ปุ่มนี้ไม่มี onclick ของตัวเอง อาศัย .res-row คลิกทั้งแถว
-        //   (ซึ่งเช็คสต๊อกใน addToBasket() แล้วเตือน "สินค้าหมด" อยู่แล้ว) ถ้าใส่ disabled จริงจะกลาย
-        //   เป็นจุดบอด — คลิกตรงปุ่มพอดีจะไม่มี click event bubble ขึ้นไปที่แถวเลย ทั้งที่คลิกที่อื่นในแถวยังทำงาน
-        '<button class="btn-add' + (st <= 0 ? ' is-disabled' : '') + '" type="button">' + (st <= 0 ? 'หมด' : '+ เพิ่มสินค้า') + '</button>' +
+        // ★ คลิกแถว = เปิดดูรายละเอียด, คลิกปุ่มนี้เท่านั้น = เพิ่มลงตะกร้า (stopPropagation กันไม่ให้เปิด
+        //   รายละเอียดซ้อนตามมาด้วย) — ตั้งใจไม่ใส่ attribute disabled จริงตอน "หมด" เพราะปุ่ม disabled
+        //   จะกลืน click event ทั้งหมด ทำให้กดแล้วไม่มีอะไรเกิดขึ้นเลยแทนที่จะได้เห็นข้อความ "สินค้าหมด"
+        //   ที่ addToBasket() เตือนไว้อยู่แล้ว — ใช้ class .is-disabled ทำแค่สีจางลงพอ
+        '<button class="btn-add' + (st <= 0 ? ' is-disabled' : '') + '" type="button" onclick="event.stopPropagation(); addToBasket(\'' + esc(p.productCode) + '\')">' + (st <= 0 ? 'หมด' : '+ เพิ่มสินค้า') + '</button>' +
       '</div>';
     }).join('');
   }
@@ -496,6 +535,66 @@
       if (r.offsetTop < box.scrollTop) box.scrollTop = r.offsetTop - 4;
       else if (r.offsetTop + r.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = r.offsetTop + r.offsetHeight - box.clientHeight + 4;
     }
+  }
+
+  /* ═══ รายละเอียดสินค้า (คลิกแถวเปิดดู — อ่านอย่างเดียว) ═══ */
+  var detailProductCode = null;
+
+  function pdImgFallback() {
+    document.getElementById('pdImgBox').innerHTML = '<span style="font-size:32px;color:var(--faint)">📦</span>';
+  }
+
+  function openProductDetail(code) {
+    var p = products.find(function (x) { return x.productCode === code; });
+    if (!p) return;
+    detailProductCode = code;
+
+    document.getElementById('pdName').innerText = p.productName || '(ไม่มีชื่อ)';
+    document.getElementById('pdSub').innerHTML =
+      '<span class="mono">' + esc(p.productCode) + '</span>' +
+      (p.partNumber ? ' · P/N ' + esc(p.partNumber) : '') +
+      (p.barcode ? ' · 🔖 ' + esc(p.barcode) : '');
+
+    var st = num(p.currentStock), mn = num(p.minStock);
+    var stockBg = st <= 0 ? 'var(--danger-bg)' : (st <= mn ? 'var(--warn-bg)' : 'var(--ok-bg)');
+    var stockFg = st <= 0 ? 'var(--danger-dark)' : (st <= mn ? 'var(--warn)' : 'var(--ok)');
+    document.getElementById('pdPriceRow').innerHTML =
+      '<div class="view-price-pill" style="background:#eef6ff;color:#0369a1"><div class="vpp-label">ราคาขาย</div><div class="vpp-value">' + money(p.sellingPrice) + '</div></div>' +
+      '<div class="view-price-pill" style="background:' + stockBg + ';color:' + stockFg + '"><div class="vpp-label">คงเหลือ</div><div class="vpp-value">' + st + ' ชิ้น</div></div>';
+
+    var fields = [
+      { label: 'ประเภทสินค้า', value: p.partType && p.partType !== 'PENDING' ? p.partType : 'รอดำเนินการ' },
+      { label: 'แบรนด์', value: p.brandName || '—' },
+      { label: 'หมวดหมู่', value: p.categoryName || '—' },
+      { label: 'โซนจัดเก็บ', value: '📦 ' + (p.zoneName || '—') },
+      { label: 'สต๊อกขั้นต่ำ', value: mn + ' ชิ้น' }
+    ];
+    if (p.carModel) fields.push({ label: '🚗 รุ่นรถที่ใส่ได้', value: p.carModel, wide: true });
+    document.getElementById('pdFieldGrid').innerHTML = fields.map(function (f) {
+      return '<div class="view-field-tile' + (f.wide ? ' wide' : '') + '"><div class="vft-label">' + esc(f.label) + '</div><div class="vft-value">' + esc(f.value) + '</div></div>';
+    }).join('');
+
+    var imgBox = document.getElementById('pdImgBox');
+    imgBox.innerHTML = p.imageUrl
+      ? '<img src="' + esc(p.imageUrl) + '" style="width:100%;height:100%;object-fit:cover" onerror="pdImgFallback()">'
+      : '<span style="font-size:32px;color:var(--faint)">📦</span>';
+
+    var btnAdd = document.getElementById('pdBtnAdd');
+    btnAdd.disabled  = st <= 0;
+    btnAdd.innerText = st <= 0 ? 'หมด' : '+ เพิ่มสินค้า';
+
+    openModal('productDetailModal');
+  }
+
+  function closeProductDetail() {
+    closeModal('productDetailModal');
+    focusScanInput();
+  }
+
+  function addFromDetail() {
+    if (!detailProductCode) return;
+    addToBasket(detailProductCode); // เรียก focusScanInput() ในตัวอยู่แล้วเมื่อจบ
+    closeModal('productDetailModal');
   }
 
   /* ═══ ตะกร้า ═══ */
