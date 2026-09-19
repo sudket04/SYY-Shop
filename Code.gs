@@ -85,16 +85,23 @@ function getAuthHeader() {
 
 // ==========================================
 // 2a. ★ รูปสินค้า — Firebase Storage (bucket เดียวกับโปรเจกต์ Firestore นี้)
-//   ⚠️ ต้องตรวจสอบชื่อ bucket จริงจาก Firebase Console → Storage ก่อนใช้งาน
-//   (โปรเจกต์ที่สร้างก่อน ต.ค. 2024 มักเป็น "<project-id>.appspot.com",
-//    โปรเจกต์ใหม่กว่านั้นมักเป็น "<project-id>.firebasestorage.app")
-//   และต้องตั้งสิทธิ์อ่านสาธารณะ (allUsers: Storage Object Viewer) ที่ bucket นี้ครั้งเดียว
-//   ใน Google Cloud Console เพื่อให้ URL รูปใช้ได้ตรงๆ โดยไม่ต้องมี token — ดูรายละเอียดใน README
+//   ชื่อ bucket จริงมี 2 รูปแบบไปตามอายุโปรเจกต์ (โปรเจกต์ก่อน ต.ค. 2024 = "<project-id>.appspot.com",
+//   ใหม่กว่านั้น = "<project-id>.firebasestorage.app") — เดาผิดแล้วอัปโหลดจะพังเงียบๆ ทุกครั้ง
+//   จึงลองทั้งสองแบบตอนอัปโหลดจริงครั้งแรก แล้วจำอันที่ใช้ได้ไว้ใน Script Properties อัตโนมัติ
+//   (resolveStorageBucket_) ไม่ต้องให้ผู้ดูแลระบบไปเช็ค Console เอง
+//   ยังต้องตั้งสิทธิ์อ่านสาธารณะ (allUsers: Storage Object Viewer) ที่ bucket นี้ครั้งเดียวใน
+//   Google Cloud Console เพื่อให้ URL รูปใช้ได้ตรงๆ โดยไม่ต้องมี token — ดูรายละเอียดใน README
 // ==========================================
-var FIREBASE_STORAGE_BUCKET = "syy-shop.appspot.com";
+var FIREBASE_STORAGE_BUCKET_CANDIDATES = ["syy-shop.appspot.com", "syy-shop.firebasestorage.app"];
+var STORAGE_BUCKET_PROP_KEY = "STORAGE_BUCKET_RESOLVED";
+
+function resolveStorageBucket_() {
+  var cached = PropertiesService.getScriptProperties().getProperty(STORAGE_BUCKET_PROP_KEY);
+  return cached || FIREBASE_STORAGE_BUCKET_CANDIDATES[0];
+}
 
 function productImageUrl_(productCode) {
-  return "https://storage.googleapis.com/" + FIREBASE_STORAGE_BUCKET + "/product-images/" + encodeURIComponent(productCode) + ".jpg";
+  return "https://storage.googleapis.com/" + resolveStorageBucket_() + "/product-images/" + encodeURIComponent(productCode) + ".jpg";
 }
 
 /**
@@ -116,23 +123,41 @@ function uploadProductImage(productCode, base64Data) {
     }
 
     var objectPath = "product-images/" + productCode + ".jpg";
-    var uploadUrl = "https://firebasestorage.googleapis.com/v0/b/" + FIREBASE_STORAGE_BUCKET
-                   + "/o?uploadType=media&name=" + encodeURIComponent(objectPath);
-    var res = UrlFetchApp.fetch(uploadUrl, {
-      method             : "post",
-      headers            : { "Authorization": "Bearer " + ScriptApp.getOAuthToken() },
-      contentType        : "image/jpeg",
-      payload            : bytes,
-      muteHttpExceptions : true
-    });
-    if (res.getResponseCode() !== 200) {
-      return { success: false, message: "อัปโหลดไม่สำเร็จ (HTTP " + res.getResponseCode() + "): " + res.getContentText() };
+
+    // ★ ลองอัปโหลดกับ bucket ที่เคยยืนยันแล้ว (ถ้ามี) ก่อน ไม่งั้นลองทีละแบบจนกว่าจะสำเร็จ
+    var cachedBucket = PropertiesService.getScriptProperties().getProperty(STORAGE_BUCKET_PROP_KEY);
+    var candidates = cachedBucket ? [cachedBucket] : FIREBASE_STORAGE_BUCKET_CANDIDATES;
+
+    var res = null, usedBucket = null;
+    for (var i = 0; i < candidates.length; i++) {
+      var bucket = candidates[i];
+      var uploadUrl = "https://firebasestorage.googleapis.com/v0/b/" + bucket
+                     + "/o?uploadType=media&name=" + encodeURIComponent(objectPath);
+      res = UrlFetchApp.fetch(uploadUrl, {
+        method             : "post",
+        headers            : { "Authorization": "Bearer " + ScriptApp.getOAuthToken() },
+        contentType        : "image/jpeg",
+        payload            : bytes,
+        muteHttpExceptions : true
+      });
+      if (res.getResponseCode() === 200) { usedBucket = bucket; break; }
+    }
+
+    if (!usedBucket) {
+      return {
+        success: false,
+        message: "อัปโหลดไม่สำเร็จ (HTTP " + res.getResponseCode() + "): " + res.getContentText() +
+          " — ตรวจสอบว่าเปิดใช้ Firebase Storage แล้ว และบัญชีนี้เคยอนุญาตสิทธิ์ (Authorize) สคริปต์ตัวล่าสุดแล้ว"
+      };
+    }
+    if (usedBucket !== cachedBucket) {
+      PropertiesService.getScriptProperties().setProperty(STORAGE_BUCKET_PROP_KEY, usedBucket);
     }
 
     // ตั้ง cache สั้นๆ กันรูปเก่าค้างในเบราว์เซอร์หลังเปลี่ยนรูป — ไม่บล็อกผลลัพธ์ถ้าขั้นนี้ล้มเหลว
     try {
       UrlFetchApp.fetch(
-        "https://firebasestorage.googleapis.com/v0/b/" + FIREBASE_STORAGE_BUCKET + "/o/" + encodeURIComponent(objectPath),
+        "https://firebasestorage.googleapis.com/v0/b/" + usedBucket + "/o/" + encodeURIComponent(objectPath),
         {
           method             : "patch",
           headers            : { "Authorization": "Bearer " + ScriptApp.getOAuthToken() },
@@ -155,7 +180,7 @@ function deleteProductImage(productCode) {
     if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
     var objectPath = "product-images/" + productCode + ".jpg";
     var res = UrlFetchApp.fetch(
-      "https://firebasestorage.googleapis.com/v0/b/" + FIREBASE_STORAGE_BUCKET + "/o/" + encodeURIComponent(objectPath),
+      "https://firebasestorage.googleapis.com/v0/b/" + resolveStorageBucket_() + "/o/" + encodeURIComponent(objectPath),
       { method: "delete", headers: { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true }
     );
     var code = res.getResponseCode();
@@ -811,7 +836,7 @@ function saveProduct(d) {
 
   var dataObject = {
     Product_Name      : String(d.productName   || ""),
-    Part_Type         : String(d.partType      || ""),
+    Part_Type         : String(d.partType      || "").trim() || "PENDING", // ★ ไม่บังคับเลือก — ว่างไว้ได้ (แสดงเป็น "รอดำเนินการ" เหมือน Zone_ID)
     Part_Number       : String(d.partNumber    || "").trim(),
     Barcode           : String(d.barcode       || "").trim(),
     Brand_ID          : String(d.brandId       || ""),
@@ -825,10 +850,6 @@ function saveProduct(d) {
     Min_Stock         : parseFloat(d.minStock     || 0),
     Status            : String(d.status        || "Active")
   };
-
-  if (dataObject.Part_Type !== "แท้" && dataObject.Part_Type !== "เทียบ") {
-    return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกประเภทสินค้า (แท้ / เทียบ)" };
-  }
 
   var docId = d.productCode || d.docId || null;
 

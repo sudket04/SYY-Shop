@@ -46,6 +46,9 @@
   .models-cell{max-width:280px}
   .chip-model-more{background:var(--line-soft);color:#475569;border-color:var(--line);cursor:help}
   .barcode-print-area{display:none}
+  .img-upload-progress-track{height:6px;background:#e2e8f0;border-radius:4px;overflow:hidden}
+  .img-upload-progress-bar{height:100%;width:35%;background:var(--primary);border-radius:4px;animation:imgUploadSlide 1.1s ease-in-out infinite}
+  @keyframes imgUploadSlide{0%{margin-left:-35%}50%{margin-left:65%}100%{margin-left:100%}}
   </style>
 </head>
 <body>
@@ -87,9 +90,9 @@
             </div>
 
             <div class="form-group full">
-              <label>ประเภทสินค้า (Part Type) *</label>
-              <select id="inp_partType" class="form-control" required>
-                <option value="">-- เลือกประเภทสินค้า --</option>
+              <label>ประเภทสินค้า (Part Type)</label>
+              <select id="inp_partType" class="form-control">
+                <option value="">-- ยังไม่ระบุ (รอดำเนินการ) --</option>
                 <option value="แท้">✅ แท้ (Genuine)</option>
                 <option value="เทียบ">🔧 เทียบ (Aftermarket)</option>
               </select>
@@ -190,6 +193,10 @@
                   <div style="display:flex;gap:8px;flex-wrap:wrap">
                     <button type="button" class="btn btn-ghost" id="btnPickImage" onclick="document.getElementById('inp_imageFile').click()">🖼️ เลือกรูป</button>
                     <button type="button" class="btn btn-ghost" id="btnDeleteImage" style="display:none" onclick="deleteProductImageNow()">🗑️ ลบรูป</button>
+                  </div>
+                  <div id="imgUploadProgress" style="display:none;margin-top:8px">
+                    <div class="img-upload-progress-track"><div class="img-upload-progress-bar"></div></div>
+                    <div style="font-size:11px;color:var(--faint);margin-top:4px">กำลังอัปโหลดรูปภาพ...</div>
                   </div>
                   <div class="field-hint" id="imageHint">บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้ (ต้องมีรหัสสินค้าก่อน)</div>
                 </div>
@@ -635,12 +642,12 @@
         }
       }
 
-      var partTypeTxt = '<span style="color:#cbd5e1;">—</span>';
+      var partTypeTxt = '<span style="display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:600; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; border-radius:20px; padding:2px 10px;">⏳ รอดำเนินการ</span>';
       if (item.partType === 'แท้') {
         partTypeTxt = '<span class="badge badge-ok">✅ แท้</span>';
       } else if (item.partType === 'เทียบ') {
         partTypeTxt = '<span class="badge badge-warn">🔧 เทียบ</span>';
-      }
+      } // ★ ค่าอื่น (PENDING หรือว่าง) ใช้ป้าย "รอดำเนินการ" ด้านบนเป็นค่าเริ่มต้นอยู่แล้ว
 
       var codeKey = item.id || item.productCode;
       var imgCell = item.imageUrl
@@ -754,7 +761,7 @@
     editingDocId = item.id || docId;
     document.getElementById('modalDocId').value       = editingDocId;
     document.getElementById('inp_productName').value   = item.productName   || '';
-    document.getElementById('inp_partType').value      = item.partType      || '';
+    document.getElementById('inp_partType').value      = (item.partType === 'PENDING' ? '' : item.partType) || '';
     document.getElementById('inp_partNumber').value     = item.partNumber    || '';
     document.getElementById('inp_barcode').value        = item.barcode       || '';
     document.getElementById('inp_brandId').value       = item.brandId       || '';
@@ -805,13 +812,7 @@
     var alertEl = document.getElementById('modalAlert');
     alertEl.style.display = 'none';
 
-    var partType = document.getElementById('inp_partType').value;
-    if (!partType) {
-      alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ กรุณาเลือกประเภทสินค้า (แท้ / เทียบ)';
-      alertEl.style.display = 'block';
-      return;
-    }
+    var partType = document.getElementById('inp_partType').value; // ★ ไม่บังคับเลือก — ว่างไว้ได้ (แสดงเป็น "รอดำเนินการ")
 
     btn.disabled  = true;
     btn.innerText = '⏳ กำลังบันทึก...';
@@ -930,11 +931,22 @@
   }
 
   function uploadProductImageNow(base64) {
-    var pickBtn = document.getElementById('btnPickImage');
+    var pickBtn   = document.getElementById('btnPickImage');
+    var delBtn    = document.getElementById('btnDeleteImage');
+    var progress  = document.getElementById('imgUploadProgress');
     btnBusy(pickBtn, 'กำลังอัปโหลด...');
-    callApi('uploadProductImage', [editingDocId, base64], function (res) {
+    delBtn.disabled = true;
+    progress.style.display = 'block';
+
+    function finishUpload() {
       btnDone(pickBtn);
+      delBtn.disabled = false;
+      progress.style.display = 'none';
       document.getElementById('inp_imageFile').value = '';
+    }
+
+    callApi('uploadProductImage', [editingDocId, base64], function (res) {
+      finishUpload();
       if (res && res.success) {
         showImagePreview(res.imageUrl);
         var cached = productsCache.find(function (p) { return p.id === editingDocId; });
@@ -945,8 +957,7 @@
         swyError('อัปโหลดไม่สำเร็จ', (res && res.message) || 'ไม่ทราบสาเหตุ');
       }
     }, function (err) {
-      btnDone(pickBtn);
-      document.getElementById('inp_imageFile').value = '';
+      finishUpload();
       swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
     });
   }
@@ -988,7 +999,7 @@
     document.getElementById('viewProductName').innerText = item.productName || '(ไม่มีชื่อ)';
     var metaParts = [
       'รหัส: ' + esc(item.productCode || item.id),
-      'ประเภท: ' + esc(item.partType || '-'),
+      'ประเภท: ' + esc(item.partType === 'PENDING' || !item.partType ? 'รอดำเนินการ' : item.partType),
       item.partNumber ? 'P/N: ' + esc(item.partNumber) : null,
       'แบรนด์: ' + esc(item.brandName || '-'),
       'หมวดหมู่: ' + esc(item.categoryName || '-'),

@@ -81,16 +81,17 @@
 ## 6. route + เมนู (ไม่ต้องแก้ — มีอยู่แล้วใน `Code.gs`/`index.html` ที่แนบมา)
 `doGet(e)` มี route `stockissue` และเมนูใน `index` อ่านจากตัวแปร `MENU` เดียวอยู่แล้ว รวมถึงเพิ่มทางเข้าไปหน้า "บัญชีของฉัน" จากคลิกที่ชื่อผู้ใช้มุมล่าง sidebar ให้แล้ว (ของเดิมไม่มีทางกดเข้าหน้านี้เลยจากเมนู)
 
-## 7. รูปสินค้า (Master_Products) — ต้องตั้งค่า Firebase Storage ครั้งเดียวก่อนใช้งานได้จริง
+## 7. รูปสินค้า (Master_Products) — ต้องเปิดใช้ Firebase Storage + ตั้งสิทธิ์อ่านสาธารณะครั้งเดียวก่อนใช้งานได้จริง
 ฟีเจอร์อัปโหลดรูปสินค้า (`uploadProductImage`/`deleteProductImage` ใน `Code.gs`) เก็บไฟล์จริงไว้ที่ **Firebase Storage** ของโปรเจกต์นี้เอง (ไม่ใช่ Firestore — เก็บรูปใน Firestore field ตรงๆ จะชนขีดจำกัด 1MB/เอกสารและทำให้ทุกหน้าที่โหลดสินค้าทั้งหมดอืด) โดยไม่ได้เก็บ URL/พาธของรูปไว้ใน Firestore เลย — คำนวณจาก `productCode` เสมอ (`product-images/{รหัสสินค้า}.jpg`) เพื่อกันไม่ให้การแก้ไขสินค้าปกติ (ซึ่ง `saveMasterData` เขียนทับทั้งเอกสารทุกครั้ง) ไปลบข้อมูลรูปทิ้งโดยไม่ตั้งใจ
 
-**ต้องทำก่อนใช้งานจริง (ทำครั้งเดียว):**
-1. เปิด Firebase Console ของโปรเจกต์นี้ → เมนู Storage → กด "Get started" ถ้ายังไม่เคยเปิดใช้ Storage มาก่อน
-2. ตรวจสอบชื่อ bucket จริงที่แสดงในหน้า Storage (รูปแบบ `gs://<ชื่อ>`) แล้วนำมาใส่แทนค่าคงที่ `FIREBASE_STORAGE_BUCKET` ใน `Code.gs` (ตอนนี้ตั้งเป็น `"syy-shop.appspot.com"` เป็นค่าคาดเดา — โปรเจกต์ที่สร้างหลัง ต.ค. 2024 มักได้ bucket ชื่อ `<project-id>.firebasestorage.app` แทน)
-3. ตั้งสิทธิ์อ่านสาธารณะให้ bucket นี้ครั้งเดียว (Google Cloud Console → Cloud Storage → เลือก bucket → PERMISSIONS → Grant Access → Principal ใส่ `allUsers` → Role เลือก `Storage Object Viewer`) เพื่อให้ URL รูปสินค้าที่ระบบสร้างให้ (`https://storage.googleapis.com/<bucket>/product-images/...`) เปิดดูตรงๆ ได้โดยไม่ต้องมี token — เหมาะสมเพราะเป็นรูปอะไหล่รถ ไม่ใช่ข้อมูลลูกค้า/การเงิน
-4. ไม่ต้องเพิ่ม OAuth scope ใน `appsscript.json` เพิ่มเติม — `cloud-platform`/`firebase` ที่มีอยู่แล้วครอบคลุม Firebase Storage อยู่แล้ว
+ชื่อ bucket จริงมี 2 รูปแบบไปตามอายุโปรเจกต์ (`<project-id>.appspot.com` แบบเก่า หรือ `<project-id>.firebasestorage.app` แบบใหม่กว่า ต.ค. 2024) — `Code.gs` **ลองทั้งสองแบบให้อัตโนมัติตอนอัปโหลดรูปจริงครั้งแรก** แล้วจำอันที่ใช้ได้ไว้ (Script Properties, คีย์ `STORAGE_BUCKET_RESOLVED`) ไม่ต้องเข้าไปเช็ค/แก้ค่าคงที่เองแล้ว
 
-ถ้าข้ามขั้นตอนที่ 1–3 ไป การอัปโหลดรูปจะขึ้น error (ส่วนใหญ่เป็น HTTP 403/404 จาก Firebase Storage) แต่ฟีเจอร์อื่นทั้งหมดของระบบไม่กระทบ เพราะไม่มีฟิลด์รูปในสคีมาให้พังคอนซิสเทนซี
+**ต้องทำก่อนใช้งานจริง (ทำครั้งเดียว):**
+1. เปิด Firebase Console ของโปรเจกต์นี้ → เมนู Storage → กด "Get started" ถ้ายังไม่เคยเปิดใช้ Storage มาก่อน (ถ้าข้ามขั้นตอนนี้ อัปโหลดจะ error ทั้งสอง bucket ที่ลอง)
+2. ตั้งสิทธิ์อ่านสาธารณะให้ bucket ครั้งเดียว (Google Cloud Console → Cloud Storage → เลือก bucket → PERMISSIONS → Grant Access → Principal ใส่ `allUsers` → Role เลือก `Storage Object Viewer`) เพื่อให้ URL รูปสินค้าที่ระบบสร้างให้ (`https://storage.googleapis.com/<bucket>/product-images/...`) เปิดดูตรงๆ ได้โดยไม่ต้องมี token — เหมาะสมเพราะเป็นรูปอะไหล่รถ ไม่ใช่ข้อมูลลูกค้า/การเงิน (ไม่รู้ว่า bucket ไหนถูกเลือกจนกว่าจะอัปโหลดรูปสำเร็จครั้งแรก — ถ้าตั้งสิทธิ์ผิด bucket ไว้ก่อน ให้เช็ค Script Properties คีย์ `STORAGE_BUCKET_RESOLVED` ใน Apps Script Editor → Project Settings แล้วตั้งสิทธิ์ให้ bucket ตัวที่ถูกจำไว้จริง)
+3. ไม่ต้องเพิ่ม OAuth scope ใน `appsscript.json` เพิ่มเติม — `cloud-platform`/`firebase` ที่มีอยู่แล้วครอบคลุม Firebase Storage อยู่แล้ว
+
+ถ้าข้ามขั้นตอนที่ 1–2 ไป การอัปโหลดรูปจะขึ้น error (ส่วนใหญ่เป็น HTTP 403/404 จาก Firebase Storage) แต่ฟีเจอร์อื่นทั้งหมดของระบบไม่กระทบ เพราะไม่มีฟิลด์รูปในสคีมาให้พังคอนซิสเทนซี
 
 ## 8. บาร์โค้ด (Barcode) — ใช้ร่วมกับเครื่องสแกน USB/Bluetooth ที่มีอยู่แล้วได้ทันที
 เพิ่มฟิลด์ `Barcode` แยกจาก `Product_Code` (รหัสวิ่งในระบบ) และ `Part_Number` (เลขอะไหล่จากผู้ผลิต) ใน `Master_Products` — ไม่บังคับกรอก เครื่องสแกนบาร์โค้ดที่พิมพ์ผ่านคีย์บอร์ด (keyboard-wedge) ใช้งานได้ทันทีทั้งในหน้า "จัดการสินค้า" (ค้นหา), "ตัดสต๊อก" และ "ใบเสนอราคา" (ค้นหา+Enter เพื่อเลือก) โดยไม่ต้องเขียนโค้ดรับสแกนเพิ่ม — ยังไม่รองรับการสแกนผ่านกล้องมือถือ/แท็บเล็ต (ตัดสินใจไว้ว่ายังไม่ทำในรอบนี้)
