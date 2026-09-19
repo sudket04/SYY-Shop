@@ -49,6 +49,14 @@
   .img-upload-progress-track{height:6px;background:#e2e8f0;border-radius:4px;overflow:hidden}
   .img-upload-progress-bar{height:100%;width:35%;background:var(--primary);border-radius:4px;animation:imgUploadSlide 1.1s ease-in-out infinite}
   @keyframes imgUploadSlide{0%{margin-left:-35%}50%{margin-left:65%}100%{margin-left:100%}}
+  .view-field-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+  .view-field-tile{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:#fff}
+  .view-field-tile .vft-label{font-size:10.5px;color:var(--faint)}
+  .view-field-tile .vft-value{font-size:13px;color:var(--ink);margin-top:3px}
+  .view-field-tile.wide{grid-column:span 2}
+  .view-price-pill{border-radius:10px;padding:8px 14px;min-width:96px}
+  .view-price-pill .vpp-label{font-size:10.5px;opacity:.85}
+  .view-price-pill .vpp-value{font-size:15px;font-weight:700;margin-top:2px}
   </style>
 </head>
 <body>
@@ -106,8 +114,11 @@
 
             <div class="form-group full">
               <label>บาร์โค้ด (Barcode)</label>
-              <input type="text" id="inp_barcode" class="form-control" placeholder="สแกนด้วยเครื่องอ่านบาร์โค้ดลงช่องนี้ได้เลย หรือกรอกเอง (ไม่บังคับ)">
-              <div class="field-hint">ไม่บังคับ — สินค้าที่ไม่มีบาร์โค้ดจากโรงงาน ใช้ "รหัสสินค้า" สแกน/ค้นหาแทนได้อยู่แล้ว</div>
+              <div style="display:flex;gap:8px;align-items:flex-start">
+                <input type="text" id="inp_barcode" class="form-control" style="flex:1" placeholder="สแกนด้วยเครื่องอ่านบาร์โค้ดลงช่องนี้ได้เลย หรือกรอกเอง (ไม่บังคับ)" oninput="updateBarcodeGenButton()">
+                <button type="button" class="btn btn-ghost" id="btnGenBarcodeInForm" style="white-space:nowrap;display:none" onclick="generateBarcodeInForm()">🔄 สร้างบาร์โค้ด</button>
+              </div>
+              <div class="field-hint" id="barcodeFieldHint">ไม่บังคับ — สินค้าที่ไม่มีบาร์โค้ดจากโรงงาน ใช้ "รหัสสินค้า" สแกน/ค้นหาแทนได้อยู่แล้ว</div>
             </div>
 
             <div class="form-group">
@@ -244,28 +255,31 @@
 
   <!-- View Detail Modal -->
   <div class="modal-overlay" id="viewProductModal">
-    <div class="modal-box" style="width:640px">
+    <div class="modal-box" style="width:680px">
       <div class="modal-header">
         <span>📦 รายละเอียดสินค้า</span>
         <button class="modal-close" onclick="closeModal('viewProductModal')">×</button>
       </div>
       <div class="modal-body">
-        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px">
-          <div id="viewImgBox" style="width:100px;height:100px;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg)">
-            <span style="font-size:28px;color:var(--faint)">📦</span>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px">
+          <div id="viewImgBox" style="width:140px;height:140px;border:1px solid var(--line);border-radius:12px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg);box-shadow:0 1px 3px rgba(0,0,0,.08)">
+            <span style="font-size:36px;color:var(--faint)">📦</span>
           </div>
-          <div style="flex:1;min-width:200px">
-            <div id="viewProductName" style="font-size:16px;font-weight:700;color:var(--ink)"></div>
-            <div id="viewProductMeta" style="font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.9"></div>
+          <div style="flex:1;min-width:220px">
+            <div id="viewProductName" style="font-size:18px;font-weight:700;color:var(--ink)"></div>
+            <div id="viewProductSub" style="font-size:12.5px;color:var(--muted);margin-top:4px"></div>
+            <div id="viewProductPriceRow" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"></div>
           </div>
         </div>
+
+        <div class="section-label">ข้อมูลสินค้า</div>
+        <div id="viewFieldGrid" class="view-field-grid"></div>
 
         <div class="section-label">บาร์โค้ด</div>
         <div id="viewBarcodeSection"></div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-ghost" onclick="closeModal('viewProductModal')">ปิด</button>
-        <button type="button" class="btn btn-primary" onclick="closeModal('viewProductModal'); openEditModal(viewingDocId);">✏️ แก้ไขสินค้านี้</button>
+        <button type="button" class="btn btn-ghost" style="width:100%" onclick="closeModal('viewProductModal')">ปิด</button>
       </div>
     </div>
   </div>
@@ -747,6 +761,7 @@
     renderCarChips();
     renderCarDropdownList('');
     updateImageSectionForEdit(null, '');
+    updateBarcodeGenButton();
 
     document.getElementById('modalTitle').innerText   = '🛒 เพิ่มข้อมูลสินค้า';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
@@ -778,6 +793,7 @@
     renderCarChips();
     renderCarDropdownList('');
     updateImageSectionForEdit(editingDocId, item.imageUrl);
+    updateBarcodeGenButton();
 
     document.getElementById('modalTitle').innerText   = '✏️ แก้ไขข้อมูลสินค้า (' + editingDocId + ')';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
@@ -804,6 +820,7 @@
     btn.disabled = false; btn.innerText = '💾 บันทึก';
     editingDocId = null;
     selectedCarIds = [];
+    updateBarcodeGenButton();
   }
 
   function handleSubmit(e) {
@@ -853,7 +870,8 @@
             document.getElementById('modalTitle').innerText = '✏️ แก้ไขข้อมูลสินค้า (' + res.id + ')';
             document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
             updateImageSectionForEdit(res.id, '');
-            alertEl.innerText += ' — ตอนนี้เพิ่มรูปสินค้าได้แล้ว';
+            updateBarcodeGenButton();
+            alertEl.innerText += ' — ตอนนี้เพิ่มรูปสินค้า/สร้างบาร์โค้ดได้แล้ว';
           } else {
             setTimeout(function() { closeProductModal(); }, 1200);
           }
@@ -900,6 +918,51 @@
   function prodModalImgFallback() {
     document.getElementById('imgPreviewBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
     document.getElementById('btnDeleteImage').style.display = 'none';
+  }
+
+  // ==========================================
+  // สร้างบาร์โค้ดจากฟอร์มแก้ไขสินค้าโดยตรง (ย้ายมาจากหน้าดูรายละเอียดเดิม)
+  //   ต้องบันทึกสินค้าก่อน (มีรหัสสินค้าแล้ว) และช่องบาร์โค้ดต้องว่างอยู่เท่านั้น — ถ้ามีค่าอยู่แล้ว
+  //   (ไม่ว่าจะพิมพ์เองหรือระบบเคยสร้างให้) ถือว่าผู้ใช้เลือกใช้ค่านั้นแทน ไม่ให้กดสร้างทับ
+  // ==========================================
+  function updateBarcodeGenButton() {
+    var btn  = document.getElementById('btnGenBarcodeInForm');
+    var hint = document.getElementById('barcodeFieldHint');
+    var val  = document.getElementById('inp_barcode').value.trim();
+    if (!editingDocId) {
+      btn.style.display = 'none';
+      hint.innerText = val
+        ? 'ไม่บังคับ — สินค้าที่ไม่มีบาร์โค้ดจากโรงงาน ใช้ "รหัสสินค้า" สแกน/ค้นหาแทนได้อยู่แล้ว'
+        : 'ไม่บังคับ — บันทึกสินค้าก่อน จึงจะให้ระบบสร้างบาร์โค้ดอัตโนมัติให้ได้';
+    } else if (val) {
+      btn.style.display = 'none';
+      hint.innerText = 'ไม่บังคับ — ลบข้อมูลในช่องนี้ถ้าต้องการให้ระบบสร้างบาร์โค้ดอัตโนมัติแทน';
+    } else {
+      btn.style.display = '';
+      hint.innerText = 'ไม่บังคับ — กรอกเองถ้ามีบาร์โค้ดจากโรงงาน หรือกด "สร้างบาร์โค้ด" ให้ระบบสร้างรหัสใช้ภายในร้านให้อัตโนมัติ';
+    }
+  }
+
+  function generateBarcodeInForm() {
+    if (!editingDocId) return;
+    var btn = document.getElementById('btnGenBarcodeInForm');
+    btnBusy(btn, 'กำลังสร้าง...');
+    callApi('generateProductBarcode', [editingDocId], function (res) {
+      btnDone(btn);
+      if (res && res.success) {
+        document.getElementById('inp_barcode').value = res.barcode;
+        var cached = productsCache.find(function (p) { return p.id === editingDocId; });
+        if (cached) { cached.barcode = res.barcode; cached.barcodeGenerated = true; }
+        toast('สร้างบาร์โค้ดสำเร็จ');
+        filterAndRenderTable();
+        updateBarcodeGenButton();
+      } else {
+        swyError('สร้างบาร์โค้ดไม่สำเร็จ', (res && res.message) || 'ไม่ทราบสาเหตุ');
+      }
+    }, function (err) {
+      btnDone(btn);
+      swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+    });
   }
 
   function onProductImageSelected(input) {
@@ -988,7 +1051,7 @@
   // ดูรายละเอียดสินค้า + สร้าง/พิมพ์บาร์โค้ด
   // ==========================================
   function viewImgFallback() {
-    document.getElementById('viewImgBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
+    document.getElementById('viewImgBox').innerHTML = '<span style="font-size:36px;color:var(--faint)">📦</span>';
   }
 
   function openViewModal(docId) {
@@ -997,82 +1060,75 @@
     viewingDocId = item.id || docId;
 
     document.getElementById('viewProductName').innerText = item.productName || '(ไม่มีชื่อ)';
-    var metaParts = [
-      'รหัส: ' + esc(item.productCode || item.id),
-      'ประเภท: ' + esc(item.partType === 'PENDING' || !item.partType ? 'รอดำเนินการ' : item.partType),
-      item.partNumber ? 'P/N: ' + esc(item.partNumber) : null,
-      'แบรนด์: ' + esc(item.brandName || '-'),
-      'หมวดหมู่: ' + esc(item.categoryName || '-'),
-      'ผู้จำหน่าย: ' + esc(item.vendorName || '-'),
-      'โซน: ' + esc(item.zoneName || '-'),
-      item.carModel ? 'รุ่นรถ: ' + esc(item.carModel) : null,
-      'ราคาทุน: ฿' + Number(item.costPrice || 0).toFixed(2),
-      'ราคาขาย: ฿' + Number(item.sellingPrice || 0).toFixed(2),
-      'คงเหลือ: ' + (item.currentStock || 0) + ' ชิ้น',
-      'สถานะ: ' + esc(item.status || 'Active')
-    ].filter(Boolean);
-    document.getElementById('viewProductMeta').innerHTML = metaParts.join('<br>');
+    document.getElementById('viewProductSub').innerHTML =
+      '<span class="mono">' + esc(item.productCode || item.id) + '</span>' +
+      (item.partNumber ? ' · P/N ' + esc(item.partNumber) : '') +
+      ' · <span style="' + (item.status === 'Active' ? 'color:var(--ok)' : 'color:var(--danger)') + '">' + esc(item.status || 'Active') + '</span>';
+
+    var st = Number(item.currentStock || 0), mn = Number(item.minStock || 0);
+    var stockBg = st <= 0 ? 'var(--danger-bg)' : (st <= mn ? 'var(--warn-bg)' : 'var(--ok-bg)');
+    var stockFg = st <= 0 ? 'var(--danger-dark)' : (st <= mn ? 'var(--warn)' : 'var(--ok)');
+    document.getElementById('viewProductPriceRow').innerHTML =
+      '<div class="view-price-pill" style="background:#eef6ff;color:#0369a1"><div class="vpp-label">ราคาขาย</div><div class="vpp-value">฿' + Number(item.sellingPrice || 0).toFixed(2) + '</div></div>' +
+      '<div class="view-price-pill" style="background:#f8fafc;color:#475569"><div class="vpp-label">ราคาทุน</div><div class="vpp-value">฿' + Number(item.costPrice || 0).toFixed(2) + '</div></div>' +
+      '<div class="view-price-pill" style="background:' + stockBg + ';color:' + stockFg + '"><div class="vpp-label">คงเหลือ</div><div class="vpp-value">' + st + ' ชิ้น</div></div>';
+
+    var fields = [
+      { label: 'ประเภทสินค้า', value: (item.partType === 'PENDING' || !item.partType) ? 'รอดำเนินการ' : item.partType },
+      { label: 'แบรนด์', value: item.brandName || '—' },
+      { label: 'หมวดหมู่', value: item.categoryName || '—' },
+      { label: 'ผู้จำหน่าย', value: item.vendorName || '—' },
+      { label: 'โซนจัดเก็บ', value: '📦 ' + (item.zoneName || '—') },
+      { label: 'สต๊อกขั้นต่ำ', value: mn + ' ชิ้น' }
+    ];
+    if (item.carModel) fields.push({ label: '🚗 รุ่นรถที่ใส่ได้', value: item.carModel, wide: true });
+    document.getElementById('viewFieldGrid').innerHTML = fields.map(function (f) {
+      return '<div class="view-field-tile' + (f.wide ? ' wide' : '') + '"><div class="vft-label">' + esc(f.label) + '</div><div class="vft-value">' + esc(f.value) + '</div></div>';
+    }).join('');
 
     var imgBox = document.getElementById('viewImgBox');
     imgBox.innerHTML = item.imageUrl
       ? '<img src="' + esc(item.imageUrl) + '" style="width:100%;height:100%;object-fit:cover" onerror="viewImgFallback()">'
-      : '<span style="font-size:28px;color:var(--faint)">📦</span>';
+      : '<span style="font-size:36px;color:var(--faint)">📦</span>';
 
     renderViewBarcodeSection(item);
     openModal('viewProductModal');
   }
 
+  // ★ บาร์โค้ดที่ระบบสร้างเองเป็น EAN-13 เสมอ แต่บาร์โค้ดจริงจากผู้ผลิตที่พิมพ์ได้แล้ว (ตามที่ยืนยันไว้)
+  //   อาจไม่ใช่ EAN-13 (เช่น Code128/UPC) — เลือกฟอร์แมตอัตโนมัติแทนการฟิกซ์เป็น EAN13 เสมอ
+  //   ไม่งั้นบาร์โค้ดจริงที่ไม่ใช่ 13 หลักจะ render ไม่ได้เลย
+  function pickBarcodeFormat_(value) {
+    return /^\d{13}$/.test(String(value || '')) ? 'EAN13' : 'CODE128';
+  }
+
   function renderBarcodeSvg(svgId, barcodeValue) {
     try {
-      JsBarcode('#' + svgId, barcodeValue, { format: 'EAN13', width: 2, height: 55, fontSize: 13, margin: 6 });
+      JsBarcode('#' + svgId, barcodeValue, { format: pickBarcodeFormat_(barcodeValue), width: 2, height: 55, fontSize: 13, margin: 6 });
     } catch (e) {
       var el = document.getElementById(svgId);
       if (el) el.outerHTML = '<div style="color:var(--danger);font-size:12px">แสดงบาร์โค้ดไม่สำเร็จ: ' + esc(e.message) + '</div>';
     }
   }
 
+  // ★ ยกเลิกการสร้างบาร์โค้ดจากหน้านี้แล้ว (ย้ายไปอยู่ในฟอร์ม "แก้ไขสินค้า" แทน — ดู generateBarcodeInForm)
+  //   หน้านี้เป็นแค่ดู+พิมพ์ — พิมพ์ได้ทั้งบาร์โค้ดจริงจากผู้ผลิตและบาร์โค้ดที่ระบบสร้างเอง
   function renderViewBarcodeSection(item) {
     var box = document.getElementById('viewBarcodeSection');
     if (!item.barcode) {
-      box.innerHTML =
-        '<div class="field-hint" style="margin-bottom:8px">สินค้านี้ยังไม่มีบาร์โค้ด</div>' +
-        '<button type="button" class="btn btn-ghost" id="btnGenBarcode" onclick="generateBarcodeForViewing()">🔄 สร้างบาร์โค้ดอัตโนมัติ (EAN-13 ใช้ภายในร้าน)</button>';
-      return;
-    }
-    if (!item.barcodeGenerated) {
-      box.innerHTML =
-        '<div class="mono" style="font-size:15px;font-weight:700;color:var(--ink)">' + esc(item.barcode) + '</div>' +
-        '<div class="field-hint">บาร์โค้ดจริงจากผู้ผลิต — ไม่มีเมนูพิมพ์ (พิมพ์ให้เฉพาะบาร์โค้ดที่ระบบสร้างเอง)</div>';
+      box.innerHTML = '<div class="field-hint">สินค้านี้ยังไม่มีบาร์โค้ด — เพิ่มเองหรือให้ระบบสร้างให้อัตโนมัติได้จากหน้า "แก้ไขสินค้า"</div>';
       return;
     }
     box.innerHTML =
       '<div style="text-align:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 0">' +
         '<svg id="viewBarcodeSvg"></svg>' +
       '</div>' +
-      '<div class="field-hint" style="text-align:center;margin:6px 0 10px">บาร์โค้ดสร้างโดยระบบ (EAN-13 ช่วงใช้ภายในร้าน) — <span class="mono">' + esc(item.barcode) + '</span></div>' +
+      '<div class="field-hint" style="text-align:center;margin:6px 0 10px">' +
+        (item.barcodeGenerated ? 'บาร์โค้ดสร้างโดยระบบ (EAN-13 ใช้ภายในร้าน)' : 'บาร์โค้ดจริงจากผู้ผลิต') +
+        ' — <span class="mono">' + esc(item.barcode) + '</span>' +
+      '</div>' +
       '<button type="button" class="btn btn-primary" style="width:100%" onclick="openPrintBarcodeModal()">🖨️ พิมพ์บาร์โค้ด</button>';
     renderBarcodeSvg('viewBarcodeSvg', item.barcode);
-  }
-
-  function generateBarcodeForViewing() {
-    if (!viewingDocId) return;
-    var btn = document.getElementById('btnGenBarcode');
-    btnBusy(btn, 'กำลังสร้าง...');
-    callApi('generateProductBarcode', [viewingDocId], function (res) {
-      btnDone(btn);
-      if (res && res.success) {
-        var cached = productsCache.find(function (p) { return p.id === viewingDocId; });
-        if (cached) { cached.barcode = res.barcode; cached.barcodeGenerated = true; }
-        toast('สร้างบาร์โค้ดสำเร็จ');
-        renderViewBarcodeSection(cached || { barcode: res.barcode, barcodeGenerated: true });
-        filterAndRenderTable();
-      } else {
-        swyError('สร้างบาร์โค้ดไม่สำเร็จ', (res && res.message) || 'ไม่ทราบสาเหตุ');
-      }
-    }, function (err) {
-      btnDone(btn);
-      swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
-    });
   }
 
   var BARCODE_LABEL_SIZES = {
@@ -1132,7 +1188,12 @@
       '}';
 
     for (var j = 0; j < qty; j++) {
-      JsBarcode('#printSvg_' + j, item.barcode, { format: 'EAN13', width: 1.4, height: size.h > 25 ? 34 : 26, fontSize: 10, margin: 0 });
+      try {
+        JsBarcode('#printSvg_' + j, item.barcode, { format: pickBarcodeFormat_(item.barcode), width: 1.4, height: size.h > 25 ? 34 : 26, fontSize: 10, margin: 0 });
+      } catch (e) {
+        var svgEl = document.getElementById('printSvg_' + j);
+        if (svgEl) svgEl.outerHTML = '<div class="barcode-label-code">' + esc(item.barcode) + '</div>';
+      }
     }
 
     closeModal('printBarcodeModal');
