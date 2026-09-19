@@ -36,31 +36,21 @@ function toast(msg,type,ms){
   setTimeout(function(){t.classList.add('out');setTimeout(function(){if(t.parentNode)t.parentNode.removeChild(t);},260);},ms||2800);
 }
 
-/* ── Modal: เปิด/ปิด + ปิดด้วย Esc + คลิกฉากหลัง (ทุกหน้าได้เหมือนกัน) ── */
-var _modalStack=[];
+/* ── Modal: เปิด/ปิด (ทุกหน้าได้เหมือนกัน) ──
+   ★ Static/Persistent Modal — ปิดได้เฉพาะกดปุ่มในตัว Modal เอง (× / ยกเลิก / บันทึก / ปิด ฯลฯ
+   ซึ่งเรียก closeModal() ตรงๆ อยู่แล้วทุกจุด) ไม่มีทางปิดโดยไม่ตั้งใจจากคลิกฉากหลังหรือกด Esc
+   เพื่อกันข้อมูลที่กรอกในฟอร์มหายจากการคลิกพลาด — ใช้จุดเดียวนี้จุดเดียวทั้งโปรเจกต์ ไม่ต้องแก้ทีละหน้า */
 function openModal(id){
   var el=document.getElementById(id);
   if(!el) return;
   el.classList.add('active');
-  if(_modalStack.indexOf(id)===-1) _modalStack.push(id);
   var first=el.querySelector('.form-control:not([disabled]),.input:not([disabled])');
   if(first) setTimeout(function(){first.focus();},60);
 }
 function closeModal(id){
   var el=document.getElementById(id);
   if(el) el.classList.remove('active');
-  _modalStack=_modalStack.filter(function(x){return x!==id;});
 }
-function closeTopModal(){
-  if(!_modalStack.length) return;
-  closeModal(_modalStack[_modalStack.length-1]);
-}
-document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeTopModal(); });
-document.addEventListener('click',function(e){
-  if(e.target.classList && e.target.classList.contains('modal-overlay') && e.target.classList.contains('active')){
-    closeModal(e.target.id);
-  }
-});
 
 /* ── Skeleton / Empty state ── */
 function skeletonRows(cols,rows){
