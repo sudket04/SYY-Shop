@@ -416,7 +416,11 @@
     //   ทำให้ยิง Firestore ซ้ำเป็น 10 reads แทนที่จะเป็น 5 ทุกครั้งที่เปิดหน้า
     //   เรียงลำดับแทน: คำขอแรกเขียน cache เสร็จก่อน คำขอที่สองจึงอ่าน cache เจอแน่นอน
     //   (ไม่รวมเป็น endpoint เดียว เพราะเคยลองแล้วชนข้อจำกัดขนาด response ทำให้หน้าค้าง — ดูหมายเหตุด้านล่าง)
-    loadDropdowns(function() { loadTable(); });
+    loadDropdowns(function() {
+      loadTable();
+      // ★ แจ้งเชลล์ (index.html) ว่า dropdown พร้อมแล้ว รับคำขอเปิดฟอร์มเพิ่มสินค้าจากหน้าอื่นได้
+      try { window.parent.postMessage({ action: 'PRODUCTS_READY' }, '*'); } catch (e) {}
+    });
   };
 
   XLF.bindHeaderClicks('#productThead', function() { return productsCache; }, filterAndRenderTable);
@@ -424,6 +428,13 @@
   // ★ (ทำความสะอาดโค้ด) เดิมมี window.addEventListener('message', ...) รอรับ 'REFRESH_MAIN_TABLE'
   //   จากหน้าอื่น แต่ index.html (parent) ไม่ได้ forward ข้อความไปยัง iframe พี่น้องเลย
   //   ทำให้ listener นี้ไม่เคยถูกเรียกจริงในสถาปัตยกรรมปัจจุบัน — ตัดออกเพราะเป็นโค้ดที่ตายแล้ว
+
+  // ★ รับคำขอจากหน้าตัดสต๊อก (ผ่านเชลล์ index.html) เมื่อยิงบาร์โค้ดแล้วหาไม่เจอ
+  //   เปิดฟอร์ม "เพิ่มสินค้า" พร้อมเติมบาร์โค้ดที่ยิงมาให้อัตโนมัติ
+  window.addEventListener('message', function(e) {
+    var d = e.data || {};
+    if (d.action === 'OPEN_PRODUCT_ADD') openAddModal(d.barcode || '');
+  });
 
   // ★ ย้อนกลับมาใช้ 2 คำขอแยกกัน (loadDropdowns + loadTable) แทนการรวมเป็น endpoint เดียว
   //   เพราะการรวม response ก้อนใหญ่ (dropdown ทั้งหมด + สินค้าทั้งหมด) เป็นคำขอเดียวของ
@@ -702,7 +713,7 @@
   // ==========================================
   // Form Modal Functions
   // ==========================================
-  function openAddModal() {
+  function openAddModal(prefillBarcode) {
     editingDocId = null;
     document.getElementById('productForm').reset();
     document.getElementById('modalDocId').value = '';
@@ -714,7 +725,7 @@
     document.getElementById('inp_productName').value  = '';
     document.getElementById('inp_partType').value     = '';
     document.getElementById('inp_partNumber').value   = '';
-    document.getElementById('inp_barcode').value      = '';
+    document.getElementById('inp_barcode').value      = prefillBarcode || '';
     document.getElementById('inp_brandId').value      = '';
     document.getElementById('inp_categoryId').value   = '';
     document.getElementById('inp_vendorId').value      = '';

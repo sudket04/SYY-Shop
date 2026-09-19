@@ -1121,9 +1121,14 @@ function saveCustomer(d) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณากรอกชื่อลูกค้า" };
   }
 
+  // ★ หน้าใบกำกับภาษี (เพิ่มลูกค้าด่วน) ไม่มีช่องให้เลือกประเภทลูกค้าตั้งใจ — ลูกค้าที่มาจากทางนั้น
+  //   จึงไม่ส่ง customerType มาเลย ในกรณีนี้ให้ตั้งค่าเริ่มต้นเป็น "ลูกค้าทั่วไป" แทนการปฏิเสธ
+  //   ส่วนหน้าจัดการลูกค้า (Master_Customers) ยังคงบังคับเลือกที่ฝั่ง client เหมือนเดิม จึงไม่กระทบ
   var customerType = String(d.customerType || "").trim();
-  if (CUSTOMER_TYPES.indexOf(customerType) === -1) {
-    return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกประเภทลูกค้า" };
+  if (!customerType) {
+    customerType = CUSTOMER_TYPES[0];
+  } else if (CUSTOMER_TYPES.indexOf(customerType) === -1) {
+    return { success: false, title: "ข้อมูลไม่ถูกต้อง", message: "ประเภทลูกค้าไม่ถูกต้อง" };
   }
 
   var dataObject = {
@@ -3097,8 +3102,28 @@ function apiGateway(token, fnName, args, userAgent) {
 
   } catch (e) {
     console.error("apiGateway error [" + fnName + "]:", e);
-    return { success: false, message: "เกิดข้อผิดพลาด: " + e.message };
+    return { success: false, message: friendlyErrorMessage_(e) };
   }
+}
+
+// ★ แปลง exception ดิบ (มักเป็นภาษาอังกฤษเทคนิค) ให้เป็นข้อความไทยที่พนักงานอ่านแล้วรู้ว่าควรทำอะไรต่อ
+//   ใช้เฉพาะตอนเกิด exception จริง (เช่น เน็ตหลุด/โควตาเต็ม) — error ที่ฟังก์ชันตรวจสอบเองแล้วคืน
+//   {success:false, message:...} อยู่แล้ว (เช่น ข้อมูลซ้ำ/กรอกไม่ครบ) ไม่ผ่านจุดนี้ ยังคงข้อความเดิม
+function friendlyErrorMessage_(e) {
+  var raw = String((e && e.message) || e || "");
+  if (/timeout|timed out/i.test(raw)) {
+    return "การเชื่อมต่อช้าเกินไป กรุณาลองใหม่อีกครั้ง";
+  }
+  if (/too many times|rate limit|quota|RESOURCE_EXHAUSTED/i.test(raw)) {
+    return "ระบบถูกเรียกใช้งานถี่เกินไปในขณะนี้ กรุณารอสักครู่แล้วลองใหม่";
+  }
+  if (/dns error|address unavailable|network|ENOTFOUND|unreachable/i.test(raw)) {
+    return "การเชื่อมต่ออินเทอร์เน็ตขัดข้อง กรุณาตรวจสอบสัญญาณแล้วลองใหม่";
+  }
+  if (/unexpected token|is not valid json|SyntaxError/i.test(raw)) {
+    return "ข้อมูลที่ได้รับจากเซิร์ฟเวอร์ผิดปกติ กรุณาลองใหม่ หากยังไม่หายให้แจ้งผู้ดูแลระบบ";
+  }
+  return "เกิดข้อผิดพลาดที่ไม่คาดคิด กรุณาลองใหม่อีกครั้ง หากยังไม่หายให้แจ้งผู้ดูแลระบบ (" + raw + ")";
 }
 
 function getActivityLog(limitCount) {

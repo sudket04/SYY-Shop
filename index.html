@@ -480,6 +480,16 @@
       frame.contentWindow.postMessage({ action:'PREFILL_BASKET', items:payload.items, refNo:payload.refNo, note:payload.note, quoteId:payload.quoteId }, '*');
     }
   }
+
+  // ★ ยิงบาร์โค้ดที่หน้าตัดสต๊อกแล้วไม่พบสินค้า → เปิดหน้าจัดการสินค้าพร้อมเติมบาร์โค้ดให้ทันที
+  //   (รูปแบบเดียวกับ STOCKISSUE_READY: iframe หน้าสินค้าอยู่ยาวเหมือนกัน ต้องรอสัญญาณ PRODUCTS_READY ก่อน)
+  var productsReady = false, pendingProductAddBarcode = null;
+  function sendProductAddPrefill(barcode){
+    var frame = document.getElementById('iframe-products');
+    if(frame && frame.contentWindow){
+      frame.contentWindow.postMessage({ action:'OPEN_PRODUCT_ADD', barcode:barcode }, '*');
+    }
+  }
   window.addEventListener('message', function(e){
     var d = e.data || {};
     if(d.action==='REFRESH_MAIN_TABLE'){ loadMasters(); dashLoad(); }
@@ -492,6 +502,15 @@
     else if(d.action==='STOCKISSUE_READY'){
       stockIssueReady = true;
       if(pendingStockIssuePrefill){ sendStockIssuePrefill(pendingStockIssuePrefill); pendingStockIssuePrefill = null; }
+    }
+    else if(d.action==='OPEN_PRODUCT_ADD'){
+      switchPage('products');
+      if(productsReady) sendProductAddPrefill(d.barcode || '');
+      else pendingProductAddBarcode = d.barcode || '';
+    }
+    else if(d.action==='PRODUCTS_READY'){
+      productsReady = true;
+      if(pendingProductAddBarcode !== null){ sendProductAddPrefill(pendingProductAddBarcode); pendingProductAddBarcode = null; }
     }
   });
 

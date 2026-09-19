@@ -256,6 +256,12 @@
     if (d.action === 'PREFILL_BASKET') applyPrefillBasket(d);
   });
 
+  // ★ ยิงบาร์โค้ด/พิมพ์รหัสแล้วหาไม่เจอ → ส่งต่อให้เชลล์เปิดหน้าจัดการสินค้าพร้อมเติมรหัสนี้ให้เลย
+  //   ไม่ต้องให้พนักงานจำรหัสแล้วไปพิมพ์ซ้ำเอง
+  function goAddProductWithCode(code) {
+    try { window.parent.postMessage({ action: 'OPEN_PRODUCT_ADD', barcode: code }, '*'); } catch (e) {}
+  }
+
   function applyPrefillBasket(d) {
     switchTab('issue');
     var items = Array.isArray(d.items) ? d.items : [];
@@ -423,7 +429,10 @@
     if (!products.length) { countEl.innerText = 'ยังไม่มีข้อมูลสินค้าในระบบ'; listEl.innerHTML = ''; return; }
     if (!results.length) {
       countEl.innerText = 'ไม่พบสินค้าที่ตรงเงื่อนไข';
-      listEl.innerHTML = '<div class="empty-box">📭 ลองพิมพ์เฉพาะรหัส P/N หรือลดตัวกรองลง</div>';
+      var rawQ = document.getElementById('searchInput').value.trim();
+      listEl.innerHTML = '<div class="empty-box">📭 ลองพิมพ์เฉพาะรหัส P/N หรือลดตัวกรองลง' +
+        (rawQ ? '<br><button class="btn btn-primary" type="button" style="margin-top:10px" onclick="goAddProductWithCode(\'' + esc(rawQ).replace(/'/g, "\\'") + '\')">➕ ไม่พบสินค้านี้ในระบบ — ไปเพิ่ม/ผูกรหัสนี้กับสินค้าใหม่</button>' : '') +
+        '</div>';
       return;
     }
     countEl.innerHTML = 'พบ ' + results.length + ' รายการ — เลือกด้วย ↑ ↓ แล้วกด Enter';
