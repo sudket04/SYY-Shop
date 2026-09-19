@@ -306,7 +306,7 @@
     <div class="modal-box">
       <div class="modal-header">
         <span id="modalTitle">👤 เพิ่มบัญชีผู้ใช้</span>
-        <button class="modal-close" onclick="closeModal()">×</button>
+        <button class="modal-close" onclick="closeUserModal()">×</button>
       </div>
       <form id="userForm" onsubmit="handleSubmit(event)">
         <div class="modal-body">
@@ -337,7 +337,7 @@
           <div id="modalAlert" class="modal-alert"></div>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn-cancel" onclick="closeModal()">ยกเลิก</button>
+          <button type="button" class="btn-cancel" onclick="closeUserModal()">ยกเลิก</button>
           <button type="submit" class="btn-save" id="modalBtnSave">💾 บันทึก</button>
         </div>
       </form>
@@ -786,14 +786,14 @@ function renderUserRows() {
     var actionsHtml;
     if (isSelf) {
       actionsHtml =
-        '<button class="btn-edit-icon" onclick="openEditModal(\'' + item.docId + '\')" title="แก้ไข">✏️</button>' +
+        '<button class="btn-edit-icon" onclick="openEditModal(\'' + escJs(item.docId) + '\')" title="แก้ไข">✏️</button>' +
         '<button class="btn-toggle-icon btn-disabled-self" disabled title="ไม่สามารถแก้ไขสถานะบัญชีตัวเอง">🔒</button>' +
         '<button class="btn-resetpw-icon btn-disabled-self" disabled title="ใช้เมนูเปลี่ยนรหัสผ่านในโปรไฟล์แทน">🔑</button>';
     } else {
       actionsHtml =
-        '<button class="btn-edit-icon" onclick="openEditModal(\'' + item.docId + '\')" title="แก้ไข">✏️</button>' +
-        '<button class="btn-toggle-icon ' + toggleClass + '" onclick="confirmToggleModal(\'' + item.docId + '\',\'' + item.status + '\')" title="' + toggleTitle + '">' + toggleIcon + '</button>' +
-        '<button class="btn-resetpw-icon" onclick="confirmResetPwModal(\'' + item.docId + '\')" title="รีเซ็ตรหัสผ่าน">🔑</button>';
+        '<button class="btn-edit-icon" onclick="openEditModal(\'' + escJs(item.docId) + '\')" title="แก้ไข">✏️</button>' +
+        '<button class="btn-toggle-icon ' + toggleClass + '" onclick="confirmToggleModal(\'' + escJs(item.docId) + '\',\'' + escJs(item.status) + '\')" title="' + toggleTitle + '">' + toggleIcon + '</button>' +
+        '<button class="btn-resetpw-icon" onclick="confirmResetPwModal(\'' + escJs(item.docId) + '\')" title="รีเซ็ตรหัสผ่าน">🔑</button>';
     }
 
     var tr = document.createElement('tr');
@@ -840,7 +840,7 @@ function openEditModal(docId) {
   document.getElementById('userModal').classList.add('active');
 }
 
-function closeModal() {
+function closeUserModal() {
   document.getElementById('userModal').classList.remove('active');
   document.getElementById('userForm').reset();
   document.getElementById('modalAlert').style.display = 'none';
@@ -872,7 +872,7 @@ function handleSubmit(e) {
       alertEl.className = 'modal-alert success';
       alertEl.innerText = '✅ ' + res.message + (res.tempPassword ? ' (รหัสผ่านชั่วคราว: ' + res.tempPassword + ')' : '');
       loadTable();
-      setTimeout(function() { closeModal(); }, 1500);
+      setTimeout(function() { closeUserModal(); }, 1500);
     } else {
       alertEl.className = 'modal-alert error';
       alertEl.innerText = '❌ ' + res.message;
@@ -984,6 +984,10 @@ function execResetPassword() {
 }
 
 function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// ★ ใช้แทน esc() เฉพาะตอนฝังค่าไว้ในสตริง JS ที่ครอบด้วย ' อยู่แล้ว (เช่น onclick="fn('...')")
+//   esc() เพียงอย่างเดียวไม่ escape เครื่องหมาย ' — ถ้าค่านั้นมี ' ปนอยู่จะหลุดออกจากสตริงกลางทาง
+//   (หน้านี้ไม่ได้ include('Shared') จึงมี esc()/escJs() ของตัวเองแยกต่างหาก ไม่ใช้ตัวกลาง)
+function escJs(v) { return esc(v).replace(/'/g,"\\'"); }
 </script>
 </body>
 </html>

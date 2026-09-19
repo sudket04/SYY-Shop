@@ -24,7 +24,7 @@ function doGet(e) {
   var userAgent = (e && e.parameter && e.parameter.ua) ? e.parameter.ua : '';
 
   var files = {
-    'login'      : 'Login',
+    'login'      : 'login',
     'home'       : 'index',
     'brands'     : 'Master_Brands',
     'categories' : 'Master_Categories',
@@ -43,8 +43,15 @@ function doGet(e) {
 
   var session = getSession_(token, userAgent);
 
-  if (page === 'home' && !session) {
-    var loginTemplate = HtmlService.createTemplateFromFile('Login');
+  // ★ FIX: เดิมเช็ค session เฉพาะ page==='home' เท่านั้น — เปิด URL ตรงๆ เช่น ?page=manageusers
+  //   โดยไม่มี token เลยก็ยังได้ template หน้านั้นเต็มๆ กลับมา (ช่องโหว่จริง ดูรายละเอียดที่ callApi()
+  //   ใน Shared.html ประกอบ) ทุกหน้าที่ไม่ใช่ login ต้องมี session ที่ถูกต้องเท่านั้น ไม่งั้นบังคับไปหน้า login เสมอ
+  if (page !== 'login' && !session) {
+    page = 'login';
+  }
+
+  if (page === 'login') {
+    var loginTemplate = HtmlService.createTemplateFromFile(files['login']);
     loginTemplate.webAppUrl = getWebAppUrl();
     loginTemplate.resetMode = mode;
     loginTemplate.resetToken = rtoken;
@@ -57,14 +64,14 @@ function doGet(e) {
   var template = HtmlService.createTemplateFromFile(files[page] || 'index');
   template.webAppUrl = getWebAppUrl();
   template.authToken = token;
-  template.userRole  = session ? session.role : '';
-  template.userName  = session ? (session.fullName || session.username) : '';
+  template.userRole  = session.role;
+  template.userName  = session.fullName || session.username;
   template.resetMode  = mode;
   template.resetToken = rtoken;
 
   return template
     .evaluate()
-    .setTitle(page === 'login' ? 'เข้าสู่ระบบ — SYY Shop Control' : 'SYY Shop Control')
+    .setTitle('SYY Shop Control')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
@@ -317,46 +324,37 @@ function clearCollectionCache(collectionName) {
   }
 }
 
-var CODE_VERSION = "2026-09-05-security-audit-fixes";
-function getCodeVersion() { return CODE_VERSION; }
-
-function debugCheckBrandsCache() {
-  console.log("=== CODE_VERSION: " + CODE_VERSION + " ===");
-  var cacheKey = "docs_Master_Brands";
-  var cached = null;
-  try { cached = CacheService.getScriptCache().get(cacheKey); } catch (e) { console.error("อ่าน cache พลาด:", e); }
-  console.log("1) Cache ปัจจุบัน (" + cacheKey + "): " + (cached ? JSON.parse(cached).length + " รายการ" : "ไม่มี/ว่าง"));
-  try { CacheService.getScriptCache().remove(cacheKey); } catch (e) {}
-  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-          + "/databases/(default)/documents/Master_Brands?pageSize=300";
-  var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
-  console.log("2) HTTP Status: " + res.getResponseCode());
-  if (res.getResponseCode() !== 200) {
-    console.log("3) Response Body (error): " + res.getContentText());
-  } else {
-    var docs = (JSON.parse(res.getContentText()).documents || []);
-    console.log("3) Fetch ตรงจาก Firestore สำเร็จ: " + docs.length + " เอกสาร");
-  }
-  console.log("4) getAllMasterDropdowns().brands: " + JSON.stringify(getAllMasterDropdowns().brands));
-}
-
-function debugCheckVendorsMissingTaxInfo() {
-  var vendors = getVendorsFull();
-  var missing = vendors.filter(function(v) { return !v.Tax_ID || v.Tax_ID.length !== 13; });
-  console.log("ผู้จำหน่ายทั้งหมด: " + vendors.length + " ราย");
-  if (missing.length === 0) {
-    console.log("✅ ทุกรายมีเลขผู้เสียภาษี 13 หลักครบแล้ว");
-  } else {
-    console.log("⚠️ พบ " + missing.length + " รายที่ยังไม่มี/ไม่ครบเลขผู้เสียภาษี:");
-    missing.forEach(function(v) {
-      console.log("  - " + v.id + " (" + v.Vendor_name + ") Tax_ID='" + v.Tax_ID + "'");
-    });
-  }
-}
-
 // ==========================================
 // 3. ระบบรันเลข ID อัตโนมัติ
 // ==========================================
+
+// ★ FIX: เลขที่เอกสาร (เลขที่ใบกำกับภาษี/ใบเสนอราคา) เดิมคำนวณด้วยการอ่านเลขสูงสุดที่มีอยู่แล้ว +1
+//   แล้วเขียนเป็น field ธรรมดา — Firestore ไม่ได้บังคับว่าค่า field ต้องไม่ซ้ำกัน ต่างจาก document ID
+//   ที่บังคับไม่ซ้ำอยู่แล้วโดยตัว Firestore เอง (saveMasterData ใช้ประโยชน์จากตรงนี้อยู่แล้วตอนกัน
+//   docId ชนกัน) ถ้า 2 คำขอบันทึกพร้อมกันพอดี ทั้งคู่จะคำนวณเลขเดียวกันได้ (เลขที่ใบกำกับภาษีซ้ำ
+//   มีผลทางบัญชี/สรรพากรจริง) — ฟังก์ชันนี้ใช้หลักการเดียวกับ getNextAutoId (อาศัย document ID
+//   ที่ Firestore บังคับไม่ซ้ำ) มา "จอง" เลขที่แบบ atomic ก่อนเขียนเอกสารจริง
+//   คืน true = จองสำเร็จ (เลขนี้ยังไม่มีใครใช้), false = มีคนจองเลขนี้ไปก่อนแล้ว (409) ต้องลองเลขถัดไป
+var DOC_NO_RESERVATION_COLLECTION = "Doc_No_Reservations";
+function reserveDocNo_(docType, docNoValue) {
+  var safeId = docType + "__" + String(docNoValue).replace(/[^A-Za-z0-9]/g, "_");
+  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+          + "/databases/(default)/documents/" + DOC_NO_RESERVATION_COLLECTION
+          + "?documentId=" + encodeURIComponent(safeId);
+  var res = UrlFetchApp.fetch(url, {
+    method            : "post",
+    headers           : getAuthHeader(),
+    payload           : JSON.stringify({
+      fields: {
+        Doc_No      : { stringValue: String(docNoValue) },
+        Reserved_At : { stringValue: new Date().toISOString() }
+      }
+    }),
+    muteHttpExceptions: true
+  });
+  return res.getResponseCode() === 200;
+}
+
 function getNextAutoId(collectionName, prefix, forceFresh) {
   try {
     var docs = forceFresh ? fetchAllPagesRaw(collectionName).docs
@@ -853,13 +851,39 @@ function saveProduct(d) {
 
   var docId = d.productCode || d.docId || null;
 
-  if (dataObject.Part_Number) {
-    var dupCheck = checkPartNumberDuplicate(dataObject.Part_Number, docId);
-    if (dupCheck) return dupCheck;
-  }
-  if (dataObject.Barcode) {
-    var dupBarcode = checkBarcodeDuplicate(dataObject.Barcode, docId);
-    if (dupBarcode) return dupBarcode;
+  // ★ FIX (ประสิทธิภาพ): เดิมสแกน Master_Products ทั้ง collection แยก 2 รอบ (checkPartNumberDuplicate
+  //   + checkBarcodeDuplicate) แล้วยังอ่านเอกสารเดิมแยกอีกครั้งด้วย getProductRawFields_ รวมเป็น
+  //   การอ่านข้อมูลสินค้าทั้งร้าน 2 รอบ + อ่านเอกสารเดี่ยวอีก 1 ครั้ง ต่อการบันทึกสินค้า 1 ครั้ง —
+  //   ตอนนี้ยังไม่กระทบเพราะมีสินค้าไม่มาก แต่ยิ่งสินค้าเยอะยิ่งช้าและเสี่ยงชน execution limit
+  //   สแกนครั้งเดียวพอ เอาไปเช็คทั้ง Part_Number/Barcode ซ้ำ และหาเอกสารเดิมของสินค้านี้พร้อมกันเลย
+  //   (checkPartNumberDuplicate/checkBarcodeDuplicate/getProductRawFields_ ยังเก็บไว้เหมือนเดิม
+  //   เพราะ generateProductBarcode() ยังใช้อยู่ — แก้เฉพาะจุดที่ saveProduct เรียกเอง)
+  var existingFields = null;
+  if (dataObject.Part_Number || dataObject.Barcode || docId) {
+    var fetched = fetchAllPagesRaw("Master_Products");
+    if (!fetched.ok) {
+      console.error("saveProduct: ดึงข้อมูลสินค้าไม่สำเร็จ ข้ามการตรวจสอบข้อมูลซ้ำ");
+    } else {
+      var pnVal = dataObject.Part_Number.toLowerCase();
+      var bcVal = dataObject.Barcode.toLowerCase();
+      for (var i = 0; i < fetched.docs.length; i++) {
+        var doc = fetched.docs[i];
+        if (doc.id === docId) { existingFields = doc.fields || {}; continue; }
+        var f = doc.fields || {};
+        if (pnVal) {
+          var existingPn = String(parseFirestoreValue(f.Part_Number) || "").trim().toLowerCase();
+          if (existingPn && existingPn === pnVal) {
+            return { success: false, title: "ข้อมูลซ้ำ!", message: 'รหัสจากผู้ผลิต (Part Number) "' + dataObject.Part_Number + '" มีอยู่ในระบบแล้ว' };
+          }
+        }
+        if (bcVal) {
+          var existingBc = String(parseFirestoreValue(f.Barcode) || "").trim().toLowerCase();
+          if (existingBc && existingBc === bcVal) {
+            return { success: false, title: "ข้อมูลซ้ำ!", message: 'บาร์โค้ด "' + dataObject.Barcode + '" มีอยู่ในระบบแล้ว' };
+          }
+        }
+      }
+    }
   }
 
   // ★ Barcode_Generated ไม่ได้อยู่ในฟอร์มแก้ไขสินค้า (ตั้งค่าแยกผ่าน generateProductBarcode())
@@ -868,14 +892,11 @@ function saveProduct(d) {
   //   บาร์โค้ดหายไปทั้งที่บาร์โค้ดยังเป็นอันที่ระบบสร้างอยู่เหมือนเดิม — คงธงไว้ถ้าค่าบาร์โค้ดไม่เปลี่ยน
   //   จากที่ระบบเคยสร้างให้, ถือเป็นบาร์โค้ดจริงถ้าผู้ใช้พิมพ์/แก้ไขค่าใหม่เอง
   dataObject.Barcode_Generated = "false";
-  if (docId) {
-    var existingFields = getProductRawFields_(docId);
-    if (existingFields) {
-      var existingBarcode   = String(parseFirestoreValue(existingFields.Barcode) || "").trim();
-      var existingGenerated = parseFirestoreValue(existingFields.Barcode_Generated) === "true";
-      if (existingGenerated && existingBarcode && existingBarcode === dataObject.Barcode) {
-        dataObject.Barcode_Generated = "true";
-      }
+  if (existingFields) {
+    var existingBarcode   = String(parseFirestoreValue(existingFields.Barcode) || "").trim();
+    var existingGenerated = parseFirestoreValue(existingFields.Barcode_Generated) === "true";
+    if (existingGenerated && existingBarcode && existingBarcode === dataObject.Barcode) {
+      dataObject.Barcode_Generated = "true";
     }
   }
 
@@ -1085,8 +1106,6 @@ function saveVendor(d) {
   return saveMasterData("Master_Vendors", "V", d.docId || null, dataObject, d.vendorName);
 }
 
-function getVendors() { return getFirestoreRawList("Master_Vendors"); }
-
 function getVendorsFull() {
   var list = [];
   try {
@@ -1170,8 +1189,6 @@ function saveCustomer(d) {
   };
   return saveMasterData("Master_Customers", "C", d.docId || null, dataObject, d.customerName);
 }
-
-function getCustomers() { return getFirestoreRawList("Master_Customers"); }
 
 function getCustomersFull() {
   var list = [];
@@ -1332,9 +1349,13 @@ function saveTaxInvoice(d) {
 
   var lastErr = "";
   for (var attempt = 0; attempt < 10; attempt++) {
-    var runningNum = getNextInvoiceRunningNumber(invoiceDate, d.docId || null) + attempt;
-    dataObject.Invoice_No = buildInvoiceNoForMonth(invoiceDate, runningNum);
+    var runningNum  = getNextInvoiceRunningNumber(invoiceDate, d.docId || null) + attempt;
+    var candidateNo = buildInvoiceNoForMonth(invoiceDate, runningNum);
 
+    // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบกำกับภาษีพร้อมกัน (ดู reserveDocNo_)
+    if (!reserveDocNo_("TaxInvoice", candidateNo)) continue;
+
+    dataObject.Invoice_No = candidateNo;
     var res = saveMasterData("Master_Tax_Invoice", "TX", d.docId || null, dataObject, null);
     if (res.success) {
       updateTaxInvoiceYearsMeta_(invoiceYearBE);
@@ -1677,9 +1698,13 @@ function saveQuotation(d, callerUsername) {
 
   var lastErr = "";
   for (var attempt = 0; attempt < 10; attempt++) {
-    var runningNum = getNextQuoteRunningNumber(quoteDate, d.docId || null) + attempt;
-    dataObject.Quote_No = buildQuoteNoForMonth(quoteDate, runningNum);
+    var runningNum  = getNextQuoteRunningNumber(quoteDate, d.docId || null) + attempt;
+    var candidateNo = buildQuoteNoForMonth(quoteDate, runningNum);
 
+    // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบเสนอราคาพร้อมกัน (ดู reserveDocNo_)
+    if (!reserveDocNo_("Quotation", candidateNo)) continue;
+
+    dataObject.Quote_No = candidateNo;
     var res = saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId || null, dataObject, null);
     if (res.success) return res;
     lastErr = res.message;
@@ -1831,8 +1856,6 @@ function saveZone(d) {
   };
   return saveMasterData("Master_Zones", "Z", d.docId || null, dataObject, d.area);
 }
-
-function getZones() { return getFirestoreRawList("Master_Zones"); }
 
 function getZoneById(docId) {
   try {
@@ -2122,19 +2145,6 @@ function restoreFromBackup(fileId, restoreMode) {
 // ==========================================
 // 20. ทดสอบการเชื่อมต่อ
 // ==========================================
-function testConnection() {
-  var token = ScriptApp.getOAuthToken();
-  var url   = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/Master_Zones?pageSize=3";
-  var res = UrlFetchApp.fetch(url, {
-    method: "get",
-    headers: { "Authorization": "Bearer " + token },
-    muteHttpExceptions: true
-  });
-  Logger.log("Status : " + res.getResponseCode());
-  Logger.log("Response: " + res.getContentText());
-}
-
 // ==========================================
 // 21. Migrate ข้อมูลเก่า Car_ID เดี่ยว → Car_IDs array
 // ==========================================
@@ -2671,23 +2681,34 @@ function verifyTotp_(secretB32, code) {
   }
   return false;
 }
-// ★ NEW: เพิ่ม userAgent parameter — ใช้ผูก session กับเบราว์เซอร์ที่ login ไว้
-//   ลดความเสี่ยงจากการ copy token/URL ไปใช้บนเครื่องอื่น (ไม่ใช่การป้องกันที่สมบูรณ์ 100%
-//   เพราะ User-Agent ปลอมแปลงได้ แต่เพิ่มด่านกั้นให้การขโมย session ทำได้ยากขึ้น)
+// ★ FIX: เดิมผูก session กับ User-Agent เพื่อกันขโมย token — แต่ UA ที่ doGet() เช็คมาจาก query
+//   parameter (?ua=...) ที่ฝังไปพร้อม token ในลิงก์เดียวกันตอน redirect หลัง login สำเร็จ
+//   (ดู login.html) ถ้า URL ทั้งเส้นหลุดไป ก็หลุดไปพร้อม UA ที่ "ตรง" อยู่แล้ว เช็คนี้จึงไม่ได้กัน
+//   อะไรจริง — ตัดออก แล้วใช้ระบบเพิกถอน session ตรงๆ แทน (revokeUserSessions_) ซึ่งใช้งานจริง
+//   ตอนแอดมินปิดบัญชี/เปลี่ยนสิทธิ์/รีเซ็ตรหัสผ่านผู้ใช้คนอื่น (ดู toggleUserStatus/updateUserAccount/
+//   resetUserPassword) — เดิม session ที่ออกไปแล้วจะยังใช้งานต่อได้จนกว่าจะหมดอายุเองตาม
+//   AUTH_SESSION_HOURS แม้จะโดนปิดบัญชีไปแล้วก็ตาม
 function createSession_(user, userAgent) {
   var token = Utilities.getUuid() + "-" + Utilities.getUuid();
   var payload = {
     username  : user.Username,
     fullName  : user.Full_Name,
     role      : user.Role,
-    issuedAt  : Date.now(),
-    userAgent : String(userAgent || "")
+    issuedAt  : Date.now()
   };
   CacheService.getScriptCache().put("sess_" + token, JSON.stringify(payload), AUTH_SESSION_HOURS * 3600);
   return { token: token, profile: payload };
 }
-// ★ NEW: เพิ่ม userAgent parameter (optional) — ถ้าส่งมาจะเช็คว่าตรงกับตอนสร้าง session หรือไม่
-//   ถ้าไม่ตรง = ปฏิเสธทันที (คืน null เหมือนไม่มี session) กัน token ที่หลุดไปถูกใช้จากเบราว์เซอร์อื่น
+
+// ★ เพิกถอน session ที่ออกไปแล้วทั้งหมดของผู้ใช้คนนี้ทันที (เรียกตอนปิดบัญชี/เปลี่ยนสิทธิ์/รีเซ็ตรหัสผ่าน)
+//   ไม่ได้ลบ cache key ของ session ตรงๆ เพราะไม่รู้ token ของ session ที่ออกไปแล้ว — เก็บ "เวลาที่เพิกถอน"
+//   ไว้แทน แล้วให้ getSession_() เทียบกับ issuedAt ของ session นั้นๆ ทุกครั้งที่ใช้งาน
+function revokeUserSessions_(username) {
+  var uname = String(username || "").trim().toLowerCase();
+  if (!uname) return;
+  CacheService.getScriptCache().put("revoked_" + uname, String(Date.now()), AUTH_SESSION_HOURS * 3600);
+}
+
 function getSession_(token, userAgent) {
   if (!token) return null;
   try {
@@ -2695,13 +2716,9 @@ function getSession_(token, userAgent) {
     if (!raw) return null;
     var session = JSON.parse(raw);
 
-    // ★ เช็ค User-Agent เฉพาะตอนที่ session มีการบันทึกไว้ (เผื่อ session เก่าก่อน deploy โค้ดนี้)
-    //   และเฉพาะตอนที่ผู้เรียกส่ง userAgent มาเช็คด้วย (บาง caller ภายในระบบไม่มี userAgent ให้เช็ค)
-    if (session.userAgent && userAgent !== undefined) {
-      if (session.userAgent !== String(userAgent || "")) {
-        console.error("getSession_: User-Agent ไม่ตรงกับตอน login — ปฏิเสธ session (token อาจถูกขโมยหรือนำไปใช้เครื่องอื่น)");
-        return null;
-      }
+    var revokedAt = CacheService.getScriptCache().get("revoked_" + String(session.username || "").trim().toLowerCase());
+    if (revokedAt && parseInt(revokedAt, 10) >= session.issuedAt) {
+      return null;
     }
 
     return session;
@@ -2918,11 +2935,6 @@ function authLogout(token) {
   return { success: true };
 }
 
-function authCheckSession(token) {
-  var s = getSession_(token);
-  return s ? { success: true, profile: s } : { success: false };
-}
-
 // ─────────────────────────────────────────────────────────────
 // 23.9 API Gateway
 // ─────────────────────────────────────────────────────────────
@@ -2962,12 +2974,14 @@ var API_REGISTRY = {
   getStockMovements        : "viewer",
   getDashboardBootstrap    : "viewer",
 
-  // ── ใบกำกับภาษี / ใบเสนอราคา — viewer ทำได้ (ข้อยกเว้นเฉพาะ เซลส์ต้องออกเอกสารได้เอง) ──
+  // ── ใบกำกับภาษี / ใบเสนอราคา — สร้าง/แก้ไขให้ viewer ทำได้ (ข้อยกเว้นเฉพาะ เซลส์ต้องออกเอกสารได้เอง)
+  //   แต่การ "ลบ" เอกสารต้อง admin เหมือน delete ตัวอื่นทุกตัวในระบบ — เดิมให้ viewer ลบได้ด้วย
+  //   ซึ่งหลุดมาพร้อมกับข้อยกเว้นเรื่องสร้าง/แก้ไขโดยไม่ได้ตั้งใจ (ข้อมูลบัญชี/ภาษีสำคัญกว่าลบได้ง่ายๆ)
   saveTaxInvoice           : "viewer",
-  deleteTaxInvoice         : "viewer",
+  deleteTaxInvoice         : "admin",
   saveQuotation            : "viewer",
   updateQuotationStatus    : "viewer",
-  deleteQuotation          : "viewer",
+  deleteQuotation          : "admin",
   markQuotationStockIssued : "staff",
 
   // ── ลบข้อมูล + งานระบบ: admin เท่านั้น ──
@@ -3002,6 +3016,69 @@ var API_REGISTRY = {
 };
 
 var ROLE_RANK = { viewer: 1, staff: 2, admin: 3 };
+
+// ★ FIX: apiGateway เดิม lookup ฟังก์ชันด้วย this[fnName] แล้ว fallback เป็น eval(fnName) —
+//   ตอนนี้ปลอดภัยเพราะกรองด้วย API_REGISTRY ก่อนแล้ว แต่เป็น pattern เสี่ยง ถ้าวันหลังมีคนย้ายลำดับ
+//   การเช็คจะกลายเป็นเรียกฟังก์ชันตามชื่อที่ผู้เรียกกำหนดได้ทันที — ใช้ map ตรงๆ แทน ไม่มี eval เลย
+//   ต้องมีทุก key ตรงกับ API_REGISTRY เป๊ะ (ตรวจแล้วครบ 56 รายการตอนแก้ไขจุดนี้)
+var API_FUNCTIONS = {
+  getAllProducts            : getAllProducts,
+  getAllMasterDropdowns     : getAllMasterDropdowns,
+  getBrands                 : getBrands,
+  getCategories             : getCategories,
+  getVendorsFull            : getVendorsFull,
+  getCustomersFull          : getCustomersFull,
+  getZonesFull              : getZonesFull,
+  getCarsFull               : getCarsFull,
+  getPurchaseOrderPageData  : getPurchaseOrderPageData,
+  getTaxInvoicePageData     : getTaxInvoicePageData,
+  getQuotationPageData      : getQuotationPageData,
+  saveBrand                 : saveBrand,
+  saveCategory              : saveCategory,
+  saveVendor                : saveVendor,
+  saveCustomer              : saveCustomer,
+  saveZone                  : saveZone,
+  saveCar                   : saveCar,
+  saveProduct               : saveProduct,
+  uploadProductImage        : uploadProductImage,
+  deleteProductImage        : deleteProductImage,
+  generateProductBarcode    : generateProductBarcode,
+  saveMasterData            : saveMasterData,
+  savePurchaseOrder         : savePurchaseOrder,
+  receiveGoods              : receiveGoods,
+  updatePurchaseOrderStatus : updatePurchaseOrderStatus,
+  issueStock                : issueStock,
+  getStockMovements         : getStockMovements,
+  getDashboardBootstrap     : getDashboardBootstrap,
+  saveTaxInvoice            : saveTaxInvoice,
+  deleteTaxInvoice          : deleteTaxInvoice,
+  saveQuotation             : saveQuotation,
+  updateQuotationStatus     : updateQuotationStatus,
+  deleteQuotation           : deleteQuotation,
+  markQuotationStockIssued  : markQuotationStockIssued,
+  deleteBrand               : deleteBrand,
+  deleteCategory            : deleteCategory,
+  deleteVendor              : deleteVendor,
+  deleteCustomer            : deleteCustomer,
+  deleteZone                : deleteZone,
+  deleteCar                 : deleteCar,
+  deleteProduct             : deleteProduct,
+  deletePurchaseOrder       : deletePurchaseOrder,
+  backupNow                 : backupNow,
+  listBackupFiles           : listBackupFiles,
+  getActivityLog            : getActivityLog,
+  getAllUsers               : getAllUsers,
+  createUserAccount         : createUserAccount,
+  updateUserAccount         : updateUserAccount,
+  resetUserPassword         : resetUserPassword,
+  toggleUserStatus          : toggleUserStatus,
+  authGetMyProfile          : authGetMyProfile,
+  authChangePassword        : authChangePassword,
+  authLogout                : authLogout,
+  authStartTotpSetup        : authStartTotpSetup,
+  authConfirmTotpSetup      : authConfirmTotpSetup,
+  authDisableTotp           : authDisableTotp
+};
 
 var SAVE_MASTER_ALLOWED = ["Master_Brands", "Master_Categories"];
 
@@ -3111,9 +3188,10 @@ function apiGateway(token, fnName, args, userAgent) {
       a.push(session.username);
     }
 
-    var fn = this[fnName];
+    var fn = API_FUNCTIONS[fnName];
     if (typeof fn !== "function") {
-      fn = eval(fnName);
+      console.error("apiGateway: ไม่พบฟังก์ชันจริงสำหรับ", fnName, "(อยู่ใน API_REGISTRY แต่ไม่มีใน API_FUNCTIONS — ตรวจ Code.gs)");
+      return { success: false, message: "เกิดข้อผิดพลาดภายในระบบ กรุณาแจ้งผู้ดูแลระบบ" };
     }
     var result = fn.apply(null, a);
 
@@ -3644,6 +3722,12 @@ function updateUserAccount(docId, fullName, email, role, callerUsername) {
       Role      : cleanRole
     });
 
+    // ★ เปลี่ยนสิทธิ์แล้วต้องบังคับ session เดิมของบัญชีนี้ให้หมดอายุทันที ไม่งั้นสิทธิ์เก่ายังใช้ได้ต่อ
+    //   จนกว่า session จะหมดอายุเอง (สูงสุด AUTH_SESSION_HOURS ชั่วโมง) — ไม่ต้องทำถ้าแก้แค่ชื่อ/อีเมล
+    if (ok && cleanRole !== currentRole) {
+      revokeUserSessions_(targetUsername);
+    }
+
     return ok ? { success: true, message: "บันทึกข้อมูลบัญชีผู้ใช้สำเร็จ" }
               : { success: false, message: "บันทึกไม่สำเร็จ กรุณาลองใหม่" };
   } catch (e) {
@@ -3676,6 +3760,11 @@ function resetUserPassword(docId, callerUsername) {
     if (targetStatus !== "Active") {
       return { success: false, message: "บัญชีนี้ถูกปิดใช้งานอยู่ กรุณาเปิดใช้งานก่อนรีเซ็ตรหัสผ่าน" };
     }
+
+    // ★ รีเซ็ตรหัสผ่านแล้วต้องเพิกถอน session เดิมทั้งหมดทันที — เผื่อเหตุผลที่แอดมินรีเซ็ตให้คือ
+    //   สงสัยว่าบัญชีนี้ถูกขโมยไปใช้ ถ้าไม่เพิกถอน คนที่ถือ session เดิมอยู่ (ผู้ไม่ประสงค์ดี) ยังใช้งาน
+    //   ต่อได้จนกว่าจะหมดอายุเอง แม้เจ้าของบัญชีตัวจริงจะตั้งรหัสผ่านใหม่ไปแล้วก็ตาม
+    revokeUserSessions_(targetUsername);
 
     var resetToken = Utilities.getUuid() + "-" + Utilities.getUuid();
     CacheService.getScriptCache().put(
@@ -3738,6 +3827,11 @@ function toggleUserStatus(docId, newStatus, callerUsername) {
     var ok = updateUserFields_(docId, { Status: newStatus });
     if (!ok) return { success: false, message: "เปลี่ยนสถานะไม่สำเร็จ กรุณาลองใหม่" };
 
+    // ★ ปิดใช้งานบัญชีแล้วต้องตัด session เดิมทันที ไม่งั้นยังใช้งานได้ต่อจนกว่า session จะหมดอายุเอง
+    if (newStatus === "Inactive") {
+      revokeUserSessions_(targetUsername);
+    }
+
     return {
       success: true,
       message: newStatus === "Active" ? "เปิดใช้งานบัญชีเรียบร้อยแล้ว" : "ปิดใช้งานบัญชีเรียบร้อยแล้ว"
@@ -3792,31 +3886,6 @@ function authChangePasswordForced(tempToken, newPassword, userAgent) {
     return { success: false, message: "เกิดข้อผิดพลาดในระบบ: " + e.message };
   }
 }
-function testActivityLog() {
-  var res = UrlFetchApp.fetch(
-    "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents/Activity_Log",
-    {
-      method: "post",
-      headers: getAuthHeader(),
-      payload: JSON.stringify({
-        fields: mapToFirestoreFields({
-          Username: "test",
-          Action: "save",
-          Function: "test",
-          Label: "ทดสอบ",
-          DocId: "",
-          Success: "true",
-          Timestamp: new Date().toISOString()
-        })
-      }),
-      muteHttpExceptions: true
-    }
-  );
-  Logger.log("Status: " + res.getResponseCode());
-  Logger.log("Body: " + res.getContentText());
-}
-
-
 
 /* ═══════════════════════════════════════════════════════════════════
    ส่วนเสริม "ตัดสต๊อก" (Stock Issue) — จาก UI Audit and Redesign
@@ -3846,9 +3915,16 @@ function fsCommit_(writes) {
   return { ok: false, message: res.getContentText() };
 }
 
+// ★ ใช้เช็คว่า fsCommit_ ล้มเหลวเพราะ currentDocument precondition ไม่ตรง (มีคนเขียนเอกสารแทรก
+//   ระหว่างที่เราอ่าน-ตรวจ-เขียน) ซึ่งเป็นกรณีเดียวที่ควรวนลองใหม่ — error แบบอื่นไม่ควร retry
+function isPreconditionFailure_(commitMessage) {
+  return /FAILED_PRECONDITION/i.test(String(commitMessage || ""));
+}
+
 /**
  * อ่านสต๊อกปัจจุบันของสินค้าเฉพาะรายการที่ต้องใช้ (batchGet — ไม่ต้องอ่านทั้ง collection)
- * คืน map: productCode -> { name, stock, minStock, costPrice }
+ * คืน map: productCode -> { name, stock, minStock, costPrice, updateTime }
+ * ★ updateTime ใช้เป็น precondition ตอนตัดสต๊อก (issueStock) กันเขียนทับกันเมื่อมีคำขอพร้อมกัน
  */
 function getProductStockMap_(codes) {
   var map = {};
@@ -3878,7 +3954,8 @@ function getProductStockMap_(codes) {
       stock        : parseFloat(parseFirestoreValue(f.Current_Stock)) || 0,
       minStock     : parseFloat(parseFirestoreValue(f.Min_Stock))     || 0,
       costPrice    : parseFloat(parseFirestoreValue(f.Cost_Price))    || 0,
-      sellingPrice : parseFloat(parseFirestoreValue(f.Selling_Price)) || 0
+      sellingPrice : parseFloat(parseFirestoreValue(f.Selling_Price)) || 0,
+      updateTime   : row.found.updateTime || ""
     };
   });
   return map;
@@ -3918,9 +3995,7 @@ function issueStock(d, callerUsername) {
       if (!merged[code]) merged[code] = { productCode: code, productName: it.productName || "", qty: 0 };
       merged[code].qty += parseFloat(it.qty || 0);
     });
-    var lines = Object.keys(merged).map(function (k) { return merged[k]; });
-
-    var stockMap = getProductStockMap_(lines.map(function (l) { return l.productCode; }));
+    var lines0 = Object.keys(merged).map(function (k) { return merged[k]; });
 
     // ★ ถ้าตัดสต๊อกจากใบเสนอราคาที่ "ปิดงาน-ขายสำเร็จ" แล้ว ใช้ราคาที่เสนอไปจริง (ผ่านการอนุมัติแล้ว)
     //   เฉพาะสินค้าที่อยู่ในใบเสนอราคานั้น แทนราคา Master Product — ตรวจสอบจากเอกสารจริงบน server
@@ -3945,66 +4020,93 @@ function issueStock(d, callerUsername) {
       }
     }
 
-    var notFound     = [];
-    var insufficient = [];
-    lines.forEach(function (l) {
-      var info = stockMap[l.productCode];
-      if (!info) { notFound.push(l.productCode); return; }
-      l.before    = info.stock;
-      l.after     = info.stock - l.qty;
-      l.minStock  = info.minStock;
-      l.costPrice = info.costPrice;
-      l.unitPrice = quotedPriceMap.hasOwnProperty(l.productCode) ? quotedPriceMap[l.productCode] : info.sellingPrice;
-      if (!l.productName) l.productName = info.name;
-      if (l.after < 0) insufficient.push({ productCode: l.productCode, productName: l.productName, stock: info.stock, need: l.qty });
-    });
-
-    if (notFound.length)     return fail("ไม่พบสินค้ารหัส: " + notFound.join(", "));
-    if (insufficient.length && !d.allowNegative) {
-      return fail("จำนวนที่ตัดเกินสต๊อกคงเหลือ: " + insufficient.map(function (x) {
-        return x.productName + " (คงเหลือ " + x.stock + " ต้องการ " + x.need + ")";
-      }).join(", "), { insufficient: insufficient });
-    }
-
     var user   = callerUsername || getCurrentUsername_();
     var nowIso = new Date().toISOString();
-    var docNo  = "SI" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyMMdd-HHmmss");
+    // ★ FIX: เดิม docNo = "SI"+yyMMdd-HHmmss เท่านั้น — 2 บิลในวินาทีเดียวกันได้ docNo ซ้ำ แล้ว
+    //   document id ของ Stock_Movements (docNo+"-"+ลำดับ) ชนกัน เขียนทับประวัติบิลแรกเงียบๆ
+    //   (ยอดสต๊อกยังถูกเพราะ increment เป็น atomic แต่หลักฐานการตัดหาย) — เติมสุ่มท้ายกันชนแทน
+    var docNo = "SI" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyMMdd-HHmmss")
+              + "-" + Utilities.getUuid().replace(/-/g, "").slice(0, 4).toUpperCase();
 
-    var writes = [];
-    lines.forEach(function (l, i) {
-      // 1) ลดสต๊อก
-      writes.push({
-        transform: {
-          document: fsDocPath_("Master_Products", l.productCode),
-          fieldTransforms: [{ fieldPath: "Current_Stock", increment: { doubleValue: -l.qty } }]
-        }
+    // ★ FIX: เดิมอ่านสต๊อกมาตรวจ "พอไหม" ครั้งเดียวแล้วค่อยเขียน increment แยกจังหวะกัน — ถ้า 2 คำขอ
+    //   ตัดสต๊อกสินค้าตัวเดียวกัน (เช่นชิ้นสุดท้าย) มาพร้อมกันพอดี ทั้งคู่จะอ่านเจอว่า "พอ" ก่อนที่อีกฝ่าย
+    //   จะเขียนจริง ทำให้สต๊อกติดลบได้ทั้งที่ไม่มีใครสั่ง allowNegative เลย — ผูก updateTime ตอนอ่านเป็น
+    //   precondition ตอนเขียน ถ้ามีคนแก้สินค้าตัวเดียวกันแทรกก่อน commit ทั้งชุดจะถูกปฏิเสธ (atomic)
+    //   แล้ววนกลับไปอ่าน-ตรวจ-เขียนใหม่ในรอบถัดไปแทน
+    var MAX_ATTEMPTS = 3;
+    var lines, commit;
+    for (var attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      var stockMap = getProductStockMap_(lines0.map(function (l) { return l.productCode; }));
+
+      var notFound     = [];
+      var insufficient = [];
+      lines = lines0.map(function (l0) {
+        return { productCode: l0.productCode, productName: l0.productName, qty: l0.qty };
       });
-      // 2) บันทึกประวัติ (1 บรรทัด = 1 เอกสาร ทำให้ดูประวัติรายสินค้าได้)
-      writes.push({
-        update: {
-          name: fsDocPath_(STOCK_MOVEMENT_COLLECTION, docNo + "-" + (i + 1)),
-          fields: {
-            Doc_No       : { stringValue: docNo },
-            Type         : { stringValue: "OUT" },
-            Product_Code : { stringValue: l.productCode },
-            Product_Name : { stringValue: String(l.productName) },
-            Qty          : { doubleValue: l.qty },
-            Stock_Before : { doubleValue: l.before },
-            Stock_After  : { doubleValue: l.after },
-            Unit_Price   : { doubleValue: parseFloat(l.unitPrice || 0) },
-            Cost_Price   : { doubleValue: parseFloat(l.costPrice || 0) },
-            Reason       : { stringValue: reason },
-            Ref_No       : { stringValue: String(d.refNo || "") },
-            Note         : { stringValue: String(d.note  || "") },
-            User         : { stringValue: user },
-            Timestamp    : { stringValue: nowIso }
+      lines.forEach(function (l) {
+        var info = stockMap[l.productCode];
+        if (!info) { notFound.push(l.productCode); return; }
+        l.before     = info.stock;
+        l.after      = info.stock - l.qty;
+        l.minStock   = info.minStock;
+        l.costPrice  = info.costPrice;
+        l.updateTime = info.updateTime;
+        l.unitPrice  = quotedPriceMap.hasOwnProperty(l.productCode) ? quotedPriceMap[l.productCode] : info.sellingPrice;
+        if (!l.productName) l.productName = info.name;
+        if (l.after < 0) insufficient.push({ productCode: l.productCode, productName: l.productName, stock: info.stock, need: l.qty });
+      });
+
+      if (notFound.length)     return fail("ไม่พบสินค้ารหัส: " + notFound.join(", "));
+      if (insufficient.length && !d.allowNegative) {
+        return fail("จำนวนที่ตัดเกินสต๊อกคงเหลือ: " + insufficient.map(function (x) {
+          return x.productName + " (คงเหลือ " + x.stock + " ต้องการ " + x.need + ")";
+        }).join(", "), { insufficient: insufficient });
+      }
+
+      var writes = [];
+      lines.forEach(function (l, i) {
+        // 1) ลดสต๊อก — ผูก precondition กับ updateTime ที่อ่านมาข้างบน
+        var stockWrite = {
+          transform: {
+            document: fsDocPath_("Master_Products", l.productCode),
+            fieldTransforms: [{ fieldPath: "Current_Stock", increment: { doubleValue: -l.qty } }]
           }
-        }
-      });
-    });
+        };
+        if (l.updateTime) stockWrite.currentDocument = { updateTime: l.updateTime };
+        writes.push(stockWrite);
 
-    var commit = fsCommit_(writes);
-    if (!commit.ok) return { success: false, title: "ล้มเหลว", message: "บันทึกไม่สำเร็จ: " + commit.message };
+        // 2) บันทึกประวัติ (1 บรรทัด = 1 เอกสาร ทำให้ดูประวัติรายสินค้าได้)
+        writes.push({
+          update: {
+            name: fsDocPath_(STOCK_MOVEMENT_COLLECTION, docNo + "-" + (i + 1)),
+            fields: {
+              Doc_No       : { stringValue: docNo },
+              Type         : { stringValue: "OUT" },
+              Product_Code : { stringValue: l.productCode },
+              Product_Name : { stringValue: String(l.productName) },
+              Qty          : { doubleValue: l.qty },
+              Stock_Before : { doubleValue: l.before },
+              Stock_After  : { doubleValue: l.after },
+              Unit_Price   : { doubleValue: parseFloat(l.unitPrice || 0) },
+              Cost_Price   : { doubleValue: parseFloat(l.costPrice || 0) },
+              Reason       : { stringValue: reason },
+              Ref_No       : { stringValue: String(d.refNo || "") },
+              Note         : { stringValue: String(d.note  || "") },
+              User         : { stringValue: user },
+              Timestamp    : { stringValue: nowIso }
+            }
+          }
+        });
+      });
+
+      commit = fsCommit_(writes);
+      if (commit.ok) break;
+      if (!isPreconditionFailure_(commit.message) || attempt === MAX_ATTEMPTS) {
+        return { success: false, title: "ล้มเหลว", message: "บันทึกไม่สำเร็จ: " + commit.message };
+      }
+      // มีคนแก้สต๊อกสินค้าตัวใดตัวหนึ่งแทรกพอดีระหว่างที่กำลังตัด — วนไปอ่าน-ตรวจ-เขียนใหม่รอบถัดไป
+      Utilities.sleep(150 * attempt);
+    }
 
     return {
       success : true,
@@ -4031,7 +4133,9 @@ function logStockIn_(additions, reason, refNo, callerUsername) {
   var stockMap = getProductStockMap_(list.map(function (l) { return l.productCode; }));
   var user     = callerUsername || getCurrentUsername_();
   var nowIso   = new Date().toISOString();
-  var docNo    = "SR" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyMMdd-HHmmss");
+  // ★ FIX: เดิม docNo ชนกันได้ถ้ารับของ 2 รอบในวินาทีเดียวกัน (เขียนทับประวัติกันเงียบๆ) — เติมสุ่มท้ายกันชน
+  var docNo    = "SR" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyMMdd-HHmmss")
+               + "-" + Utilities.getUuid().replace(/-/g, "").slice(0, 4).toUpperCase();
 
   var writes = [];
   list.forEach(function (l, i) {

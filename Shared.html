@@ -7,14 +7,14 @@
 
 /* ── escape / format ── */
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// ★ ใช้แทน esc() เฉพาะตอนฝังค่าไว้ในสตริง JS ที่ครอบด้วย ' อยู่แล้ว (เช่น onclick="fn('...')")
+//   esc() เพียงอย่างเดียวไม่ escape เครื่องหมาย ' — ถ้าค่านั้นมี ' ปนอยู่จะหลุดออกจากสตริงกลางทาง
+//   ทำให้ onclick พังหรือรันโค้ดแปลกปลอมได้ ปัจจุบันทุกจุดที่ใช้ esc() แบบนี้ฝังแต่รหัส/รหัสเอกสารที่
+//   ระบบสร้างเอง (ไม่มี ' ปนอยู่แน่ๆ) จึงยังไม่เคยเป็นปัญหาจริง แต่เป็นจุดเสี่ยงถ้าวันหลังมีใครเผลอเอา
+//   ข้อความที่ผู้ใช้พิมพ์เองมาฝังแบบเดียวกัน
+function escJs(v){return esc(v).replace(/'/g,"\\'");}
 function num(v){return parseFloat(v)||0;}
 function money(n){return '฿ '+num(n).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function moneyShort(n){
-  n=num(n);
-  if(n>=1000000) return (n/1000000).toFixed(2).replace(/\.00$/,'')+' ล.';
-  if(n>=1000)     return (n/1000).toFixed(0)+' พ.';
-  return n.toLocaleString('th-TH',{maximumFractionDigits:0});
-}
 var TH_MONTHS=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 function thDate(iso,withTime){
   var d=new Date(iso);
@@ -110,32 +110,49 @@ function notifyParentRefresh(){
 }
 
 /* ── SweetAlert2 helper (เหลือใช้เฉพาะยืนยัน / error) ── */
+/* ★ ทุกกล่อง SweetAlert ปิดได้เฉพาะกดปุ่มในตัวเองเท่านั้น (allowOutsideClick/allowEscapeKey: false)
+   ให้สอดคล้องกับนโยบาย Static/Persistent Modal เดียวกับ .modal-overlay (ดู openModal/closeModal
+   ด้านบน) — กันคลิกพลาด/กด Esc หลุดโดยไม่ตั้งใจ โดยเฉพาะ swyConfirm ที่เป็นกล่องยืนยันการกระทำสำคัญ
+   (เช่น ลบข้อมูล/ยืนยันตัดสต๊อก) */
 function swySuccess(title,html){
   return Swal.fire({icon:'success',title:title,html:html||'',confirmButtonText:'ตกลง',
+    allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
 }
 function swyError(title,html){
   return Swal.fire({icon:'error',title:title,html:html||'',confirmButtonText:'ตกลง',
+    allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn danger'},buttonsStyling:false});
 }
 function swyWarning(title,html){
   return Swal.fire({icon:'warning',title:title,html:html||'',confirmButtonText:'ตกลง',
+    allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
 }
 function swyConfirm(o){
   return Swal.fire({
     icon:o.icon||'question',title:o.title,html:o.html||'',showCancelButton:true,
     confirmButtonText:o.confirmText||'ยืนยัน',cancelButtonText:o.cancelText||'ยกเลิก',reverseButtons:true,
+    allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',
       confirmButton:'swy-confirm-btn'+(o.danger?' danger':''),cancelButton:'swy-cancel-btn'},
     buttonsStyling:false
   }).then(function(r){return r.isConfirmed;});
 }
 
-/* ── เรียก backend: ผ่าน apiGateway ถ้ามี token (เช็คสิทธิ์ role) ไม่มีก็เรียกตรง ── */
+/* ── เรียก backend: ต้องผ่าน apiGateway เท่านั้น (เช็คสิทธิ์ role + ลง Activity_Log ทุกครั้ง) ──
+   ★ FIX: เดิมถ้าไม่มี token จะเรียกฟังก์ชัน backend ตรงๆ (runner[fnName]) ข้าม apiGateway ทั้งหมด —
+   ไม่เช็ค role, ไม่ลง log — เป็นช่องโหว่จริงถ้าหน้าไหนโหลดมาโดยไม่มี token (เช่นเปิด URL ตรงๆ)
+   หน้า login ไม่ได้เรียกผ่าน callApi() นี้เลย (เรียก google.script.run ตรงๆ เฉพาะฟังก์ชัน auth ที่
+   ตั้งใจเปิดให้ก่อน login อยู่แล้ว — authLogin/authForgotPassword/authResetPassword/ฯลฯ) จึงตัด
+   ทางลัดนี้ออกได้โดยไม่กระทบการ login */
 function callApi(fnName,args,onSuccess,onFailure){
   var token=(typeof AUTH_TOKEN!=='undefined')?AUTH_TOKEN:'';
-  var runner=google.script.run
+  if(!token){
+    if(typeof WEB_APP_URL!=='undefined') window.top.location.href=WEB_APP_URL+'?page=login';
+    return;
+  }
+  google.script.run
     .withSuccessHandler(function(res){
       if(res && res.__authError){
         swyError('เซสชันหมดอายุ','กรุณาเข้าสู่ระบบใหม่').then(function(){
@@ -145,9 +162,7 @@ function callApi(fnName,args,onSuccess,onFailure){
       }
       if(onSuccess) onSuccess(res);
     })
-    .withFailureHandler(onFailure||function(err){ swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err))); });
-
-  if(token) runner.apiGateway(token,fnName,args||[],navigator.userAgent);
-  else runner[fnName].apply(runner,args||[]);
+    .withFailureHandler(onFailure||function(err){ swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err))); })
+    .apiGateway(token,fnName,args||[],navigator.userAgent);
 }
 </script>

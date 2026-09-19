@@ -889,9 +889,9 @@ function renderRows() {
       '<td class="amount-cell" style="color:#005088;">' + fmtMoney(item.grandTotal) + '</td>' +
       '<td class="col-sticky-right" style="text-align:center;">' +
         '<div class="row-actions">' +
-          '<button class="btn btn-icon print" title="ดูรายงาน / สั่งพิมพ์ย้อนหลัง" onclick="openViewModal(\'' + item.id + '\')">🖨️</button>' +
-          '<button class="btn btn-icon edit" title="แก้ไข" onclick="openEditModal(\'' + item.id + '\')">✏️</button>' +
-          '<button class="btn btn-icon del" title="ลบ" onclick="confirmDeleteModal(\'' + item.id + '\')">🗑️</button>' +
+          '<button class="btn btn-icon print" title="ดูรายงาน / สั่งพิมพ์ย้อนหลัง" onclick="openViewModal(\'' + escJs(item.id) + '\')">🖨️</button>' +
+          '<button class="btn btn-icon edit" title="แก้ไข" onclick="openEditModal(\'' + escJs(item.id) + '\')">✏️</button>' +
+          '<button class="btn btn-icon del" title="ลบ" onclick="confirmDeleteModal(\'' + escJs(item.id) + '\')">🗑️</button>' +
         '</div>' +
       '</td>';
     tbody.appendChild(tr);
@@ -1471,7 +1471,7 @@ function renderTopCustomers(yearItems) {
   var el = document.getElementById('topCustomers');
   if (!sorted.length) { el.innerHTML = '<div class="chart-empty">ยังไม่มีข้อมูล</div>'; return; }
   el.innerHTML = sorted.map(function(row, i) {
-    return '<li class="clickable" onclick="drillCustomerInvoices(' + currentPageYear + ',\'' + esc(row.name).replace(/'/g, "\\'") + '\')"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></li>';
+    return '<li class="clickable" onclick="drillCustomerInvoices(' + currentPageYear + ',\'' + escJs(row.name) + '\')"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></li>';
   }).join('');
 }
 
@@ -1489,7 +1489,7 @@ function renderTopItems(yearItems) {
   var el = document.getElementById('topItems');
   if (!sorted.length) { el.innerHTML = '<div class="chart-empty">ยังไม่มีข้อมูล</div>'; return; }
   el.innerHTML = sorted.map(function(row, i) {
-    return '<li class="clickable" onclick="drillItemInvoices(' + currentPageYear + ',\'' + esc(row.name).replace(/'/g, "\\'") + '\')"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></li>';
+    return '<li class="clickable" onclick="drillItemInvoices(' + currentPageYear + ',\'' + escJs(row.name) + '\')"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></li>';
   }).join('');
 }
 
@@ -1568,7 +1568,7 @@ function drillCustomerList(yearBE) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="6">ไม่พบข้อมูล</td></tr>';
   } else {
     tbody.innerHTML = sorted.map(function(row, i) {
-      return '<tr class="clickable" style="cursor:pointer;" onclick="drillCustomerInvoices(' + yearBE + ',\'' + esc(row.name).replace(/'/g, "\\'") + '\')">' +
+      return '<tr class="clickable" style="cursor:pointer;" onclick="drillCustomerInvoices(' + yearBE + ',\'' + escJs(row.name) + '\')">' +
         '<td style="text-align:center; color:#94a3b8;">' + (i + 1) + '</td>' +
         '<td colspan="2" style="font-weight:600;">' + esc(row.name) + '</td>' +
         '<td>' + row.count + ' ใบ</td>' +

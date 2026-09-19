@@ -496,13 +496,13 @@
       var pendingTag = pendingProductCodes[p.productCode] ? '<span class="badge badge-warn">มีคำสั่งซื้อค้างอยู่</span>' : '';
 
       return '<tr>' +
-        '<td><input type="checkbox" ' + (checked ? 'checked' : '') + ' onchange="onItemCheck(\'' + p.productCode + '\', this.checked)"></td>' +
+        '<td><input type="checkbox" ' + (checked ? 'checked' : '') + ' onchange="onItemCheck(\'' + escJs(p.productCode) + '\', this.checked)"></td>' +
         '<td>' + escHtml(p.productName) + pendingTag + '</td>' +
         '<td class="text-center">' + partTxt + '</td>' +
         '<td class="stock-pair"><b>' + p.currentStock + '</b> / ' + p.minStock + '</td>' +
         '<td>' + (p.carModel ? escHtml(p.carModel) : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
         '<td class="text-right">฿ ' + (p.costPrice || 0).toLocaleString('th-TH', {maximumFractionDigits:2}) + '</td>' +
-        '<td class="text-center"><input type="number" min="1" class="qty-input" value="' + qty + '" onchange="onQtyChange(\'' + p.productCode + '\', this.value)"></td>' +
+        '<td class="text-center"><input type="number" min="1" class="qty-input" value="' + qty + '" onchange="onQtyChange(\'' + escJs(p.productCode) + '\', this.value)"></td>' +
         '<td class="text-right" id="lineTotal_' + p.productCode + '">฿ ' + lineTotal.toLocaleString('th-TH', {maximumFractionDigits:2}) + '</td>' +
         '</tr>';
     }).join('');
@@ -522,7 +522,7 @@
       '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
       '<div class="vendor-foot">' +
         '<div class="sum">เลือกแล้ว <b id="vcount_' + g.vendorId + '">' + countVendorChecked(g) + '</b> รายการ &nbsp;|&nbsp; รวม <b id="vtotal_' + g.vendorId + '">฿ ' + vendorSelectedTotal.toLocaleString('th-TH', {maximumFractionDigits:2}) + '</b></div>' +
-        '<button class="btn btn-primary" onclick="openConfirmModal(\'' + g.vendorId + '\')" ' + (countVendorChecked(g) === 0 ? 'disabled' : '') + ' id="btnCreatePO_' + g.vendorId + '">📝 สร้างใบสั่งซื้อ</button>' +
+        '<button class="btn btn-primary" onclick="openConfirmModal(\'' + escJs(g.vendorId) + '\')" ' + (countVendorChecked(g) === 0 ? 'disabled' : '') + ' id="btnCreatePO_' + g.vendorId + '">📝 สร้างใบสั่งซื้อ</button>' +
       '</div>' +
     '</div>';
   }
@@ -749,7 +749,6 @@
 
       var statusCell;
       var isLocked  = (po.status === 'Received' || po.status === 'Cancelled');
-      var canCancel = (po.status === 'Pending' || po.status === 'Ordered');
 
       if (isLocked) {
         // ★ สถานะสิ้นสุดแล้ว — ล็อก ไม่ให้แก้ไขต่อ
@@ -761,11 +760,11 @@
         var opts = ['Pending', 'Ordered', 'Cancelled'].map(function(s) {
           return '<option value="' + s + '" ' + (s === po.status ? 'selected' : '') + '>' + STATUS_LABELS[s] + '</option>';
         }).join('');
-        statusCell = '<select class="status-select status-' + po.status + '" onchange="onStatusChange(\'' + po.poId + '\', this)">' + opts + '</select>';
+        statusCell = '<select class="status-select status-' + po.status + '" onchange="onStatusChange(\'' + escJs(po.poId) + '\', this)">' + opts + '</select>';
       }
 
       var receiveBtn = (po.status === 'Pending' || po.status === 'Ordered' || po.status === 'PartiallyReceived')
-        ? '<button class="btn btn-icon receive" title="บันทึกรับสินค้า" onclick="openReceiveModal(\'' + po.poId + '\')">📥</button>'
+        ? '<button class="btn btn-icon receive" title="บันทึกรับสินค้า" onclick="openReceiveModal(\'' + escJs(po.poId) + '\')">📥</button>'
         : '';
 
       var vendorNameCell = escHtml(po.vendorName) +
@@ -781,8 +780,8 @@
         '<td>' + statusCell + '</td>' +
         '<td class="text-center col-sticky-right"><span class="row-actions">' +
           receiveBtn +
-          '<button class="btn btn-icon view" title="ดูรายละเอียด" onclick="openDetailModal(\'' + po.poId + '\')">🔍</button>' +
-          '<button class="btn btn-icon del" title="ลบ" onclick="onDeleteOrder(\'' + po.poId + '\')">🗑️</button>' +
+          '<button class="btn btn-icon view" title="ดูรายละเอียด" onclick="openDetailModal(\'' + escJs(po.poId) + '\')">🔍</button>' +
+          '<button class="btn btn-icon del" title="ลบ" onclick="onDeleteOrder(\'' + escJs(po.poId) + '\')">🗑️</button>' +
         '</span></td>' +
       '</tr>';
     }).join('');

@@ -226,8 +226,8 @@
         '<td>'+rack+'</td>'+
         '<td style="color:var(--muted)">'+esc(it.Note||'—')+'</td>'+
         '<td class="text-center col-sticky-right"><span class="row-actions">'+
-          '<button class="btn btn-icon edit" title="แก้ไข" onclick="openEditModal(\''+esc(it.id)+'\')">✏️</button>'+
-          '<button class="btn btn-icon del" title="ลบ" onclick="confirmDelete(\''+esc(it.id)+'\')">🗑️</button>'+
+          '<button class="btn btn-icon edit" title="แก้ไข" onclick="openEditModal(\''+escJs(it.id)+'\')">✏️</button>'+
+          '<button class="btn btn-icon del" title="ลบ" onclick="confirmDelete(\''+escJs(it.id)+'\')">🗑️</button>'+
         '</span></td>'+
       '</tr>';
     }).join('');

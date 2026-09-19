@@ -694,9 +694,9 @@
         '<td style="text-align:center;"><span style="font-size:12px; font-weight:600; color:' + (item.status === 'Active' ? '#166534' : '#991b1b') + ';">' + esc(item.status || 'Active') + '</span></td>' +
         '<td class="col-sticky-right" style="text-align:center;">' +
           '<div class="row-actions">' +
-            '<button class="btn btn-icon view" onclick="openViewModal(\'' + codeKey + '\')" title="ดูรายละเอียด">👁️</button>' +
-            '<button class="btn btn-icon edit" onclick="openEditModal(\'' + codeKey + '\')" title="แก้ไข">✏️</button>' +
-            '<button class="btn btn-icon del" onclick="confirmDeleteModal(\'' + codeKey + '\')" title="ลบ">🗑️</button>' +
+            '<button class="btn btn-icon view" onclick="openViewModal(\'' + escJs(codeKey) + '\')" title="ดูรายละเอียด">👁️</button>' +
+            '<button class="btn btn-icon edit" onclick="openEditModal(\'' + escJs(codeKey) + '\')" title="แก้ไข">✏️</button>' +
+            '<button class="btn btn-icon del" onclick="confirmDeleteModal(\'' + escJs(codeKey) + '\')" title="ลบ">🗑️</button>' +
           '</div>' +
         '</td>' +
       '</tr>';
