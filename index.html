@@ -490,6 +490,17 @@
       frame.contentWindow.postMessage({ action:'OPEN_PRODUCT_ADD', barcode:barcode }, '*');
     }
   }
+
+  // ★ FIX (ข้อ 17 ของ audit): กด "ตัด + ออกใบกำกับ" ที่หน้าตัดสต๊อกมาตัดสต๊อกสำเร็จแล้ว ส่ง
+  //   OPEN_TAX_INVOICE มาที่นี่ แต่ไม่เคยมีใครรับข้อความนี้เลย (โค้ดตายมาตั้งแต่แรก) — เพิ่ม forward
+  //   ไปหน้าใบกำกับภาษีให้จริง รูปแบบเดียวกับ OPEN_STOCK_ISSUE/OPEN_PRODUCT_ADD ทุกประการ
+  var taxInvoiceReady = false, pendingTaxInvoicePrefill = null;
+  function sendTaxInvoicePrefill(payload){
+    var frame = document.getElementById('iframe-taxinvoice');
+    if(frame && frame.contentWindow){
+      frame.contentWindow.postMessage({ action:'PREFILL_INVOICE', items:payload.items, note:payload.note }, '*');
+    }
+  }
   window.addEventListener('message', function(e){
     var d = e.data || {};
     if(d.action==='REFRESH_MAIN_TABLE'){ loadMasters(); dashLoad(); }
@@ -511,6 +522,16 @@
     else if(d.action==='PRODUCTS_READY'){
       productsReady = true;
       if(pendingProductAddBarcode !== null){ sendProductAddPrefill(pendingProductAddBarcode); pendingProductAddBarcode = null; }
+    }
+    else if(d.action==='OPEN_TAX_INVOICE'){
+      switchPage('taxinvoice');
+      var invoicePayload = { items:d.items, note:d.note };
+      if(taxInvoiceReady) sendTaxInvoicePrefill(invoicePayload);
+      else pendingTaxInvoicePrefill = invoicePayload;
+    }
+    else if(d.action==='TAXINVOICE_READY'){
+      taxInvoiceReady = true;
+      if(pendingTaxInvoicePrefill){ sendTaxInvoicePrefill(pendingTaxInvoicePrefill); pendingTaxInvoicePrefill = null; }
     }
   });
 
@@ -1010,7 +1031,7 @@
     var fast=all.filter(function(r){return r.rate>0;}).sort(function(a,b){return b.rate-a.rate;}).slice(0,5);
     var fMax=fast.length?fast[0].rate:1;
     document.getElementById('dashFastMovers').innerHTML = fast.length ? fast.map(function(r,i){
-      return '<div class="dash-mover-row" ondblclick="dashOpenProduct(\''+esc(r.code)+'\')"><span class="dash-mover-rank" style="background:var(--primary-soft);color:var(--primary)">'+(i+1)+'</span>'+
+      return '<div class="dash-mover-row" ondblclick="dashOpenProduct(\''+escJs(r.code)+'\')"><span class="dash-mover-rank" style="background:var(--primary-soft);color:var(--primary)">'+(i+1)+'</span>'+
         '<div style="min-width:0;flex:1"><div style="font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.p.productName)+'</div>'+
         '<div class="dash-mono" style="font-size:11px;color:var(--faint)">'+esc(r.code)+' · คงเหลือ '+r.qty+'</div></div>'+
         '<div style="flex:none;width:78px"><div class="dash-mover-bar-track"><div class="dash-mover-bar-fill" style="background:var(--ok);width:'+Math.max(6,(r.rate/fMax)*100).toFixed(0)+'%"></div></div>'+
@@ -1020,7 +1041,7 @@
     var slow=all.filter(function(r){return r.qty>0;}).sort(function(a,b){ var ai=a.idle===null?Infinity:a.idle, bi=b.idle===null?Infinity:b.idle; return bi-ai; }).slice(0,5);
     document.getElementById('dashSlowMovers').innerHTML = slow.length ? slow.map(function(r,i){
       var idleTxt = r.idle===null?'ไม่เคยเคลื่อนไหว':(r.idle+' วัน');
-      return '<div class="dash-mover-row" ondblclick="dashOpenProduct(\''+esc(r.code)+'\')"><span class="dash-mover-rank" style="background:#fef2f2;color:var(--danger)">'+(i+1)+'</span>'+
+      return '<div class="dash-mover-row" ondblclick="dashOpenProduct(\''+escJs(r.code)+'\')"><span class="dash-mover-rank" style="background:#fef2f2;color:var(--danger)">'+(i+1)+'</span>'+
         '<div style="min-width:0;flex:1"><div style="font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.p.productName)+'</div>'+
         '<div class="dash-mono" style="font-size:11px;color:var(--faint)">'+esc(r.code)+' · จม ฿'+Math.round(r.value).toLocaleString()+'</div></div>'+
         '<div style="flex:none;text-align:right"><div style="font-size:13px;color:var(--danger)">'+idleTxt+'</div>'+(r.idle===null?'':'<div style="font-size:10.5px;color:var(--faint)">วันไม่ขยับ</div>')+'</div></div>';
@@ -1151,7 +1172,7 @@
         var p=r.p;
         var qtyStyle = r.qty<=0?'color:var(--danger);font-weight:600':(r.qty<=r.rop?'color:var(--warn);font-weight:600':'color:var(--ink)');
         var sel = DASH.openCode===r.code;
-        return '<tr style="border-bottom:1px solid var(--line-soft);cursor:pointer;'+(sel?'background:var(--primary-soft)':'')+'" ondblclick="dashOpenProduct(\''+esc(r.code)+'\')">'+
+        return '<tr style="border-bottom:1px solid var(--line-soft);cursor:pointer;'+(sel?'background:var(--primary-soft)':'')+'" ondblclick="dashOpenProduct(\''+escJs(r.code)+'\')">'+
           '<td class="dash-mono" style="padding:10px 14px;font-size:12.5px;color:var(--primary);white-space:nowrap">'+esc(r.code)+'</td>'+
           '<td style="padding:10px 14px;color:var(--ink)">'+esc(p.productName)+'<span style="color:var(--faint);font-size:12px"> · '+esc(p.brandName)+'</span></td>'+
           '<td style="padding:10px 14px;color:var(--muted);font-size:12.5px;white-space:nowrap">'+esc(p.categoryName)+'</td>'+
@@ -1162,8 +1183,8 @@
           '<td class="dash-mono" style="padding:10px 14px;text-align:center;color:var(--muted)">'+(r.idle===null?'—':r.idle)+'</td>'+
           '<td style="padding:10px 14px;white-space:nowrap"><span style="'+dashTagStyle(r.tone)+'">'+esc(r.tag)+'</span></td>'+
           '<td style="padding:7px 14px;text-align:right;white-space:nowrap"><span class="row-actions">'+
-            '<button class="btn btn-icon view" title="ดูข้อมูล" onclick="event.stopPropagation();openView(\''+esc(r.code)+'\')">🔍</button>'+
-            (USER_ROLE==='viewer'?'':'<button class="btn btn-icon edit" title="แก้ไข" onclick="event.stopPropagation();openEdit(\''+esc(r.code)+'\')">✏️</button>')+
+            '<button class="btn btn-icon view" title="ดูข้อมูล" onclick="event.stopPropagation();openView(\''+escJs(r.code)+'\')">🔍</button>'+
+            (USER_ROLE==='viewer'?'':'<button class="btn btn-icon edit" title="แก้ไข" onclick="event.stopPropagation();openEdit(\''+escJs(r.code)+'\')">✏️</button>')+
           '</span></td></tr>';
       }).join('');
     }

@@ -673,6 +673,9 @@ function loadAll(yearParam) {
 
       // ★ เลือก "ทุกปี" แล้ว -> บังคับซ่อนแท็บแดชบอร์ด กลับไปแท็บรายการเสมอ (ตามที่ตกลง)
       updateDashTabAvailability();
+
+      // ★ แจ้งเชลล์ (index.html) ว่าโหลดข้อมูลเสร็จแล้ว พร้อมรับรายการจากหน้าตัดสต๊อกมาเติมใบกำกับภาษี
+      try { window.parent.postMessage({ action: 'TAXINVOICE_READY' }, '*'); } catch (e) {}
     }, function(err) {
       tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
@@ -1075,6 +1078,26 @@ function validateForm() {
 }
 
 /* ═══ Modal: เพิ่ม / แก้ไข ═══ */
+// ★ รับรายการจากหน้าตัดสต๊อก (ผ่านเชลล์ index.html ที่ forward ต่อมา) เมื่อกด "ตัด + ออกใบกำกับ"
+//   มาเติมรายการในฟอร์มเพิ่มใบกำกับภาษีให้อัตโนมัติ — ไม่ผูกกับสต๊อกเลย (ตามที่ตั้งใจไว้แต่แรกว่า
+//   หน้านี้เป็นเอกสารอิสระ ไม่กระทบสต๊อก) แค่ช่วยพิมพ์ชื่อ/จำนวน/ราคาให้แทนการพิมพ์ซ้ำเอง
+window.addEventListener('message', function (e) {
+  var d = e.data || {};
+  if (d.action === 'PREFILL_INVOICE') applyInvoicePrefill(d);
+});
+
+function applyInvoicePrefill(d) {
+  openAddModal();
+  var items = Array.isArray(d.items) ? d.items : [];
+  if (items.length) {
+    document.getElementById('itemBasket').innerHTML = '';
+    items.forEach(function (it) { addItemRow(it); });
+  }
+  if (d.note) document.getElementById('modalNote').value = d.note;
+  updateInvoiceNoPreview();
+  swySuccess('ดึงรายการจากหน้าตัดสต๊อกแล้ว', 'ตรวจสอบรายการ/ราคาให้ตรงก่อนกดบันทึก');
+}
+
 function openAddModal() {
   editingDocId = null;
   document.getElementById('modalDocId').value = '';

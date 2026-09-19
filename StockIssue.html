@@ -763,7 +763,13 @@
           var summary = (res.results || []).map(function (r) { return r.productCode + ': ' + r.before + ' → ' + r.after; }).join('<br>');
           swySuccess('ตัดสต๊อกสำเร็จ', 'เลขที่รายการ <b>' + esc(res.docNo || '-') + '</b><br>' + summary);
           if (alsoInvoice) {
-            try { window.parent.postMessage({ action: 'OPEN_TAX_INVOICE', items: payload.items, note: payload.refNo }, '*'); } catch (e) {}
+            // ★ payload.items ไม่มีราคา (ราคาที่ issueStock ใช้จริงคำนวณฝั่ง server ทั้งหมด) —
+            //   ใบกำกับภาษีเป็นเอกสารอิสระไม่ผูกกับสต๊อก จึงส่งราคาจาก basket (ที่พนักงานเห็นอยู่แล้ว
+            //   ตอนตัดสต๊อก) ไปช่วยพิมพ์ให้แทน ไม่ใช่ค่าที่ server ยึดเป็นความจริง
+            var invoiceItems = basket.map(function (b) {
+              return { name: b.productName, qty: b.qty, unit: 'ชิ้น', unitPrice: b.unitPrice };
+            });
+            try { window.parent.postMessage({ action: 'OPEN_TAX_INVOICE', items: invoiceItems, note: payload.refNo }, '*'); } catch (e) {}
           }
           // ★ ถ้าตะกร้านี้มาจากใบเสนอราคา ทำเครื่องหมายในใบเสนอราคาว่าตัดสต๊อกแล้ว กันตัดซ้ำ/ลืมตัด
           //   เป็นแค่บันทึกอ้างอิง ไม่กระทบผลตัดสต๊อกที่สำเร็จไปแล้ว จึงไม่โชว์ error ให้ผู้ใช้เห็นถ้าล้มเหลว
