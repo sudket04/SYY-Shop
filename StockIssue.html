@@ -38,6 +38,10 @@
   .res-price{font-size:16px;font-weight:600;color:var(--ok)}
   .btn-add{background:var(--primary-soft);color:var(--primary);border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;flex-shrink:0}
   .res-row.sel .btn-add{background:var(--primary);color:#fff}
+  /* ★ สถานะ "หมด" ต้องดูจางกว่าเสมอ แม้แถวนั้นจะถูกเลือกด้วยคีย์บอร์ด (.sel) ก็ตาม
+     — .is-disabled ต้องชนะกฎ .res-row.sel .btn-add เสมอ (ระบุ selector ให้ specificity สูงกว่าตรงๆ แทนพึ่ง source order) */
+  .btn-add.is-disabled,
+  .res-row.sel .btn-add.is-disabled{background:var(--line-soft);color:var(--faint);cursor:not-allowed}
 
   .code-badge{font-family:'Courier New',monospace;font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:6px;padding:2px 8px}
   .pn-badge{font-family:'Courier New',monospace;font-size:11px;color:#475569;background:var(--line-soft);border:1px solid var(--line);border-radius:6px;padding:2px 8px}
@@ -97,7 +101,7 @@
   <div class="page-head">
     <div class="crumb"><span>งานประจำวัน</span><span class="sep">›</span><b>ตัดสต๊อก / ขายหน้าร้าน</b></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span style="font-size:12px;color:var(--faint)">F2 ค้นหา · Enter ใส่บิล · F4 ยืนยัน</span>
+      <span style="font-size:12px;color:var(--faint)">F2 ค้นหา · Enter เพิ่มสินค้า · F4 ยืนยัน</span>
       <span class="badge badge-info" id="userChip">👤 —</span>
       <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
     </div>
@@ -145,7 +149,7 @@
             <span style="font-size:12px;opacity:.85" id="basketMeta">0 รายการ</span>
           </div>
           <div class="basket-body">
-            <div id="basketLines"><div class="empty-box" style="padding:22px 8px">ยังไม่มีรายการ — ค้นหาสินค้าแล้วกด “+ ใส่บิล”</div></div>
+            <div id="basketLines"><div class="empty-box" style="padding:22px 8px">ยังไม่มีรายการ — ค้นหาสินค้าแล้วกด “+ เพิ่มสินค้า”</div></div>
 
             <div class="section-label">เหตุผลและเอกสารอ้างอิง</div>
             <div class="form-grid">
@@ -241,13 +245,23 @@
   var searchTimer = null;
   var MV_LIMIT    = 1000;   // ค่าสูงสุดที่ getStockMovements ยอมให้ดึง — เอาประวัติให้ครบที่สุดเท่าที่ทำได้
   var pendingQuoteId = null; // ใบเสนอราคาที่ส่งรายการมาเติมตะกร้า (ถ้ามี) — ใช้ทำเครื่องหมายว่าตัดสต๊อกแล้วหลังยืนยันสำเร็จ
+  var searchInputEl  = document.getElementById('searchInput');
 
   document.getElementById('userChip').innerText = '👤 ' + (USER_NAME || '—') + (USER_ROLE ? ' · ' + USER_ROLE : '');
+
+  // ★ Focus state management — พนักงานยิงบาร์โค้ดใส่ช่องนี้ตลอดเวลาโดยไม่แตะเมาส์
+  //   เรียกจุดเดียวนี้หลังทำรายการที่เกี่ยวกับตะกร้าเสร็จทุกครั้ง (เพิ่ม/ลบ/แก้จำนวน/ยืนยัน/สลับแท็บ)
+  //   เพื่อให้ช่องพร้อมรับการยิงครั้งถัดไปทันที — ไม่แตะช่องนี้ตอนพนักงานกำลังพิมพ์ในช่องอื่น (เหตุผล/หมายเหตุ)
+  //   เพราะเรียกเฉพาะตอนจบ action ของเราเอง ไม่ใช่ทุกครั้งที่หน้าต่างได้โฟกัสกลับมา
+  function focusScanInput() {
+    searchInputEl.focus();
+    searchInputEl.select();
+  }
 
   window.onload = function () {
     initDensity();
     loadProducts();
-    document.getElementById('searchInput').focus();
+    focusScanInput();
   };
 
   // ★ รับรายการจากใบเสนอราคา (ผ่านเชลล์ index.html ที่ forward ต่อมา) มาเติมตะกร้าอัตโนมัติ
@@ -298,12 +312,12 @@
   }
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'F2') { e.preventDefault(); document.getElementById('searchInput').focus(); document.getElementById('searchInput').select(); return; }
+    if (e.key === 'F2') { e.preventDefault(); focusScanInput(); return; }
     if (e.key === 'F4') { e.preventDefault(); confirmIssue(); return; }
     if (document.getElementById('panelIssue').classList.contains('active')) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSel(1); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); moveSel(-1); }
-      else if (e.key === 'Enter' && document.activeElement === document.getElementById('searchInput')) {
+      else if (e.key === 'Enter' && document.activeElement === searchInputEl) {
         e.preventDefault(); if (results[selIdx]) addToBasket(results[selIdx].productCode);
       }
     }
@@ -316,6 +330,7 @@
     document.getElementById('tabBtnIssue').classList.toggle('active', isIssue);
     document.getElementById('tabBtnHistory').classList.toggle('active', !isIssue);
     if (!isIssue && !movements.length) loadMovements();
+    if (isIssue) focusScanInput();
   }
 
   /* ═══ โหลดสินค้า ═══ */
@@ -387,7 +402,7 @@
   function stockRank(p) { return num(p.currentStock) > 0 ? 0 : 1; } // มีของ (0) ขึ้นก่อน หมด (1)
 
   function renderResults() {
-    var q = document.getElementById('searchInput').value.toLowerCase().trim();
+    var q = searchInputEl.value.toLowerCase().trim();
     var terms = q ? q.split(/\s+/) : [];
     var category = document.getElementById('filterCategory').value;
     var partType = document.getElementById('filterPartType').value;
@@ -429,7 +444,7 @@
     if (!products.length) { countEl.innerText = 'ยังไม่มีข้อมูลสินค้าในระบบ'; listEl.innerHTML = ''; return; }
     if (!results.length) {
       countEl.innerText = 'ไม่พบสินค้าที่ตรงเงื่อนไข';
-      var rawQ = document.getElementById('searchInput').value.trim();
+      var rawQ = searchInputEl.value.trim();
       listEl.innerHTML = '<div class="empty-box">📭 ลองพิมพ์เฉพาะรหัส P/N หรือลดตัวกรองลง' +
         (rawQ ? '<br><button class="btn btn-primary" type="button" style="margin-top:10px" onclick="goAddProductWithCode(\'' + esc(rawQ).replace(/'/g, "\\'") + '\')">➕ ไม่พบสินค้านี้ในระบบ — ไปเพิ่ม/ผูกรหัสนี้กับสินค้าใหม่</button>' : '') +
         '</div>';
@@ -462,7 +477,10 @@
           '<div class="res-price">' + money(p.sellingPrice) + '</div>' +
           '<span class="stock-badge badge ' + stCls + '">' + stTxt + '</span>' +
         '</div>' +
-        '<button class="btn-add" type="button">' + (st <= 0 ? 'หมด' : '+ ใส่บิล') + '</button>' +
+        // ★ ตั้งใจไม่ใส่ attribute disabled จริง — ปุ่มนี้ไม่มี onclick ของตัวเอง อาศัย .res-row คลิกทั้งแถว
+        //   (ซึ่งเช็คสต๊อกใน addToBasket() แล้วเตือน "สินค้าหมด" อยู่แล้ว) ถ้าใส่ disabled จริงจะกลาย
+        //   เป็นจุดบอด — คลิกตรงปุ่มพอดีจะไม่มี click event bubble ขึ้นไปที่แถวเลย ทั้งที่คลิกที่อื่นในแถวยังทำงาน
+        '<button class="btn-add' + (st <= 0 ? ' is-disabled' : '') + '" type="button">' + (st <= 0 ? 'หมด' : '+ เพิ่มสินค้า') + '</button>' +
       '</div>';
     }).join('');
   }
@@ -503,12 +521,13 @@
       });
     }
     renderBasket();
-    document.getElementById('searchInput').select();
+    focusScanInput();
   }
 
   function removeLine(code) {
     basket = basket.filter(function (b) { return b.productCode !== code; });
     renderBasket();
+    focusScanInput();
   }
 
   function changeQty(code, delta) {
@@ -519,6 +538,7 @@
     if (next > line.stock) { swyWarning('เกินจำนวนคงเหลือ', line.productName + ' คงเหลือ ' + line.stock + ' ชิ้น'); return; }
     line.qty = next;
     renderBasket();
+    focusScanInput();
   }
 
   function setQty(code, val) {
@@ -529,6 +549,7 @@
     if (n > line.stock) { n = line.stock; swyWarning('เกินจำนวนคงเหลือ', line.productName + ' คงเหลือ ' + line.stock + ' ชิ้น'); }
     line.qty = n;
     renderBasket();
+    focusScanInput();
   }
 
   function clearBasket() {
@@ -538,12 +559,13 @@
     document.getElementById('inpRefNo').value = '';
     document.getElementById('inpNote').value  = '';
     renderBasket();
+    focusScanInput();
   }
 
   function renderBasket() {
     var box = document.getElementById('basketLines');
     if (!basket.length) {
-      box.innerHTML = '<div class="empty-box" style="padding:22px 8px">ยังไม่มีรายการ — ค้นหาสินค้าแล้วกด “+ ใส่บิล”</div>';
+      box.innerHTML = '<div class="empty-box" style="padding:22px 8px">ยังไม่มีรายการ — ค้นหาสินค้าแล้วกด “+ เพิ่มสินค้า”</div>';
     } else {
       box.innerHTML = basket.map(function (b) {
         return '<div class="b-line">' +
@@ -599,7 +621,7 @@
 
   /* ═══ ยืนยันตัดสต๊อก ═══ */
   function confirmIssue(alsoInvoice) {
-    if (!basket.length) { swyWarning('ยังไม่มีรายการ', 'ค้นหาสินค้าแล้วกด “+ ใส่บิล” ก่อน'); return; }
+    if (!basket.length) { swyWarning('ยังไม่มีรายการ', 'ค้นหาสินค้าแล้วกด “+ เพิ่มสินค้า” ก่อน'); return; }
 
     var payload = {
       reason  : document.getElementById('inpReason').value,
@@ -618,7 +640,7 @@
       html: listHtml + '<br><br>เหตุผล: <b>' + esc(payload.reason) + '</b>' + (payload.refNo ? '<br>อ้างอิง: ' + esc(payload.refNo) : ''),
       confirmText: 'ตัดสต๊อก'
     }).then(function (ok) {
-      if (!ok) return;
+      if (!ok) { focusScanInput(); return; }
 
       var btn = document.getElementById('btnConfirm');
       btn.disabled = true;
@@ -649,13 +671,16 @@
           loadProducts();
           movements = [];
           try { window.parent.postMessage({ action: 'REFRESH_MAIN_TABLE' }, '*'); } catch (e) {}
+          focusScanInput(); // ★ พร้อมยิงบิลถัดไปได้ทันที
         } else {
           swyError('ตัดสต๊อกไม่สำเร็จ', esc((res && res.message) || 'ไม่ทราบสาเหตุ'));
+          focusScanInput();
         }
       }, function (err) {
         btn.disabled = false;
         btn.innerHTML = '💾 ยืนยันตัดสต๊อก (F4)';
         swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+        focusScanInput();
       });
     });
   }
