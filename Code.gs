@@ -91,32 +91,85 @@ function getAuthHeader() {
 }
 
 // ==========================================
-// 2a. ★ รูปสินค้า — Firebase Storage (bucket เดียวกับโปรเจกต์ Firestore นี้)
-//   ชื่อ bucket จริงมี 2 รูปแบบไปตามอายุโปรเจกต์ (โปรเจกต์ก่อน ต.ค. 2024 = "<project-id>.appspot.com",
-//   ใหม่กว่านั้น = "<project-id>.firebasestorage.app") — เดาผิดแล้วอัปโหลดจะพังเงียบๆ ทุกครั้ง
-//   จึงลองทั้งสองแบบตอนอัปโหลดจริงครั้งแรก แล้วจำอันที่ใช้ได้ไว้ใน Script Properties อัตโนมัติ
-//   (resolveStorageBucket_) ไม่ต้องให้ผู้ดูแลระบบไปเช็ค Console เอง
-//   ยังต้องตั้งสิทธิ์อ่านสาธารณะ (allUsers: Storage Object Viewer) ที่ bucket นี้ครั้งเดียวใน
-//   Google Cloud Console เพื่อให้ URL รูปใช้ได้ตรงๆ โดยไม่ต้องมี token — ดูรายละเอียดใน README
+// 2a. ★ รูปสินค้า — Google Drive (แทน Firebase Storage เดิม ซึ่งต้องอัปเกรดเป็น Blaze plan
+//   ผูกบัตรเครดิตก่อนถึงจะเปิดใช้ได้ แม้จะอยู่ในโควตาฟรีก็ตาม — Drive ไม่ต้องผูกบัตรเลย และสิทธิ์
+//   "https://www.googleapis.com/auth/drive" มีประกาศอยู่ใน appsscript.json แล้ว ไม่ต้องขอสิทธิ์เพิ่ม)
+//   เก็บไฟล์จริงไว้ในโฟลเดอร์ Drive เดียว (สร้างอัตโนมัติครั้งแรก จำ folder id ไว้ใน Script Properties)
+//   ตั้งชื่อไฟล์ตาม productCode เสมอ — อัปโหลดใหม่ = ลบไฟล์เก่าทิ้งก่อนแล้วสร้างไฟล์ใหม่ (ไม่ใช่แก้ไฟล์เดิม
+//   เพราะ Drive file id เปลี่ยนทุกครั้งที่สร้างไฟล์ใหม่ — ได้ cache-busting ให้ฟรีในตัว ไม่ต้องแปะ ?t=)
+//   ต่างจาก Storage เดิมตรงที่ Drive ไม่มี "path คงที่" ให้คำนวณ URL จาก productCode ตรงๆ ได้ (ต้องรู้
+//   file id) จึงเก็บ URL ไว้ใน collection แยกต่างหาก "Product_Images" (1 doc/สินค้า คีย์ = productCode)
+//   ไม่ยุ่งกับ Master_Products เลย — กัน saveProduct (ซึ่ง PATCH แบบไม่มี updateMask) ไปทับ/ลบทิ้งโดยไม่ตั้งใจ
 // ==========================================
-var FIREBASE_STORAGE_BUCKET_CANDIDATES = ["syy-shop.appspot.com", "syy-shop.firebasestorage.app"];
-var STORAGE_BUCKET_PROP_KEY = "STORAGE_BUCKET_RESOLVED";
+var PRODUCT_IMAGE_FOLDER_PROP_KEY = "PRODUCT_IMAGE_DRIVE_FOLDER_ID";
+var PRODUCT_IMAGE_FOLDER_NAME     = "SYY Shop - Product Images";
+var PRODUCT_IMAGES_COLLECTION     = "Product_Images";
 
-function resolveStorageBucket_() {
-  var cached = PropertiesService.getScriptProperties().getProperty(STORAGE_BUCKET_PROP_KEY);
-  return cached || FIREBASE_STORAGE_BUCKET_CANDIDATES[0];
+function getProductImageFolder_() {
+  var props    = PropertiesService.getScriptProperties();
+  var folderId = props.getProperty(PRODUCT_IMAGE_FOLDER_PROP_KEY);
+  if (folderId) {
+    try { return DriveApp.getFolderById(folderId); } catch (e) { /* โฟลเดอร์เดิมหายไปแล้ว สร้างใหม่ด้านล่าง */ }
+  }
+  var existing = DriveApp.getFoldersByName(PRODUCT_IMAGE_FOLDER_NAME);
+  var folder   = existing.hasNext() ? existing.next() : DriveApp.createFolder(PRODUCT_IMAGE_FOLDER_NAME);
+  props.setProperty(PRODUCT_IMAGE_FOLDER_PROP_KEY, folder.getId());
+  return folder;
 }
 
-function productImageUrl_(productCode) {
-  return "https://storage.googleapis.com/" + resolveStorageBucket_() + "/product-images/" + encodeURIComponent(productCode) + ".jpg";
+function saveProductImageDoc_(productCode, imageUrl, driveFileId) {
+  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+          + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
+  UrlFetchApp.fetch(url, {
+    method             : "patch",
+    headers            : getAuthHeader(),
+    payload            : JSON.stringify({ fields: mapToFirestoreFields({ Image_Url: imageUrl, Drive_File_Id: driveFileId }) }),
+    muteHttpExceptions : true
+  });
+  clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
+}
+
+function deleteProductImageDoc_(productCode) {
+  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+          + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
+  UrlFetchApp.fetch(url, { method: "delete", headers: getAuthHeader(), muteHttpExceptions: true });
+  clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
+}
+
+// ★ อ่าน URL รูปของสินค้าทั้งหมดครั้งเดียวเป็น map {productCode: url} ให้ getAllProducts() ใช้
+//   กันไม่ให้ต้องยิงคำขอแยกทีละสินค้า (จะช้ามากถ้ามีสินค้าหลายร้อยรายการ) — collection นี้เก็บแค่
+//   URL สั้นๆ ต่อสินค้า (ไม่ใช่ตัวรูปเอง) จึงเข้าเงื่อนไข cache ปกติได้สบาย ไม่ชนขีดจำกัดขนาด cache
+function getProductImageUrlMap_() {
+  var map = {};
+  try {
+    var docs = fetchCollectionDocsCached(PRODUCT_IMAGES_COLLECTION);
+    docs.forEach(function (doc) {
+      var url = parseFirestoreValue((doc.fields || {}).Image_Url);
+      if (url) map[doc.id] = url;
+    });
+  } catch (e) {
+    console.error("getProductImageUrlMap_ error:", e);
+  }
+  return map;
+}
+
+function getProductImageUrlSingle_(productCode) {
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
+    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) {
+      var doc = JSON.parse(res.getContentText());
+      return parseFirestoreValue((doc.fields || {}).Image_Url) || "";
+    }
+  } catch (e) {
+    console.error("getProductImageUrlSingle_ error:", e);
+  }
+  return "";
 }
 
 /**
- * ★ อัปโหลดรูปสินค้า (client ย่อขนาด+แปลงเป็น JPEG เป็น base64 มาให้แล้ว)
- *   ใช้ path คงที่ product-images/{productCode}.jpg เสมอ — อัปโหลดรูปใหม่ทับรูปเก่าอัตโนมัติ
- *   จึงไม่ต้องเก็บ Image_Url/Image_Path เป็นฟิลด์ใน Firestore เลย (คำนวณจาก productCode ได้เสมอ)
- *   ข้อดี: แก้ไขสินค้าอื่น (ราคา/สต๊อก) ด้วย saveProduct (ซึ่ง PATCH แบบไม่มี updateMask) จะไม่มีทาง
- *   ไปทับ/ลบข้อมูลรูปทิ้งโดยไม่ตั้งใจ เพราะไม่มีฟิลด์รูปให้ทับตั้งแต่แรก
+ * ★ อัปโหลดรูปสินค้า (client ย่อขนาด+แปลงเป็น JPEG เป็น base64 มาให้แล้ว) — เก็บไฟล์จริงใน Google Drive
  */
 function uploadProductImage(productCode, base64Data) {
   try {
@@ -129,60 +182,21 @@ function uploadProductImage(productCode, base64Data) {
       return { success: false, message: "ไฟล์รูปใหญ่เกินไป (เกิน 5MB หลังย่อขนาดแล้ว)" };
     }
 
-    var objectPath = "product-images/" + productCode + ".jpg";
+    var fileName = productCode + ".jpg";
+    var folder   = getProductImageFolder_();
 
-    // ★ ลองอัปโหลดกับ bucket ที่เคยยืนยันแล้วก่อนเสมอ (เร็วกว่า ไม่ต้องเดาใหม่ทุกครั้ง) แต่ถ้า bucket
-    //   ที่เคยจำไว้ใช้ไม่ได้แล้ว (เช่น ครั้งก่อนจำผิด/โปรเจกต์เปลี่ยน bucket) ต้องไล่ลองตัวที่เหลือต่อทันที
-    //   ในคำขอเดียวกันเลย ไม่ใช่ยอมแพ้ทันทีแล้วค้างพังอยู่กับ bucket เดิมตลอดไป (บั๊กเดิม)
-    var cachedBucket = PropertiesService.getScriptProperties().getProperty(STORAGE_BUCKET_PROP_KEY);
-    var candidates = FIREBASE_STORAGE_BUCKET_CANDIDATES.slice();
-    if (cachedBucket) {
-      candidates = [cachedBucket].concat(candidates.filter(function (b) { return b !== cachedBucket; }));
-    }
+    // ลบไฟล์เก่าชื่อเดียวกันทิ้งก่อนเสมอ (ถ้ามี) กันไฟล์ซ้ำค้างอยู่ในโฟลเดอร์ทุกครั้งที่อัปโหลดทับ
+    var oldFiles = folder.getFilesByName(fileName);
+    while (oldFiles.hasNext()) { oldFiles.next().setTrashed(true); }
 
-    var res = null, usedBucket = null;
-    for (var i = 0; i < candidates.length; i++) {
-      var bucket = candidates[i];
-      var uploadUrl = "https://firebasestorage.googleapis.com/v0/b/" + bucket
-                     + "/o?uploadType=media&name=" + encodeURIComponent(objectPath);
-      res = UrlFetchApp.fetch(uploadUrl, {
-        method             : "post",
-        headers            : { "Authorization": "Bearer " + ScriptApp.getOAuthToken() },
-        contentType        : "image/jpeg",
-        payload            : bytes,
-        muteHttpExceptions : true
-      });
-      if (res.getResponseCode() === 200) { usedBucket = bucket; break; }
-    }
+    var blob = Utilities.newBlob(bytes, "image/jpeg", fileName);
+    var file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-    if (!usedBucket) {
-      return {
-        success: false,
-        message: "อัปโหลดไม่สำเร็จ (HTTP " + res.getResponseCode() + "): " + res.getContentText() +
-          " — สาเหตุที่พบบ่อยที่สุดคือยังไม่ได้เปิดใช้ Firebase Storage ในโปรเจกต์นี้เลย " +
-          "(เข้า Firebase Console → เมนู Storage → กด Get Started เพื่อสร้าง bucket เริ่มต้นก่อนใช้งานครั้งแรก) " +
-          "หรือบัญชีนี้ยังไม่เคยอนุญาตสิทธิ์ (Authorize) สคริปต์เวอร์ชันล่าสุดที่ deploy ใหม่"
-      };
-    }
-    if (usedBucket !== cachedBucket) {
-      PropertiesService.getScriptProperties().setProperty(STORAGE_BUCKET_PROP_KEY, usedBucket);
-    }
+    var imageUrl = "https://lh3.googleusercontent.com/d/" + file.getId();
+    saveProductImageDoc_(productCode, imageUrl, file.getId());
 
-    // ตั้ง cache สั้นๆ กันรูปเก่าค้างในเบราว์เซอร์หลังเปลี่ยนรูป — ไม่บล็อกผลลัพธ์ถ้าขั้นนี้ล้มเหลว
-    try {
-      UrlFetchApp.fetch(
-        "https://firebasestorage.googleapis.com/v0/b/" + usedBucket + "/o/" + encodeURIComponent(objectPath),
-        {
-          method             : "patch",
-          headers            : { "Authorization": "Bearer " + ScriptApp.getOAuthToken() },
-          contentType        : "application/json",
-          payload            : JSON.stringify({ cacheControl: "public, max-age=300" }),
-          muteHttpExceptions : true
-        }
-      );
-    } catch (e2) { /* ไม่กระทบผลอัปโหลดหลัก */ }
-
-    return { success: true, message: "อัปโหลดรูปสำเร็จ", imageUrl: productImageUrl_(productCode) + "?t=" + Date.now() };
+    return { success: true, message: "อัปโหลดรูปสำเร็จ", imageUrl: imageUrl };
   } catch (e) {
     return { success: false, message: e.message };
   }
@@ -192,14 +206,13 @@ function deleteProductImage(productCode) {
   try {
     productCode = String(productCode || "").trim();
     if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
-    var objectPath = "product-images/" + productCode + ".jpg";
-    var res = UrlFetchApp.fetch(
-      "https://firebasestorage.googleapis.com/v0/b/" + resolveStorageBucket_() + "/o/" + encodeURIComponent(objectPath),
-      { method: "delete", headers: { "Authorization": "Bearer " + ScriptApp.getOAuthToken() }, muteHttpExceptions: true }
-    );
-    var code = res.getResponseCode();
-    if (code === 200 || code === 204 || code === 404) return { success: true, message: "ลบรูปเรียบร้อย" };
-    return { success: false, message: "ลบไม่สำเร็จ (HTTP " + code + "): " + res.getContentText() };
+
+    var folder = getProductImageFolder_();
+    var files  = folder.getFilesByName(productCode + ".jpg");
+    while (files.hasNext()) { files.next().setTrashed(true); }
+
+    deleteProductImageDoc_(productCode);
+    return { success: true, message: "ลบรูปเรียบร้อย" };
   } catch (e) {
     return { success: false, message: e.message };
   }
@@ -209,7 +222,7 @@ function deleteProductImage(productCode) {
 // 2b. ★ Cache Layer — ลด Firestore Reads (Firebase Spark Plan / Free Quota)
 // ==========================================
 var CACHE_TTL_SECONDS     = 21600;
-var CACHEABLE_COLLECTIONS = ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars"];
+var CACHEABLE_COLLECTIONS = ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars", "Product_Images"];
 
 function fetchAllPagesRaw(collectionName) {
   var docs = [];
@@ -621,6 +634,7 @@ function getAllProducts() {
     var vendorMap = buildMapFromDocs(masters["Master_Vendors"],    "Vendor_name");
     var zoneMap   = buildZoneMapFromDocs(masters["Master_Zones"]);
     var carMap    = buildCarMapFromDocs(masters["Master_Cars"]);
+    var imageMap  = getProductImageUrlMap_();
 
     var fetched = fetchAllPagesRaw("Master_Products");
     if (!fetched.ok) {
@@ -653,7 +667,7 @@ function getAllProducts() {
           partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
           barcode      : String(parseFirestoreValue(f.Barcode) || ""),
           barcodeGenerated : parseFirestoreValue(f.Barcode_Generated) === "true",
-          imageUrl     : productImageUrl_(id),
+          imageUrl     : imageMap[id] || "",
           brandId      : brandId,
           brandName    : brandMap[brandId]   || brandId,
           categoryId   : catId,
@@ -724,7 +738,7 @@ function getProductById(productCode) {
         partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
         barcode      : String(parseFirestoreValue(f.Barcode) || ""),
         barcodeGenerated : parseFirestoreValue(f.Barcode_Generated) === "true",
-        imageUrl     : productImageUrl_(productCode),
+        imageUrl     : getProductImageUrlSingle_(productCode),
         brandId      : brandId,
         brandName    : brandMap[brandId]   || brandId,
         categoryId   : catId,
