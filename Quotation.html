@@ -817,6 +817,13 @@ function buildQuotePage(ctx, pageItems, pageNo, totalPages, isLastPage) {
 
   if (!pageItems.length && pageNo === 1) {
     rowsHtml = '<tr><td colspan="5" class="text-center" style="color:var(--faint);padding:20px">ยังไม่มีรายการสินค้า</td></tr>';
+    // ยังต้องเติมแถวว่างต่อด้วย (เหลืออีก QT_ROWS_PER_PAGE-1 แถว) ไม่งั้นบล็อกยอดรวม/ลายเซ็น
+    // จะลอยขึ้นมาติดตารางทันทีตอนยังไม่มีรายการ แทนที่จะอยู่ตำแหน่งเดิมเสมอเหมือนตอนมีรายการ
+    if (isLastPage) {
+      for (var i = 1; i < QT_ROWS_PER_PAGE; i++) {
+        rowsHtml += '<tr><td style="color:var(--faint)">&nbsp;</td><td></td><td></td><td></td><td></td></tr>';
+      }
+    }
   } else if (isLastPage) {
     // เติมแถวว่างเต็มหน้าสุดท้าย ให้ยอดรวม/ลายเซ็นอยู่ตำแหน่งเดิมเสมอไม่ว่าจะมีกี่รายการ
     for (var i = pageItems.length; i < QT_ROWS_PER_PAGE; i++) {

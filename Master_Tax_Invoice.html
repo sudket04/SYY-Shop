@@ -649,7 +649,7 @@ function switchTab(which) {
 
 /* ═══ โหลดข้อมูล ═══ */
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
-function loadAll(yearParam) {
+function loadAll(yearParam, onDone) {
   var tbody = document.getElementById('taxBody');
   tbody.innerHTML = skeletonRows(9,5);
   document.getElementById('recordCount').innerText = 'กำลังโหลด';
@@ -676,6 +676,8 @@ function loadAll(yearParam) {
 
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดข้อมูลเสร็จแล้ว พร้อมรับรายการจากหน้าตัดสต๊อกมาเติมใบกำกับภาษี
       try { window.parent.postMessage({ action: 'TAXINVOICE_READY' }, '*'); } catch (e) {}
+
+      if (typeof onDone === 'function') onDone();
     }, function(err) {
       tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
@@ -1183,8 +1185,15 @@ function handleSubmit() {
         var noteYearShift = (currentPageYear !== 'all' && savedYearBE !== currentPageYear)
           ? ' (หมายเหตุ: ใบนี้อยู่ปี พ.ศ. ' + savedYearBE + ' จะไม่แสดงในมุมมองปี พ.ศ. ' + currentPageYear + ' ปัจจุบัน)' : '';
         alertEl.innerText = '✅ ' + res.message + (res.id ? ' (' + res.id + ')' : '') + noteYearShift;
-        loadAll(currentPageYear === 'all' ? 'all' : currentPageYear);
-        setTimeout(function() { closeInvoiceModal(); }, 1400);
+        var savedId = res.id || editingDocId;
+        setTimeout(function() {
+          closeInvoiceModal();
+          // ★ โหลดข้อมูลใหม่ให้เสร็จก่อน แล้วค่อยเปิดหน้าตัวอย่างพิมพ์ทันที (เหมือนกดปุ่ม "ดูรายงาน/สั่งพิมพ์ย้อนหลัง")
+          //   ต้องรอ loadAll เสร็จก่อนเพราะ openViewModal อ่านจาก invoicesCache ที่เพิ่งโหลดใหม่
+          loadAll(currentPageYear === 'all' ? 'all' : currentPageYear, function() {
+            if (savedId) openViewModal(savedId);
+          });
+        }, 1400);
       } else {
         alertEl.className = 'modal-alert error';
         alertEl.innerText = '❌ ' + res.message;
