@@ -150,6 +150,10 @@ tbody tr:hover td.col-sticky-right{background:#f8fbfe}
 .modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;justify-content:center;align-items:flex-start;
   overflow-y:auto;padding:40px 16px;z-index:2000;backdrop-filter:blur(2px)}
 .modal-overlay.active{display:flex}
+/* ★ SweetAlert2 (swyError/swyWarning/swySuccess/swyConfirm) เดิม z-index ต่ำกว่า .modal-overlay (2000)
+   ทำให้ป๊อปอัปแจ้งเตือนที่ยิงขึ้นมาระหว่างเปิด modal อยู่ (เช่น อัปโหลดรูปไม่สำเร็จตอนฟอร์มแก้ไขสินค้าเปิดอยู่)
+   ไปโผล่ "อยู่หลัง" modal มองไม่เห็น/กดไม่ได้ — ดันให้สูงกว่า modal เสมอ */
+.swal2-container{z-index:4000!important}
 .modal-box{background:#fff;width:560px;max-width:96%;border-radius:16px;box-shadow:var(--shadow-lg);overflow:hidden;
   display:flex;flex-direction:column;animation:mIn .2s ease-out}
 @keyframes mIn{from{transform:translateY(-14px);opacity:0}to{transform:translateY(0);opacity:1}}

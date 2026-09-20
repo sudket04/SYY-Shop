@@ -131,9 +131,14 @@ function uploadProductImage(productCode, base64Data) {
 
     var objectPath = "product-images/" + productCode + ".jpg";
 
-    // ★ ลองอัปโหลดกับ bucket ที่เคยยืนยันแล้ว (ถ้ามี) ก่อน ไม่งั้นลองทีละแบบจนกว่าจะสำเร็จ
+    // ★ ลองอัปโหลดกับ bucket ที่เคยยืนยันแล้วก่อนเสมอ (เร็วกว่า ไม่ต้องเดาใหม่ทุกครั้ง) แต่ถ้า bucket
+    //   ที่เคยจำไว้ใช้ไม่ได้แล้ว (เช่น ครั้งก่อนจำผิด/โปรเจกต์เปลี่ยน bucket) ต้องไล่ลองตัวที่เหลือต่อทันที
+    //   ในคำขอเดียวกันเลย ไม่ใช่ยอมแพ้ทันทีแล้วค้างพังอยู่กับ bucket เดิมตลอดไป (บั๊กเดิม)
     var cachedBucket = PropertiesService.getScriptProperties().getProperty(STORAGE_BUCKET_PROP_KEY);
-    var candidates = cachedBucket ? [cachedBucket] : FIREBASE_STORAGE_BUCKET_CANDIDATES;
+    var candidates = FIREBASE_STORAGE_BUCKET_CANDIDATES.slice();
+    if (cachedBucket) {
+      candidates = [cachedBucket].concat(candidates.filter(function (b) { return b !== cachedBucket; }));
+    }
 
     var res = null, usedBucket = null;
     for (var i = 0; i < candidates.length; i++) {
@@ -154,7 +159,9 @@ function uploadProductImage(productCode, base64Data) {
       return {
         success: false,
         message: "อัปโหลดไม่สำเร็จ (HTTP " + res.getResponseCode() + "): " + res.getContentText() +
-          " — ตรวจสอบว่าเปิดใช้ Firebase Storage แล้ว และบัญชีนี้เคยอนุญาตสิทธิ์ (Authorize) สคริปต์ตัวล่าสุดแล้ว"
+          " — สาเหตุที่พบบ่อยที่สุดคือยังไม่ได้เปิดใช้ Firebase Storage ในโปรเจกต์นี้เลย " +
+          "(เข้า Firebase Console → เมนู Storage → กด Get Started เพื่อสร้าง bucket เริ่มต้นก่อนใช้งานครั้งแรก) " +
+          "หรือบัญชีนี้ยังไม่เคยอนุญาตสิทธิ์ (Authorize) สคริปต์เวอร์ชันล่าสุดที่ deploy ใหม่"
       };
     }
     if (usedBucket !== cachedBucket) {
