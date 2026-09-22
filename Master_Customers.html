@@ -504,7 +504,8 @@
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+' “'+customerName+'” เรียบร้อย');
         loadTable();
-        notifyParentRefresh();
+        // ★ ลูกค้าไม่ใช่ dropdown ของฟอร์มไหนใน index.html และไม่กระทบสต๊อก — ไม่ต้องแจ้ง parent เลย
+        //   (เดิมเรียก notifyParentRefresh() ซึ่งทำให้ index.html รีโหลด dashboard เต็มโดยไม่จำเป็น)
       } else {
         alertEl.className='modal-alert error';
         alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');
@@ -539,7 +540,7 @@
       if(res && res.success){
         toast('ลบ'+ENTITY+'เรียบร้อย');
         loadTable();
-        notifyParentRefresh();
+        // ★ ลูกค้าไม่ใช่ dropdown ของฟอร์มไหนใน index.html และไม่กระทบสต๊อก — ไม่ต้องแจ้ง parent เลย
       } else {
         swyError('ลบไม่สำเร็จ',(res&&res.message)||'');
       }

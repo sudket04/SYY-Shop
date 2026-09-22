@@ -104,9 +104,24 @@ function toggleDensity(){
   toast(d==='compact'?'แสดงแบบแน่น':'แสดงแบบสบายตา');
 }
 
-/* ── แจ้ง index ให้รีเฟรชตารางหลัก ── */
-function notifyParentRefresh(){
-  try{ window.parent.postMessage({action:'REFRESH_MAIN_TABLE'},'*'); }catch(e){}
+/* ── แจ้ง index (parent shell) ว่าข้อมูลเปลี่ยน — แยกตามผลกระทบจริง กันยิง Firestore reads เกินจำเป็น
+   ★ FIX (โควตา Firestore Reads): เดิมมี notifyParentRefresh() ตัวเดียวใช้ร่วมกันทุกหน้า แล้ว index.html
+   ตีความเป็น "รีโหลด dashboard เต็ม" (อ่าน Stock_Movements ทั้งหมด + Master_Products + Purchase_Orders)
+   ทุกครั้ง — ทำให้บันทึก/ลบ 1 รายการในหน้า master data ที่ไม่เกี่ยวกับสต๊อกเลย (โซน/หมวดหมู่/แบรนด์/
+   ผู้จำหน่าย/รุ่นรถ/ลูกค้า) ไปลากอ่านประวัติสต๊อกทั้งร้านซ้ำเบื้องหลังโดยไม่จำเป็น แยกเป็น 3 ระดับ:
+     1) REFRESH_DROPDOWNS — ข้อมูลที่เป็น dropdown ของฟอร์มอื่น (brand/category/vendor/zone/car) เปลี่ยน
+        → index.html แค่ loadMasters() (ใช้ cache เดิม เบามาก)
+     2) REFRESH_PRODUCTS  — สินค้าเปลี่ยน (เพิ่ม/แก้/ลบ) → อ่านแค่ Master_Products ใหม่ ไม่แตะ
+        Stock_Movements/Purchase_Orders เพราะบันทึกสินค้าไม่ได้สร้างรายการเคลื่อนไหวสต๊อก
+     3) REFRESH_STOCK_FULL — สต๊อกเคลื่อนไหวจริง (ตัดสต๊อก) → ต้องรีโหลด dashboard เต็มเท่านั้น */
+function notifyParentRefreshDropdowns(){
+  try{ window.parent.postMessage({action:'REFRESH_DROPDOWNS'},'*'); }catch(e){}
+}
+function notifyParentRefreshProducts(){
+  try{ window.parent.postMessage({action:'REFRESH_PRODUCTS'},'*'); }catch(e){}
+}
+function notifyParentRefreshStockFull(){
+  try{ window.parent.postMessage({action:'REFRESH_STOCK_FULL'},'*'); }catch(e){}
 }
 
 /* ── SweetAlert2 helper (เหลือใช้เฉพาะยืนยัน / error) ── */

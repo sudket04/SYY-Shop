@@ -499,7 +499,7 @@
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+' “'+vendorName+'” เรียบร้อย');
         loadTable();
-        notifyParentRefresh();
+        notifyParentRefreshDropdowns();
       } else {
         alertEl.className='modal-alert error';
         alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');
@@ -535,7 +535,7 @@
       if(res && res.success){
         toast('ลบ'+ENTITY+'เรียบร้อย');
         loadTable();
-        notifyParentRefresh();
+        notifyParentRefreshDropdowns();
       } else {
         swyError('ลบไม่สำเร็จ',(res&&res.message)||'');
       }

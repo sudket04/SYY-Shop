@@ -862,7 +862,7 @@
           alertEl.className = 'modal-alert success';
           alertEl.innerText = '✅ ' + res.message + ' (ID: ' + res.id + ')';
           loadTable();
-          notifyParentRefresh();
+          notifyParentRefreshProducts();
           if (wasNew && res.id) {
             // ★ เพิ่งสร้างสินค้าใหม่ (เพิ่งมีรหัสสินค้า) — เปิดโอกาสอัปโหลดรูปต่อได้เลยโดยไม่ต้องปิดแล้วเปิดแก้ไขใหม่
             editingDocId = res.id;
@@ -1241,7 +1241,7 @@
         if (res && res.success) {
           toast('ลบสินค้าเรียบร้อย');
           loadTable();
-          notifyParentRefresh();
+          notifyParentRefreshProducts();
         } else {
           swyError('ไม่สามารถลบข้อมูลได้', (res ? res.message : 'เกิดข้อผิดพลาด'));
         }

@@ -503,7 +503,9 @@
   }
   window.addEventListener('message', function(e){
     var d = e.data || {};
-    if(d.action==='REFRESH_MAIN_TABLE'){ loadMasters(); dashLoad(); }
+    if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
+    else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }
+    else if(d.action==='REFRESH_STOCK_FULL'){ dashLoad(); }
     else if(d.action==='OPEN_STOCK_ISSUE'){
       switchPage('stockissue');
       var payload = { items:d.items, refNo:d.refNo, note:d.note, quoteId:d.quoteId };
@@ -686,6 +688,18 @@
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'dashLoad()'}]
       });
     });
+  }
+
+  // ★ FIX (โควตา Firestore Reads): ใช้ตอนสินค้าเปลี่ยน (เพิ่ม/แก้/ลบ) แทนการเรียก dashLoad() เต็ม —
+  //   บันทึกสินค้าไม่ได้สร้างรายการ Stock_Movements และไม่กระทบ Purchase_Orders เลย จึงอ่านแค่
+  //   Master_Products ใหม่พอ แล้วคำนวณ badge/กราฟซ้ำจาก movements ที่มีอยู่แล้วในเครื่อง (ไม่อ่านซ้ำ)
+  function refreshDashboardProductsOnly(){
+    callApi('getAllProducts', [], function(products){
+      DASH.products = products||[];
+      allProducts = DASH.products;
+      if(DASH.loaded){ dashBuildAggregates(); dashRenderAll(); }
+      dashUpdateSidebarBadges();
+    }, function(err){ console.error('refreshDashboardProductsOnly error:', JSON.stringify(err)); });
   }
 
   function dashUpdateSidebarBadges(){
@@ -1480,7 +1494,7 @@
         if(res && res.success){
           closeModal('editModal');
           toast('บันทึกสินค้าเรียบร้อย');
-          dashLoad();
+          refreshDashboardProductsOnly();
         } else {
           alertEl.className='modal-alert error';
           alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');

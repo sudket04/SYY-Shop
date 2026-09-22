@@ -786,7 +786,7 @@
           renderBasket();
           loadProducts();
           movements = [];
-          try { window.parent.postMessage({ action: 'REFRESH_MAIN_TABLE' }, '*'); } catch (e) {}
+          try { window.parent.postMessage({ action: 'REFRESH_STOCK_FULL' }, '*'); } catch (e) {}
           focusScanInput(); // ★ พร้อมยิงบิลถัดไปได้ทันที
         } else {
           swyError('ตัดสต๊อกไม่สำเร็จ', esc((res && res.message) || 'ไม่ทราบสาเหตุ'));
