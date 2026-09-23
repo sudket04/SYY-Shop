@@ -1182,6 +1182,28 @@ function saveCustomer(d) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณากรอกชื่อลูกค้า" };
   }
 
+  var docId = d.docId || null;
+
+  // ★ FIX: เดิมเช็คซ้ำแค่ชื่อลูกค้า (ผ่าน checkDuplicateName ใน saveMasterData) ไม่เคยเช็คเลขประจำตัว
+  //   ผู้เสียภาษีเลย — ทำให้ลูกค้าคนละชื่อ (เช่น พิมพ์ชื่อผิด/สาขาเดียวกันแต่คนละบันทึก) ใส่เลขผู้เสียภาษี
+  //   เดียวกันซ้ำได้ ซึ่งเป็นปัญหาตอนออกใบกำกับภาษี — สแกนหาเลขซ้ำก่อนบันทึกเหมือนที่ทำกับ
+  //   Part_Number/Barcode ของสินค้า (ยกเว้นเอกสารเดิมของลูกค้าที่กำลังแก้ไขอยู่)
+  if (taxId) {
+    var fetchedCust = fetchAllPagesRaw("Master_Customers");
+    if (fetchedCust.ok) {
+      var dupTaxId = fetchedCust.docs.some(function(doc) {
+        if (doc.id === docId) return false;
+        var existingTax = String(parseFirestoreValue((doc.fields || {}).Tax_ID) || "").replace(/\D/g, '');
+        return existingTax && existingTax === taxId;
+      });
+      if (dupTaxId) {
+        return { success: false, title: "ข้อมูลซ้ำ!", message: 'เลขประจำตัวผู้เสียภาษีอากร "' + taxId + '" มีอยู่ในระบบแล้ว' };
+      }
+    } else {
+      console.error("saveCustomer: ดึงข้อมูลลูกค้าไม่สำเร็จ ข้ามการตรวจสอบเลขผู้เสียภาษีซ้ำ");
+    }
+  }
+
   // ★ หน้าใบกำกับภาษี (เพิ่มลูกค้าด่วน) ไม่มีช่องให้เลือกประเภทลูกค้าตั้งใจ — ลูกค้าที่มาจากทางนั้น
   //   จึงไม่ส่ง customerType มาเลย ในกรณีนี้ให้ตั้งค่าเริ่มต้นเป็น "ลูกค้าทั่วไป" แทนการปฏิเสธ
   //   ส่วนหน้าจัดการลูกค้า (Master_Customers) ยังคงบังคับเลือกที่ฝั่ง client เหมือนเดิม จึงไม่กระทบ
@@ -1208,7 +1230,7 @@ function saveCustomer(d) {
     Phone         : String(d.phone   || ""),
     Status        : String(d.status  || "Active")
   };
-  return saveMasterData("Master_Customers", "C", d.docId || null, dataObject, d.customerName);
+  return saveMasterData("Master_Customers", "C", docId, dataObject, d.customerName);
 }
 
 function getCustomersFull() {
