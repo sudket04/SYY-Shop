@@ -222,7 +222,41 @@ function deleteProductImage(productCode) {
 // 2b. ★ Cache Layer — ลด Firestore Reads (Firebase Spark Plan / Free Quota)
 // ==========================================
 var CACHE_TTL_SECONDS     = 21600;
-var CACHEABLE_COLLECTIONS = ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars", "Product_Images"];
+// ★ FIX (โควตา Firestore Reads): เพิ่ม Master_Users เข้า cache — เดิม findUserByUsername_/
+//   findUserByEmail_/getAllUsers ดึงทั้ง collection สดทุกครั้ง (ทุก login attempt 1 ครั้ง = 1 อ่าน
+//   ทั้งตาราง user) ไม่มี cache เลย ทั้งที่บัญชีผู้ใช้เปลี่ยนไม่บ่อย และ clearCollectionCache(Master_Users)
+//   ถูกเรียกอยู่แล้วทุกจุดที่แก้ไขบัญชี (ดู updateUserFields_/saveMasterData) จึง cache ได้อย่างปลอดภัย
+var CACHEABLE_COLLECTIONS = ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars", "Product_Images", "Master_Users"];
+
+// ★ FIX (โควตา Firestore Reads): ใช้แทนการสแกนทั้ง collection เพื่อหาค่าที่ตรงกัน 1 ฟิลด์ (เช่น
+//   เช็คเลข Part_Number/Barcode/Tax_ID ซ้ำก่อนบันทึก) — เทียบค่าตรงตัว (case-sensitive) ไม่ต้องสร้าง
+//   Composite Index เพิ่ม (equality filter เดี่ยว ไม่รวม orderBy จึงใช้ single-field index อัตโนมัติได้)
+function queryByEqualityField_(collectionName, fieldPath, value) {
+  var docs = [];
+  try {
+    var query = {
+      structuredQuery: {
+        from  : [{ collectionId: collectionName }],
+        where : { fieldFilter: { field: { fieldPath: fieldPath }, op: "EQUAL", value: { stringValue: String(value) } } },
+        limit : 10
+      }
+    };
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+    var res = UrlFetchApp.fetch(url, {
+      method: "post", headers: getAuthHeader(), payload: JSON.stringify(query), muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
+        if (row.document) docs.push({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} });
+      });
+    } else {
+      console.error("queryByEqualityField_ " + collectionName + "." + fieldPath + " HTTP " + res.getResponseCode() + ": " + res.getContentText());
+    }
+  } catch (e) {
+    console.error("queryByEqualityField_ error:", e);
+  }
+  return docs;
+}
 
 function fetchAllPagesRaw(collectionName) {
   var docs = [];
@@ -373,6 +407,71 @@ function reserveDocNo_(docType, docNoValue) {
     muteHttpExceptions: true
   });
   return res.getResponseCode() === 200;
+}
+
+// ★ FIX (โควตา Firestore Reads): ก่อนหน้านี้ "เลขถัดไปของเดือนนี้" (getNextInvoiceRunningNumber/
+//   getNextQuoteRunningNumber) คำนวณด้วยการสแกนทั้ง collection Master_Tax_Invoice/Quotation ทุกครั้ง
+//   ที่บันทึก 1 ใบ — และถูกเรียกซ้ำในลูป retry สูงสุด 10 รอบ (เผื่อเลขชน) ทำให้ 1 ใบอาจอ่านทั้งประวัติ
+//   ซ้ำได้ถึง 10 รอบ สองตารางนี้โตไม่จำกัดตลอดอายุร้านและถูกเขียนบ่อยที่สุดในระบบ จึงเป็นตัวกินโควตา
+//   Reads มากที่สุด — เปลี่ยนมาใช้ "ตัวนับ" แบบเอกสารเดียวต่อเดือน (Doc_Running_Numbers) แทน:
+//     - เดือนที่มีตัวนับอยู่แล้ว (ใช้งานปกติ 29-30 วันจาก 30 วัน): อ่าน 1 ครั้ง + เขียน 1 ครั้งต่อใบ
+//       แทนการสแกนทั้ง collection
+//     - เดือนแรกที่ยังไม่เคยมีตัวนับ (เอกสารแรกของเดือน หรือเดือนแรกที่เริ่มใช้ระบบนี้): สแกนครั้งเดียว
+//       ผ่าน seedFn (คือฟังก์ชัน getNextInvoiceRunningNumber/getNextQuoteRunningNumber เดิม ยังเก็บไว้
+//       ไม่ลบ) เพื่อตั้งต้นตัวนับให้ตรงกับเลขสูงสุดที่เคยออกไปแล้วจริง กันเลขชนกับของเก่า — หลังจากนั้น
+//       เดือนเดียวกันจะไม่สแกนซ้ำอีกเลย
+//   reserveDocNo_ ยังคงเป็นตัวกันชนสุดท้ายเหมือนเดิม (defense-in-depth) เผื่อกรณีนอกเหนือคาดคิด
+var RUNNING_NUMBER_COLLECTION = "Doc_Running_Numbers";
+function nextRunningNumber_(docType, periodKey, seedFn) {
+  var docId  = docType + "_" + periodKey;
+  var getUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+             + "/databases/(default)/documents/" + RUNNING_NUMBER_COLLECTION + "/" + docId;
+
+  for (var attempt = 0; attempt < 5; attempt++) {
+    var getRes = UrlFetchApp.fetch(getUrl, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+
+    if (getRes.getResponseCode() === 200) {
+      // ตัวนับของเดือนนี้มีอยู่แล้ว — increment แบบผูก precondition กับ updateTime ที่เพิ่งอ่านมา
+      // กันสองคำขอพร้อมกันอ่านค่าเดิมแล้วเขียนทับกัน (ใครมาทีหลัง precondition จะไม่ตรง ต้องวนใหม่)
+      var doc     = JSON.parse(getRes.getContentText());
+      var current = parseInt(parseFirestoreValue((doc.fields || {}).Value) || 0, 10);
+      var next    = current + 1;
+      var commit  = fsCommit_([{
+        update: {
+          name  : fsDocPath_(RUNNING_NUMBER_COLLECTION, docId),
+          fields: { Value: { integerValue: String(next) } }
+        },
+        updateMask      : { fieldPaths: ["Value"] },
+        currentDocument  : { updateTime: doc.updateTime }
+      }]);
+      if (commit.ok) return next;
+      if (!isPreconditionFailure_(commit.message)) {
+        console.error("nextRunningNumber_ commit error:", commit.message);
+        return next; // เขียนไม่สำเร็จด้วยเหตุผลอื่น (ไม่ใช่ชนกัน) — คืนเลขที่คำนวณได้ไปก่อน เดี๋ยว reserveDocNo_ เป็นตัวกันชนสุดท้ายอยู่ดี
+      }
+      continue; // ชนกับคนอื่นที่ increment พร้อมกันพอดี — วนอ่าน-เขียนใหม่
+    }
+
+    if (getRes.getResponseCode() === 404) {
+      // ยังไม่เคยมีตัวนับของเดือนนี้ — ตั้งต้นด้วยเลขสูงสุดที่เคยออกไปแล้วจริง (สแกนครั้งเดียว)
+      var seeded    = (seedFn ? seedFn() : 0) || 1;
+      var createRes = UrlFetchApp.fetch(
+        "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+          + "/databases/(default)/documents/" + RUNNING_NUMBER_COLLECTION
+          + "?documentId=" + encodeURIComponent(docId),
+        {
+          method: "post", headers: getAuthHeader(), muteHttpExceptions: true,
+          payload: JSON.stringify({ fields: { Value: { integerValue: String(seeded) } } })
+        }
+      );
+      if (createRes.getResponseCode() === 200) return seeded;
+      continue; // สร้างไม่สำเร็จ (409 = มีคนสร้างตัวนับของเดือนนี้ไปพร้อมกันพอดี) — วนไปอ่าน/increment ใหม่จากบนสุด
+    }
+
+    console.error("nextRunningNumber_ GET HTTP " + getRes.getResponseCode() + ": " + getRes.getContentText());
+    return null; // ให้ caller fallback ไปใช้วิธีสแกนแบบเดิม
+  }
+  return null;
 }
 
 function getNextAutoId(collectionName, prefix, forceFresh) {
@@ -872,38 +971,27 @@ function saveProduct(d) {
 
   var docId = d.productCode || d.docId || null;
 
-  // ★ FIX (ประสิทธิภาพ): เดิมสแกน Master_Products ทั้ง collection แยก 2 รอบ (checkPartNumberDuplicate
-  //   + checkBarcodeDuplicate) แล้วยังอ่านเอกสารเดิมแยกอีกครั้งด้วย getProductRawFields_ รวมเป็น
-  //   การอ่านข้อมูลสินค้าทั้งร้าน 2 รอบ + อ่านเอกสารเดี่ยวอีก 1 ครั้ง ต่อการบันทึกสินค้า 1 ครั้ง —
-  //   ตอนนี้ยังไม่กระทบเพราะมีสินค้าไม่มาก แต่ยิ่งสินค้าเยอะยิ่งช้าและเสี่ยงชน execution limit
-  //   สแกนครั้งเดียวพอ เอาไปเช็คทั้ง Part_Number/Barcode ซ้ำ และหาเอกสารเดิมของสินค้านี้พร้อมกันเลย
-  //   (checkPartNumberDuplicate/checkBarcodeDuplicate/getProductRawFields_ ยังเก็บไว้เหมือนเดิม
-  //   เพราะ generateProductBarcode() ยังใช้อยู่ — แก้เฉพาะจุดที่ saveProduct เรียกเอง)
-  var existingFields = null;
-  if (dataObject.Part_Number || dataObject.Barcode || docId) {
-    var fetched = fetchAllPagesRaw("Master_Products");
-    if (!fetched.ok) {
-      console.error("saveProduct: ดึงข้อมูลสินค้าไม่สำเร็จ ข้ามการตรวจสอบข้อมูลซ้ำ");
-    } else {
-      var pnVal = dataObject.Part_Number.toLowerCase();
-      var bcVal = dataObject.Barcode.toLowerCase();
-      for (var i = 0; i < fetched.docs.length; i++) {
-        var doc = fetched.docs[i];
-        if (doc.id === docId) { existingFields = doc.fields || {}; continue; }
-        var f = doc.fields || {};
-        if (pnVal) {
-          var existingPn = String(parseFirestoreValue(f.Part_Number) || "").trim().toLowerCase();
-          if (existingPn && existingPn === pnVal) {
-            return { success: false, title: "ข้อมูลซ้ำ!", message: 'รหัสจากผู้ผลิต (Part Number) "' + dataObject.Part_Number + '" มีอยู่ในระบบแล้ว' };
-          }
-        }
-        if (bcVal) {
-          var existingBc = String(parseFirestoreValue(f.Barcode) || "").trim().toLowerCase();
-          if (existingBc && existingBc === bcVal) {
-            return { success: false, title: "ข้อมูลซ้ำ!", message: 'บาร์โค้ด "' + dataObject.Barcode + '" มีอยู่ในระบบแล้ว' };
-          }
-        }
-      }
+  // ★ FIX (โควตา Firestore Reads): เดิมสแกน Master_Products ทั้ง collection ทุกครั้งที่บันทึกสินค้า
+  //   1 ครั้ง (เพื่อเช็ค Part_Number/Barcode ซ้ำ + หาเอกสารเดิมของตัวเอง) — เปลี่ยนเป็น targeted query
+  //   (.where เทียบค่าตรงตัว) แยกฟิลด์ + อ่านเอกสารเดิมด้วย ID ตรงๆ ผ่าน getProductRawFields_ ที่มีอยู่
+  //   แล้ว แทนการสแกนหา ลด reads จากทั้งร้านเหลือแค่ไม่กี่ document ต่อการบันทึก 1 ครั้ง
+  //   หมายเหตุ: query เทียบค่าตรงตัว (case-sensitive) ต่างจาก scan เดิมที่ไม่สนตัวพิมพ์เล็ก/ใหญ่ —
+  //   Barcode เป็นตัวเลขล้วนไม่กระทบ ส่วน Part_Number ถ้าพิมพ์ตัวพิมพ์ต่างกันอาจไม่ถูกจับว่าซ้ำ (data
+  //   quality guard เท่านั้น ไม่ใช่ข้อจำกัดด้านความปลอดภัย)
+  var existingFields = docId ? getProductRawFields_(docId) : null;
+
+  if (dataObject.Part_Number) {
+    var dupPn = queryByEqualityField_("Master_Products", "Part_Number", dataObject.Part_Number)
+      .some(function(doc) { return doc.id !== docId; });
+    if (dupPn) {
+      return { success: false, title: "ข้อมูลซ้ำ!", message: 'รหัสจากผู้ผลิต (Part Number) "' + dataObject.Part_Number + '" มีอยู่ในระบบแล้ว' };
+    }
+  }
+  if (dataObject.Barcode) {
+    var dupBc = queryByEqualityField_("Master_Products", "Barcode", dataObject.Barcode)
+      .some(function(doc) { return doc.id !== docId; });
+    if (dupBc) {
+      return { success: false, title: "ข้อมูลซ้ำ!", message: 'บาร์โค้ด "' + dataObject.Barcode + '" มีอยู่ในระบบแล้ว' };
     }
   }
 
@@ -1186,21 +1274,14 @@ function saveCustomer(d) {
 
   // ★ FIX: เดิมเช็คซ้ำแค่ชื่อลูกค้า (ผ่าน checkDuplicateName ใน saveMasterData) ไม่เคยเช็คเลขประจำตัว
   //   ผู้เสียภาษีเลย — ทำให้ลูกค้าคนละชื่อ (เช่น พิมพ์ชื่อผิด/สาขาเดียวกันแต่คนละบันทึก) ใส่เลขผู้เสียภาษี
-  //   เดียวกันซ้ำได้ ซึ่งเป็นปัญหาตอนออกใบกำกับภาษี — สแกนหาเลขซ้ำก่อนบันทึกเหมือนที่ทำกับ
-  //   Part_Number/Barcode ของสินค้า (ยกเว้นเอกสารเดิมของลูกค้าที่กำลังแก้ไขอยู่)
+  //   เดียวกันซ้ำได้ ซึ่งเป็นปัญหาตอนออกใบกำกับภาษี — เดิมสแกนทั้ง collection มาเช็ค เปลี่ยนเป็น
+  //   targeted query (.where เทียบค่าตรงตัว) แทน — Tax_ID เป็นตัวเลขล้วนอยู่แล้ว (ตัดอักขระอื่นออกหมด
+  //   ด้านบน) จึงเทียบตรงตัวได้ไม่มีปัญหาตัวพิมพ์เล็ก/ใหญ่เหมือน Part_Number ของสินค้า
   if (taxId) {
-    var fetchedCust = fetchAllPagesRaw("Master_Customers");
-    if (fetchedCust.ok) {
-      var dupTaxId = fetchedCust.docs.some(function(doc) {
-        if (doc.id === docId) return false;
-        var existingTax = String(parseFirestoreValue((doc.fields || {}).Tax_ID) || "").replace(/\D/g, '');
-        return existingTax && existingTax === taxId;
-      });
-      if (dupTaxId) {
-        return { success: false, title: "ข้อมูลซ้ำ!", message: 'เลขประจำตัวผู้เสียภาษีอากร "' + taxId + '" มีอยู่ในระบบแล้ว' };
-      }
-    } else {
-      console.error("saveCustomer: ดึงข้อมูลลูกค้าไม่สำเร็จ ข้ามการตรวจสอบเลขผู้เสียภาษีซ้ำ");
+    var dupTaxId = queryByEqualityField_("Master_Customers", "Tax_ID", taxId)
+      .some(function(doc) { return doc.id !== docId; });
+    if (dupTaxId) {
+      return { success: false, title: "ข้อมูลซ้ำ!", message: 'เลขประจำตัวผู้เสียภาษีอากร "' + taxId + '" มีอยู่ในระบบแล้ว' };
     }
   }
 
@@ -1302,6 +1383,15 @@ function buildInvoiceNoForMonth(invoiceDateStr, runningNumber) {
   return TAX_INVOICE_PREFIX + " " + String(runningNumber).padStart(4, '0') + "/" + mm + "/" + yyBuddhist;
 }
 
+// ★ ใช้เป็น key ของตัวนับเลขที่เอกสารราย "เดือน" (ดู nextRunningNumber_) — mm-yy พ.ศ. เช่น "09-69"
+function docPeriodKey_(dateStr) {
+  var d = dateStr ? new Date(dateStr + "T00:00:00") : new Date();
+  if (isNaN(d.getTime())) d = new Date();
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var yyBuddhist = String(d.getFullYear() + 543).slice(-2);
+  return mm + "-" + yyBuddhist;
+}
+
 function getNextInvoiceRunningNumber(invoiceDateStr, excludeDocId) {
   var targetSuffix = buildInvoiceNoForMonth(invoiceDateStr, 1).split('/').slice(1).join('/');
   var fetched = fetchAllPagesRaw("Master_Tax_Invoice");
@@ -1390,9 +1480,19 @@ function saveTaxInvoice(d) {
     return editRes;
   }
 
+  var periodKey = docPeriodKey_(invoiceDate);
   var lastErr = "";
   for (var attempt = 0; attempt < 10; attempt++) {
-    var runningNum  = getNextInvoiceRunningNumber(invoiceDate, d.docId || null) + attempt;
+    // ★ FIX (โควตา Firestore Reads): ใช้ตัวนับแทนการสแกน Master_Tax_Invoice ทั้ง collection ทุกครั้ง
+    //   (ดูคำอธิบายเต็มที่ nextRunningNumber_) — seedFn (getNextInvoiceRunningNumber เดิม) จะถูกเรียก
+    //   แค่ครั้งเดียวตอนตัวนับของเดือนนี้ยังไม่เคยถูกสร้างเท่านั้น
+    var runningNum = nextRunningNumber_("TaxInvoice", periodKey, function() {
+      return getNextInvoiceRunningNumber(invoiceDate, d.docId || null);
+    });
+    if (runningNum === null) {
+      // ตัวนับขัดข้อง (error ชั่วคราว) — fallback กลับไปสแกนแบบเดิมเฉพาะรอบนี้ ไม่ปล่อยให้บันทึกไม่ได้เลย
+      runningNum = getNextInvoiceRunningNumber(invoiceDate, d.docId || null) + attempt;
+    }
     var candidateNo = buildInvoiceNoForMonth(invoiceDate, runningNum);
 
     // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบกำกับภาษีพร้อมกัน (ดู reserveDocNo_)
@@ -1739,9 +1839,19 @@ function saveQuotation(d, callerUsername) {
     return saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId, dataObject, null);
   }
 
+  var periodKey = docPeriodKey_(quoteDate);
   var lastErr = "";
   for (var attempt = 0; attempt < 10; attempt++) {
-    var runningNum  = getNextQuoteRunningNumber(quoteDate, d.docId || null) + attempt;
+    // ★ FIX (โควตา Firestore Reads): ใช้ตัวนับแทนการสแกน Quotation ทั้ง collection ทุกครั้ง
+    //   (ดูคำอธิบายเต็มที่ nextRunningNumber_) — seedFn (getNextQuoteRunningNumber เดิม) จะถูกเรียก
+    //   แค่ครั้งเดียวตอนตัวนับของเดือนนี้ยังไม่เคยถูกสร้างเท่านั้น
+    var runningNum = nextRunningNumber_("Quotation", periodKey, function() {
+      return getNextQuoteRunningNumber(quoteDate, d.docId || null);
+    });
+    if (runningNum === null) {
+      // ตัวนับขัดข้อง (error ชั่วคราว) — fallback กลับไปสแกนแบบเดิมเฉพาะรอบนี้ ไม่ปล่อยให้บันทึกไม่ได้เลย
+      runningNum = getNextQuoteRunningNumber(quoteDate, d.docId || null) + attempt;
+    }
     var candidateNo = buildQuoteNoForMonth(quoteDate, runningNum);
 
     // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบเสนอราคาพร้อมกัน (ดู reserveDocNo_)
@@ -2774,17 +2884,21 @@ function destroySession_(token) {
   if (token) CacheService.getScriptCache().remove("sess_" + token);
 }
 
+// ★ FIX (โควตา Firestore Reads): เดิมอ่าน Master_Users ทั้ง collection สดทุกครั้งที่ login/เช็คอีเมล
+//   (ไม่มี cache เลย ทั้งที่ clearCollectionCache(Master_Users) ถูกเรียกอยู่แล้วทุกจุดที่แก้ไขบัญชี —
+//   ดู updateUserFields_/saveMasterData) เปลี่ยนมาใช้ fetchCollectionDocsCached แทน (6 ชม. + invalidate
+//   อัตโนมัติเมื่อมีการแก้ไขบัญชีจริง) — ผลพลอยได้อีกอย่าง: ตอนนี้ถ้า Firestore quota เต็มพอดี
+//   login ยัง "ใช้ cache เดิมที่ยังไม่หมดอายุ" ต่อได้ ไม่ล่มพร้อมกันไปกับฟีเจอร์อื่นเหมือนเดิม
 function findUserByUsername_(username) {
   var uname = String(username || "").trim().toLowerCase();
   if (!uname) return null;
   try {
-    var fetched = fetchAllPagesRaw(AUTH_USERS_COLLECTION);
-    if (!fetched.ok) return null;
-    for (var i = 0; i < fetched.docs.length; i++) {
-      var f = fetched.docs[i].fields || {};
+    var docs = fetchCollectionDocsCached(AUTH_USERS_COLLECTION);
+    for (var i = 0; i < docs.length; i++) {
+      var f = docs[i].fields || {};
       if (String(parseFirestoreValue(f.Username) || "").toLowerCase() === uname) {
         return {
-          docId           : fetched.docs[i].id,
+          docId           : docs[i].id,
           Username        : parseFirestoreValue(f.Username) || "",
           Full_Name       : parseFirestoreValue(f.Full_Name) || "",
           Email           : parseFirestoreValue(f.Email) || "",
@@ -2812,10 +2926,9 @@ function findUserByEmail_(email) {
   var target = String(email || "").trim().toLowerCase();
   if (!target) return null;
   try {
-    var fetched = fetchAllPagesRaw(AUTH_USERS_COLLECTION);
-    if (!fetched.ok) return null;
-    for (var i = 0; i < fetched.docs.length; i++) {
-      var f = fetched.docs[i].fields || {};
+    var docs = fetchCollectionDocsCached(AUTH_USERS_COLLECTION);
+    for (var i = 0; i < docs.length; i++) {
+      var f = docs[i].fields || {};
       if (String(parseFirestoreValue(f.Email) || "").toLowerCase() === target) {
         return findUserByUsername_(parseFirestoreValue(f.Username) || "");
       }
@@ -3268,26 +3381,42 @@ function friendlyErrorMessage_(e) {
   return "เกิดข้อผิดพลาดที่ไม่คาดคิด กรุณาลองใหม่อีกครั้ง หากยังไม่หายให้แจ้งผู้ดูแลระบบ (" + raw + ")";
 }
 
+// ★ FIX (โควตา Firestore Reads): เดิมสแกน Activity_Log ทั้ง collection (โตทุกวันไม่มีสิ้นสุด เพราะ
+//   logActivity_ เขียนทุกครั้งที่มีคนทำรายการ) แล้วค่อย sort+slice เอาแค่ล่าสุด N รายการฝั่ง JS —
+//   เปลี่ยนเป็น runQuery + orderBy + limit ให้ Firestore เป็นคนกรองให้เลย (pattern เดียวกับ
+//   getStockMovements ที่ทำถูกอยู่แล้วในไฟล์นี้) อ่านแค่ N document แทนทั้งประวัติ
 function getActivityLog(limitCount) {
   var list = [];
   try {
-    var fetched = fetchAllPagesRaw(ACTIVITY_LOG_COLLECTION);
-    if (!fetched.ok) return list;
-    fetched.docs.forEach(function (doc) {
-      var f = doc.fields || {};
-      list.push({
-        id        : doc.id,
-        username  : parseFirestoreValue(f.Username)  || "",
-        action    : parseFirestoreValue(f.Action)    || "",
-        label     : parseFirestoreValue(f.Label)      || "",
-        docId     : parseFirestoreValue(f.DocId)      || "",
-        success   : String(parseFirestoreValue(f.Success) || "") === "true",
-        timestamp : parseFirestoreValue(f.Timestamp)  || ""
-      });
+    var n = Math.min(parseInt(limitCount, 10) || 200, 1000);
+    var query = {
+      structuredQuery: {
+        from    : [{ collectionId: ACTIVITY_LOG_COLLECTION }],
+        orderBy : [{ field: { fieldPath: "Timestamp" }, direction: "DESCENDING" }],
+        limit   : n
+      }
+    };
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+    var res = UrlFetchApp.fetch(url, {
+      method: "post", headers: getAuthHeader(), payload: JSON.stringify(query), muteHttpExceptions: true
     });
-    list.sort(function (a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
-    var n = limitCount || 200;
-    if (list.length > n) list = list.slice(0, n);
+    if (res.getResponseCode() === 200) {
+      (JSON.parse(res.getContentText()) || []).forEach(function (row) {
+        if (!row.document) return;
+        var f = row.document.fields || {};
+        list.push({
+          id        : row.document.name.split('/').pop(),
+          username  : parseFirestoreValue(f.Username)  || "",
+          action    : parseFirestoreValue(f.Action)    || "",
+          label     : parseFirestoreValue(f.Label)      || "",
+          docId     : parseFirestoreValue(f.DocId)      || "",
+          success   : String(parseFirestoreValue(f.Success) || "") === "true",
+          timestamp : parseFirestoreValue(f.Timestamp)  || ""
+        });
+      });
+    } else {
+      console.error("getActivityLog HTTP " + res.getResponseCode() + ": " + res.getContentText());
+    }
   } catch (e) {
     console.error("getActivityLog error:", e);
   }
@@ -3696,9 +3825,8 @@ function createUserAccount(email, fullName, role) {
 function getAllUsers() {
   var list = [];
   try {
-    var fetched = fetchAllPagesRaw(AUTH_USERS_COLLECTION);
-    if (!fetched.ok) return list;
-    fetched.docs.forEach(function (doc) {
+    var docs = fetchCollectionDocsCached(AUTH_USERS_COLLECTION);
+    docs.forEach(function (doc) {
       var f = doc.fields || {};
       list.push({
         docId               : doc.id,
