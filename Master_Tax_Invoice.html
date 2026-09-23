@@ -727,13 +727,21 @@ function renderSellerInfoBox() {
 function populateCustomerDropdown() {
   var sel = document.getElementById('modalCustomerSelect');
   var current = sel.value;
+  // ★ เรียงตามจังหวัดก่อน (ลูกค้าไม่ระบุจังหวัดไปอยู่ท้ายสุด) แล้วค่อยเรียงตามชื่อในจังหวัดเดียวกัน
+  //   ให้ลูกค้าโซนเดียวกันอยู่ใกล้กันในลิสต์ หาง่ายกว่าเรียงตามชื่ออย่างเดียว
   var sorted = customersCache.slice().sort(function(a, b) {
+    var pa = a.Province || '', pb = b.Province || '';
+    if (!pa && pb) return 1;
+    if (pa && !pb) return -1;
+    var cmp = pa.localeCompare(pb, 'th');
+    if (cmp !== 0) return cmp;
     return (a.Customer_Name || '').localeCompare(b.Customer_Name || '', 'th');
   });
   sel.innerHTML = '<option value="">-- ลูกค้าใหม่ / ลูกค้าขาจร --</option>' +
     sorted.map(function(c) {
       // ★ แสดงข้อมูลเต็มในตัวเลือก ไม่ใช่แค่ชื่อ — ให้เห็นชัดว่าเลือกใครก่อนกด
       var parts = [c.Customer_Name || c.id];
+      if (c.Province) parts.push('จ.' + c.Province);
       if (c.Customer_Type) parts.push(c.Customer_Type);
       if (c.Phone) parts.push(c.Phone);
       if (c.Tax_ID) parts.push('ภาษี ' + c.Tax_ID);
