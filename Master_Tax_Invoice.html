@@ -752,28 +752,15 @@ function populateCustomerDropdown() {
 
 function onCustomerSelect() {
   var id = document.getElementById('modalCustomerSelect').value;
-  if (!id) { setBuyerFieldsLocked(false); return; }
+  if (!id) return;
   var c = customersCache.find(function(x) { return x.id === id; });
-  if (!c) { setBuyerFieldsLocked(false); return; }
+  if (!c) return;
   document.getElementById('modalBuyerName').value    = c.Customer_Name || '';
   document.getElementById('modalBuyerAddress').value = c.Address      || '';
   document.getElementById('modalBuyerTaxId').value   = c.Tax_ID       || '';
   document.getElementById('modalBuyerBranch').value  = c.Branch       || 'สำนักงานใหญ่';
   clearFieldError('modalBuyerName');
   clearFieldError('modalBuyerTaxId');
-  setBuyerFieldsLocked(true);
-}
-
-// ★ เลือกลูกค้าที่มีอยู่แล้ว → ล็อกช่องข้อมูลผู้ซื้อทั้งหมดที่ดึงมา ไม่ให้แก้ไขเพี้ยนไปจากข้อมูลจริง
-//   ในทะเบียนลูกค้า (ถ้าต้องการแก้ข้อมูลลูกค้า ให้ไปแก้ที่หน้า "ข้อมูลลูกค้า" แทน จะได้ตรงกันทุกใบ
-//   ในอนาคตด้วย) — เลือกกลับเป็น "ลูกค้าใหม่ / ลูกค้าขาจร" เมื่อไรก็ปลดล็อกให้พิมพ์เองได้ตามเดิม
-function setBuyerFieldsLocked(locked) {
-  ['modalBuyerName', 'modalBuyerAddress', 'modalBuyerTaxId', 'modalBuyerBranch'].forEach(function(id) {
-    var el = document.getElementById(id);
-    if (!el) return;
-    el.readOnly = locked;
-    el.style.background = locked ? '#f1f5f9' : '';
-  });
 }
 
 function updateInvoiceNoPreview() {
@@ -1131,7 +1118,6 @@ function openAddModal() {
   document.getElementById('modalBuyerAddress').value = '';
   document.getElementById('modalBuyerTaxId').value = '';
   document.getElementById('modalBuyerBranch').value = 'สำนักงานใหญ่';
-  setBuyerFieldsLocked(false);
   document.getElementById('modalNote').value = '';
   document.getElementById('itemBasket').innerHTML = '';
   addItemRow();
@@ -1155,7 +1141,6 @@ function openEditModal(docId) {
   document.getElementById('modalBuyerAddress').value = item.buyerAddress || '';
   document.getElementById('modalBuyerTaxId').value = item.buyerTaxId || '';
   document.getElementById('modalBuyerBranch').value = item.buyerBranch || 'สำนักงานใหญ่';
-  setBuyerFieldsLocked(false);
   document.getElementById('modalNote').value = item.note || '';
   document.getElementById('itemBasket').innerHTML = '';
   (item.items || []).forEach(function(it) { addItemRow(it); });
