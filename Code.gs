@@ -1626,33 +1626,30 @@ function getTaxInvoiceListByYear(yearBE) {
   return list;
 }
 
+// ★ FIX (โควตา Firestore Reads): ใช้ตอนเลือกมุมมอง "ทั้งหมด" (ทุกปีรวมกัน) — เดิมสแกนทั้ง
+//   Master_Tax_Invoice โดยไม่จำกัด (โตไม่มีที่สิ้นสุดตามอายุร้าน) เปลี่ยนเป็น runQuery + orderBy +
+//   limit (เอาล่าสุดก่อน) เหมือน getActivityLog/getStockMovements — ครอบคลุมการใช้งานจริงเกือบทั้งหมด
+//   เพราะร้านที่ออกใบกำกับภาษีเกิน 1,500 ใบสะสม ปกติจะกรองดูทีละปีอยู่แล้วไม่ได้ใช้มุมมอง "ทั้งหมด" นี้
 function getTaxInvoiceList() {
   var list = [];
   try {
-    var fetched = fetchAllPagesRaw("Master_Tax_Invoice");
-    if (fetched.ok) {
-      fetched.docs.forEach(function(doc) {
-        var f = doc.fields || {};
-        var items = [];
-        try { items = JSON.parse(parseFirestoreValue(f.Items_JSON) || "[]"); } catch (e) { items = []; }
-
-        list.push({
-          id           : doc.id,
-          invoiceNo    : parseFirestoreValue(f.Invoice_No)    || doc.id,
-          invoiceDate  : parseFirestoreValue(f.Invoice_Date)  || "",
-          buyerName    : parseFirestoreValue(f.Buyer_Name)    || "",
-          buyerAddress : parseFirestoreValue(f.Buyer_Address) || "",
-          buyerTaxId   : String(parseFirestoreValue(f.Buyer_Tax_ID) || ""),
-          buyerBranch  : parseFirestoreValue(f.Buyer_Branch)  || "",
-          items        : items,
-          subtotal     : parseFloat(parseFirestoreValue(f.Subtotal)    || 0),
-          vatAmount    : parseFloat(parseFirestoreValue(f.Vat_Amount)  || 0),
-          grandTotal   : parseFloat(parseFirestoreValue(f.Grand_Total) || 0),
-          note         : parseFirestoreValue(f.Note) || ""
-        });
+    var query = {
+      structuredQuery: {
+        from    : [{ collectionId: "Master_Tax_Invoice" }],
+        orderBy : [{ field: { fieldPath: "Invoice_Date" }, direction: "DESCENDING" }],
+        limit   : 1500
+      }
+    };
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+    var res = UrlFetchApp.fetch(url, {
+      method: "post", headers: getAuthHeader(), payload: JSON.stringify(query), muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
+        if (row.document) list.push(mapTaxInvoiceQueryDoc_(row.document));
       });
     } else {
-      console.error("getTaxInvoiceList: ดึงข้อมูลใบกำกับภาษีไม่สำเร็จ");
+      console.error("getTaxInvoiceList HTTP " + res.getResponseCode() + ": " + res.getContentText());
     }
   } catch (e) {
     console.error("getTaxInvoiceList error:", e);
@@ -1834,9 +1831,13 @@ function saveQuotation(d, callerUsername) {
     Updated_At       : nowIso
   };
 
+  var quoteYearBE = new Date(quoteDate + "T00:00:00").getFullYear() + 543;
+
   if (d.docId && quoteNo) {
     dataObject.Quote_No = quoteNo;
-    return saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId, dataObject, null);
+    var editRes = saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId, dataObject, null);
+    if (editRes.success) updateQuotationYearsMeta_(quoteYearBE);
+    return editRes;
   }
 
   var periodKey = docPeriodKey_(quoteDate);
@@ -1859,7 +1860,10 @@ function saveQuotation(d, callerUsername) {
 
     dataObject.Quote_No = candidateNo;
     var res = saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId || null, dataObject, null);
-    if (res.success) return res;
+    if (res.success) {
+      updateQuotationYearsMeta_(quoteYearBE);
+      return res;
+    }
     lastErr = res.message;
     if (String(res.message || "").indexOf("ALREADY_EXISTS") === -1 &&
         String(res.message || "").indexOf("409") === -1) {
@@ -1909,14 +1913,29 @@ function mapQuotationDoc_(doc) {
   };
 }
 
+// ★ FIX (โควตา Firestore Reads): ใช้ตอนเลือกมุมมอง "ทั้งหมด" (ทุกปีรวมกัน) — เดิมสแกนทั้ง
+//   collection โดยไม่จำกัด (โตไม่มีที่สิ้นสุดตามอายุร้าน) เปลี่ยนเป็น runQuery + orderBy + limit
+//   (เอาล่าสุดก่อน) เหมือน getTaxInvoiceList — ใช้งานปกติควรกรองดูทีละปีผ่าน getQuotationListByYear แทน
 function getQuotationList() {
   var list = [];
   try {
-    var fetched = fetchAllPagesRaw(QUOTATION_COLLECTION);
-    if (fetched.ok) {
-      fetched.docs.forEach(function(doc) { list.push(mapQuotationDoc_(doc)); });
+    var query = {
+      structuredQuery: {
+        from    : [{ collectionId: QUOTATION_COLLECTION }],
+        orderBy : [{ field: { fieldPath: "Quote_Date" }, direction: "DESCENDING" }],
+        limit   : 1500
+      }
+    };
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+    var res = UrlFetchApp.fetch(url, {
+      method: "post", headers: getAuthHeader(), payload: JSON.stringify(query), muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
+        if (row.document) list.push(mapQuotationDoc_({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} }));
+      });
     } else {
-      console.error("getQuotationList: ดึงข้อมูลใบเสนอราคาไม่สำเร็จ");
+      console.error("getQuotationList HTTP " + res.getResponseCode() + ": " + res.getContentText());
     }
   } catch (e) {
     console.error("getQuotationList error:", e);
@@ -1925,14 +1944,158 @@ function getQuotationList() {
   return list;
 }
 
-function getQuotationPageData() {
+// ★ FIX (โควตา Firestore Reads): กรองเฉพาะใบเสนอราคาของปีที่เลือกด้วย range query บน Quote_Date
+//   ฝั่ง server เลย (pattern เดียวกับ getTaxInvoiceListByYear) แทนการอ่านทั้งหมดมากรองฝั่ง client
+function getQuotationListByYear(yearBE) {
+  var list = [];
+  try {
+    var yearAD = yearBE - 543;
+    var fromDate = yearAD + "-01-01";
+    var toDate   = yearAD + "-12-31";
+
+    var query = {
+      structuredQuery: {
+        from: [{ collectionId: QUOTATION_COLLECTION }],
+        where: {
+          compositeFilter: {
+            op: "AND",
+            filters: [
+              { fieldFilter: { field: { fieldPath: "Quote_Date" }, op: "GREATER_THAN_OR_EQUAL", value: { stringValue: fromDate } } },
+              { fieldFilter: { field: { fieldPath: "Quote_Date" }, op: "LESS_THAN_OR_EQUAL",    value: { stringValue: toDate   } } }
+            ]
+          }
+        },
+        limit: 1000
+      }
+    };
+
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+    var res = UrlFetchApp.fetch(url, {
+      method: "post", headers: getAuthHeader(), payload: JSON.stringify(query), muteHttpExceptions: true
+    });
+
+    if (res.getResponseCode() === 200) {
+      var rows = JSON.parse(res.getContentText());
+      rows.forEach(function(row) {
+        if (row.document) list.push(mapQuotationDoc_({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} }));
+      });
+    } else {
+      console.error("getQuotationListByYear HTTP " + res.getResponseCode() + ": " + res.getContentText());
+    }
+  } catch (e) {
+    console.error("getQuotationListByYear error:", e);
+  }
+  list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
+  return list;
+}
+
+var QUOTATION_YEARS_ID = "quotation_years";
+
+// ★ เก็บรายชื่อปี (พ.ศ.) ที่มีใบเสนอราคาอยู่จริง ไว้ใช้สร้างตัวเลือกปีในหน้าเว็บ (pattern เดียวกับ
+//   updateTaxInvoiceYearsMeta_ ของใบกำกับภาษี) — เรียกครั้งเดียวตอนบันทึกสำเร็จ ไม่ใช่ทุกครั้งที่โหลดหน้า
+function updateQuotationYearsMeta_(yearBE) {
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/" + META_COLLECTION + "/" + QUOTATION_YEARS_ID;
+    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+
+    var years = [];
+    if (res.getResponseCode() === 200) {
+      var doc = JSON.parse(res.getContentText());
+      years = parseFirestoreValue((doc.fields || {}).Years) || [];
+      years = years.map(function(y) { return parseInt(y, 10); });
+    }
+    if (years.indexOf(yearBE) > -1) return;
+
+    years.push(yearBE);
+    years.sort(function(a, b) { return b - a; });
+
+    var payload = {
+      fields: {
+        Years: { arrayValue: { values: years.map(function(y) { return { integerValue: y }; }) } }
+      }
+    };
+    UrlFetchApp.fetch(url + "?updateMask.fieldPaths=Years", {
+      method: "patch", headers: getAuthHeader(), payload: JSON.stringify(payload), muteHttpExceptions: true
+    });
+  } catch (e) {
+    console.error("updateQuotationYearsMeta_ error:", e);
+  }
+}
+
+function getQuotationAvailableYears() {
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/" + META_COLLECTION + "/" + QUOTATION_YEARS_ID;
+    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) {
+      var doc = JSON.parse(res.getContentText());
+      var years = parseFirestoreValue((doc.fields || {}).Years) || [];
+      years = years.map(function(y) { return parseInt(y, 10); }).sort(function(a, b) { return b - a; });
+      if (years.length) return years;
+    } else if (res.getResponseCode() === 404) {
+      // ★ meta ปียังไม่เคยถูกสร้าง (ใบเสนอราคาเก่าก่อนหน้านี้ไม่เคยบันทึก meta ปีไว้ ต่างจากใบกำกับ
+      //   ภาษีที่มี meta นี้มาตั้งแต่แรก) — สแกนหาปีทั้งหมดที่มีข้อมูลอยู่จริงครั้งเดียวเพื่อตั้งต้น
+      //   หลังจากนี้ทุกครั้งจะอ่านแค่ meta doc เอกสารเดียว ไม่สแกนซ้ำอีกเลย
+      return seedQuotationYearsMeta_();
+    }
+  } catch (e) {
+    console.error("getQuotationAvailableYears error:", e);
+  }
+  return [new Date().getFullYear() + 543];
+}
+
+function seedQuotationYearsMeta_() {
+  var years = [];
+  try {
+    var fetched = fetchAllPagesRaw(QUOTATION_COLLECTION);
+    if (fetched.ok) {
+      var seen = {};
+      fetched.docs.forEach(function(doc) {
+        var dateStr = parseFirestoreValue((doc.fields || {}).Quote_Date);
+        if (!dateStr) return;
+        var y = new Date(dateStr + "T00:00:00").getFullYear() + 543;
+        if (!isNaN(y) && !seen[y]) { seen[y] = true; years.push(y); }
+      });
+    }
+  } catch (e) {
+    console.error("seedQuotationYearsMeta_ scan error:", e);
+  }
+  if (!years.length) years.push(new Date().getFullYear() + 543);
+  years.sort(function(a, b) { return b - a; });
+
+  try {
+    var createUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+                  + "/databases/(default)/documents/" + META_COLLECTION
+                  + "?documentId=" + encodeURIComponent(QUOTATION_YEARS_ID);
+    UrlFetchApp.fetch(createUrl, {
+      method: "post", headers: getAuthHeader(), muteHttpExceptions: true,
+      payload: JSON.stringify({ fields: { Years: { arrayValue: { values: years.map(function(y) { return { integerValue: y }; }) } } } })
+    });
+  } catch (e) {
+    console.error("seedQuotationYearsMeta_ write error:", e);
+  }
+  return years;
+}
+
+// ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
+//   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
+function getQuotationPageData(yearFilter) {
+  var quotationsList;
+  if (yearFilter === "all") {
+    quotationsList = getQuotationList();
+  } else {
+    var yearBE = parseInt(yearFilter, 10) || (new Date().getFullYear() + 543);
+    quotationsList = getQuotationListByYear(yearBE);
+  }
   return {
-    quotations : getQuotationList(),
-    customers  : getCustomersFull(),
-    products   : getAllProducts(),
-    seller     : TAX_INVOICE_SELLER,
-    marginMin  : QUOTATION_MARGIN_MIN,
-    statuses   : QUOTATION_STATUSES
+    quotations     : quotationsList,
+    availableYears : getQuotationAvailableYears(),
+    customers      : getCustomersFull(),
+    products       : getAllProducts(),
+    seller         : TAX_INVOICE_SELLER,
+    marginMin      : QUOTATION_MARGIN_MIN,
+    statuses       : QUOTATION_STATUSES
   };
 }
 
@@ -2435,14 +2598,27 @@ function getPurchaseOrders() {
   return buildPurchaseOrderList(buildVendorMap());
 }
 
+// ★ FIX (โควตา Firestore Reads): เดิมสแกน Purchase_Orders ทั้ง collection ทุกครั้ง (ทั้งหน้า PO เอง
+//   และตอน dashboard เรียก getDashboardBootstrap) เปลี่ยนเป็น runQuery + orderBy + limit เหมือนจุดอื่น
 function buildPurchaseOrderList(vendorMap) {
   var list = [];
   try {
-    var fetched = fetchAllPagesRaw("Purchase_Orders");
-    if (fetched.ok) {
-      fetched.docs.forEach(function(doc) {
-        var id = doc.id;
-        var f  = doc.fields || {};
+    var query = {
+      structuredQuery: {
+        from    : [{ collectionId: "Purchase_Orders" }],
+        orderBy : [{ field: { fieldPath: "Order_Date" }, direction: "DESCENDING" }],
+        limit   : 1000
+      }
+    };
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+    var res = UrlFetchApp.fetch(url, {
+      method: "post", headers: getAuthHeader(), payload: JSON.stringify(query), muteHttpExceptions: true
+    });
+    if (res.getResponseCode() === 200) {
+      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
+        if (!row.document) return;
+        var id = row.document.name.split('/').pop();
+        var f  = row.document.fields || {};
         var vendorId = parseFirestoreValue(f.Vendor_ID) || "";
         var v        = vendorMap[vendorId] || {};
 
@@ -2472,7 +2648,7 @@ function buildPurchaseOrderList(vendorMap) {
         });
       });
     } else {
-      console.error("buildPurchaseOrderList: ดึงข้อมูลใบสั่งซื้อไม่สำเร็จ");
+      console.error("buildPurchaseOrderList HTTP " + res.getResponseCode() + ": " + res.getContentText());
     }
   } catch (e) {
     console.error("buildPurchaseOrderList error:", e);

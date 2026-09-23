@@ -122,7 +122,7 @@
     <div class="crumb"><span>เอกสารขาย</span><span class="sep">›</span><b>ใบเสนอราคา</b></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:12px;color:var(--faint)">F2 ค้นหาสินค้า</span>
-      <button class="btn btn-ghost" onclick="loadPageData()">🔄 รีเฟรช</button>
+      <button class="btn btn-ghost" onclick="loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear)">🔄 รีเฟรช</button>
       <button class="btn btn-primary" onclick="newQuotation()">➕ ใบเสนอราคาใหม่</button>
     </div>
   </div>
@@ -290,8 +290,13 @@
       </div>
 
       <div class="card">
-        <div class="toolbar" style="justify-content:space-between">
+        <div class="toolbar" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
           <span style="font-size:15px;font-weight:600;color:var(--ink)">📋 ทะเบียนใบเสนอราคา</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <label for="listYearSelect" style="font-weight:600;white-space:nowrap">📅 แสดงข้อมูลปี:</label>
+            <select id="listYearSelect" class="form-control" style="width:auto;min-width:140px" onchange="onListYearChange()"></select>
+            <span id="listYearLoadingBadge" style="display:none;color:#005088">⏳ กำลังโหลด...</span>
+          </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap" id="statusFilterBar"></div>
         </div>
         <div class="table-wrap">
@@ -319,6 +324,9 @@ var results = [], selIdx = 0, searchTimer = null;
 var stockFilter = 'all';
 var editingDocId = null;
 var listStatusFilter = '';
+// ★ ปีที่กำลังแสดงอยู่ในทะเบียนตอนนี้ ('all' = ทุกปี, หรือตัวเลข พ.ศ.) — เริ่มต้นเป็นปีล่าสุดเสมอ
+var currentPageYear = null;
+var availableYearsCache = [];
 
 var STATUS_CLASS = {
   'ร่าง'               : 'status-draft',
@@ -337,10 +345,15 @@ document.addEventListener('keydown', function (e) {
 });
 
 /* ═══ Data ═══ */
-function loadPageData(afterLoad) {
+// ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
+//   (เดิมดึงใบเสนอราคา "ทุกใบทุกปี" ทุกครั้งที่เปิดหน้า — ปรับให้กรองตามปีฝั่ง server แทน
+//   ลดการอ่าน Firestore ลงมาก โดยเฉพาะร้านที่เปิดมานานสะสมใบเสนอราคาไว้เยอะ)
+function loadPageData(yearParam, afterLoad) {
   var btn = document.querySelector('.page-head .btn-ghost');
   if (btn) btnBusy(btn, 'กำลังโหลด...');
-  callApi('getQuotationPageData', [], function (data) {
+  var badge = document.getElementById('listYearLoadingBadge');
+  if (badge) badge.style.display = 'inline';
+  callApi('getQuotationPageData', [yearParam || ''], function (data) {
     if (btn) btnDone(btn);
     data = data || {};
     customers  = data.customers  || [];
@@ -349,16 +362,37 @@ function loadPageData(afterLoad) {
     sellerInfo = data.seller     || {};
     marginMin  = data.marginMin  || 15;
     statuses   = data.statuses   || [];
+    availableYearsCache = data.availableYears || [new Date().getFullYear() + 543];
+    currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || availableYearsCache[0]);
+    populateListYearDropdown();
     renderCustomerOptions();
     buildCategoryFilter();
     renderStatusFilterBar();
     renderList();
     renderResults();
+    if (badge) badge.style.display = 'none';
     if (typeof afterLoad === 'function') afterLoad();
   }, function (err) {
     if (btn) btnDone(btn);
+    if (badge) badge.style.display = 'none';
     toast('โหลดข้อมูลไม่สำเร็จ: ' + esc(JSON.stringify(err)), 'err');
   });
+}
+
+// ★ สร้าง dropdown ปีจาก availableYears ที่ backend ส่งมา (อ่านแค่ 1 document metadata ไม่ใช่ทุกใบ)
+function populateListYearDropdown() {
+  var sel = document.getElementById('listYearSelect');
+  if (!sel) return;
+  sel.innerHTML = availableYearsCache.map(function (y) {
+    return '<option value="' + y + '">พ.ศ. ' + y + '</option>';
+  }).join('') + '<option value="all">— ทุกปี —</option>';
+  sel.value = (currentPageYear === 'all') ? 'all' : String(currentPageYear);
+}
+
+// ★ ผู้ใช้เปลี่ยนปีเอง — โหลดใบเสนอราคาใหม่เฉพาะปีที่เลือก (หรือทุกปีถ้าเลือก "ทุกปี")
+function onListYearChange() {
+  var val = document.getElementById('listYearSelect').value;
+  loadPageData(val === 'all' ? 'all' : Number(val));
 }
 
 function renderCustomerOptions() {
@@ -693,7 +727,7 @@ function saveQuotationNow() {
     if (res && res.success) {
       editingDocId = res.id;
       toast(res.message || 'บันทึกเรียบร้อย');
-      loadPageData(function () {
+      loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear, function () {
         var q = quotations.find(function (x) { return x.id === res.id; });
         if (q) { document.getElementById('qtNoBadge').innerText = q.quoteNo + ' · ' + q.status; }
         switchTab('doc');
@@ -957,7 +991,7 @@ function viewQuotation(docId) { loadQuotationIntoBuild(docId); switchTab('doc');
 
 function changeStatus(docId, status) {
   callApi('updateQuotationStatus', [docId, status], function (res) {
-    if (res && res.success) { toast(res.message || 'เปลี่ยนสถานะเรียบร้อย'); loadPageData(); }
+    if (res && res.success) { toast(res.message || 'เปลี่ยนสถานะเรียบร้อย'); loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear); }
     else swyError(res && res.title || 'ล้มเหลว', res && res.message);
   }, function (err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
 }
@@ -1012,7 +1046,7 @@ function confirmDeleteQuotation(docId) {
   }).then(function (ok) {
     if (!ok) return;
     callApi('deleteQuotation', [docId], function (res) {
-      if (res && res.success) { toast('ลบเรียบร้อย'); loadPageData(); }
+      if (res && res.success) { toast('ลบเรียบร้อย'); loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear); }
       else swyError(res && res.title || 'ล้มเหลว', res && res.message);
     }, function (err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
   });
