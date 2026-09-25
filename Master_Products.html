@@ -57,29 +57,97 @@
   .view-price-pill{border-radius:10px;padding:8px 14px;min-width:96px}
   .view-price-pill .vpp-label{font-size:10.5px;opacity:.85}
   .view-price-pill .vpp-value{font-size:15px;font-weight:700;margin-top:2px}
+  .icon{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+  .icon-sm{width:15px;height:15px}.icon-lg{width:24px;height:24px}
+  .products-head{min-height:64px;padding:12px 20px}
+  .products-title{display:flex;align-items:center;gap:11px;min-width:0}
+  .products-title-icon{width:36px;height:36px;border-radius:9px;background:var(--primary-soft);color:var(--primary);display:grid;place-items:center;flex:0 0 auto}
+  .products-title-copy{min-width:0}.products-title-copy h1{margin:0;color:var(--ink);font-size:17px;line-height:1.25;font-weight:600}
+  .products-title-copy p{margin:2px 0 0;color:var(--muted);font-size:11.5px}
+  .page-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .product-stats{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px}
+  .product-stat{cursor:pointer;text-align:left;border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;display:flex;gap:11px;align-items:center;font-family:'Prompt',sans-serif;transition:.15s}
+  .product-stat:hover{border-color:#b8c6d4;box-shadow:var(--shadow)}.product-stat.active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(0,80,136,.1)}
+  .product-stat-icon{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;background:var(--line-soft);color:var(--muted)}
+  .product-stat[data-filter="all"] .product-stat-icon{background:var(--primary-soft);color:var(--primary)}
+  .product-stat[data-filter="low"] .product-stat-icon{background:var(--warn-bg);color:var(--warn)}
+  .product-stat[data-filter="out"] .product-stat-icon{background:var(--danger-bg);color:var(--danger)}
+  .product-stat[data-filter="inactive"] .product-stat-icon{background:#f1f5f9;color:#64748b}
+  .product-stat-copy{min-width:0}.product-stat-value{display:block;font-size:20px;font-weight:600;line-height:1.1;color:var(--ink)}
+  .product-stat-label{display:block;font-size:11.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
+  .product-toolbar{padding:12px 13px;gap:10px}.search-box{max-width:none}
+  .search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint);pointer-events:none;display:flex}
+  .table-search-input{padding-left:38px;padding-right:42px;min-height:40px;background:#fff}
+  .search-clear{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;display:none;place-items:center}
+  .search-clear:hover{background:var(--line-soft);color:var(--ink)}.search-clear.show{display:grid}
+  .quick-filter{width:auto;min-width:150px;min-height:40px}
+  .product-table-card{overflow:hidden}.product-name-cell{min-width:220px}.product-name-main{font-weight:600;color:var(--ink)}
+  .product-name-meta{display:none;color:var(--muted);font-size:11px;margin-top:3px}.stock-value{font-weight:600}
+  .stock-value.low{color:var(--warn)}.stock-value.out{color:var(--danger)}
+  .status-dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;margin-right:5px}
+  .density-label{display:inline}.mobile-product-list{display:none}
+  .modal-title-wrap{display:flex;align-items:center;gap:9px}.modal-title-wrap .icon{width:19px;height:19px}
+  .modal-close{width:32px;height:32px;border-radius:7px;display:grid;place-items:center}.modal-close:hover{background:rgba(255,255,255,.14)}
+  @media (max-width:980px){.product-stats{grid-template-columns:repeat(2,1fr)}.toolbar-right{gap:8px}}
+  @media (max-width:767px){
+    .products-head{position:static;align-items:flex-start;padding:12px}.products-title-copy p{display:none}.page-actions .btn-label-optional,.density-label{display:none}
+    .page-actions .btn{padding:8px 10px}.product-stats{grid-template-columns:repeat(2,1fr);gap:8px}.product-stat{padding:10px;gap:9px}
+    .product-stat-icon{width:30px;height:30px}.product-stat-value{font-size:17px}.product-stat-label{font-size:10.5px}
+    .product-toolbar{align-items:stretch}.search-box{min-width:100%;width:100%}.toolbar-right{width:100%;justify-content:space-between}.quick-filter{flex:1;min-width:0}.page-size-select{min-height:40px}
+    .table-wrap{display:none}.mobile-product-list{display:flex;flex-direction:column}.mobile-product-card{padding:13px;border-bottom:1px solid var(--line-soft);background:#fff}
+    .mobile-product-card:last-child{border-bottom:0}.mobile-product-top{display:flex;gap:11px;align-items:flex-start}.mobile-product-img{width:48px;height:48px;border:1px solid var(--line);border-radius:8px;display:grid;place-items:center;overflow:hidden;background:var(--bg);color:var(--faint);flex:0 0 auto}
+    .mobile-product-img img{width:100%;height:100%;object-fit:cover}.mobile-product-main{min-width:0;flex:1}.mobile-product-name{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .mobile-product-code{font:11px 'Courier New',monospace;color:var(--primary);margin-top:3px}.mobile-product-price{font-size:14px;font-weight:600;color:var(--primary-dark);white-space:nowrap}
+    .mobile-product-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:10px 0;color:var(--muted);font-size:11.5px}.mobile-stock{font-weight:600}.mobile-card-actions{display:grid;grid-template-columns:1fr 1fr 38px;gap:7px}
+    .mobile-card-actions .btn{min-height:36px;padding:7px 9px}.pagination-bar{margin-top:0;padding:11px 12px}.pagination-info{width:100%;text-align:center}.pagination-controls{width:100%;justify-content:space-between}
+    .modal-overlay{padding:0;align-items:flex-end}.modal-box{width:100%!important;max-width:100%;max-height:94vh;border-radius:16px 16px 0 0}.modal-body{overflow-y:auto;padding:17px}.modal-header,.modal-footer{padding-left:17px;padding-right:17px}
+    .view-field-grid{grid-template-columns:1fr}.view-field-tile.wide{grid-column:auto}
+  }
   </style>
 </head>
 <body>
 
-<div class="page-head">
-  <div class="crumb">
-    <span>คลังสินค้า</span><span class="sep">›</span>
-    <b>จัดการสินค้า</b>
-    <span class="badge badge-mute" id="recordCount">—</span>
+<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+  <symbol id="p-i-package" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5v8l-9 5-9-5V8Z"/><path d="M12 13v8"/></symbol>
+  <symbol id="p-i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="p-i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+  <symbol id="p-i-density" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="p-i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+  <symbol id="p-i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="p-i-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="p-i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
+  <symbol id="p-i-eye" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="p-i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></symbol>
+  <symbol id="p-i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></symbol>
+  <symbol id="p-i-save" viewBox="0 0 24 24"><path d="M5 3h12l2 2v16H5V3Z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></symbol>
+  <symbol id="p-i-printer" viewBox="0 0 24 24"><path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><path d="M7 14h10v7H7z"/></symbol>
+  <symbol id="p-i-tag" viewBox="0 0 24 24"><path d="M20 13 13 20 4 11V4h7l9 9Z"/><circle cx="8.5" cy="8.5" r="1"/></symbol>
+</svg>
+
+<div class="page-head products-head">
+  <div class="products-title">
+    <span class="products-title-icon"><svg class="icon icon-lg"><use href="#p-i-package"></use></svg></span>
+    <div class="products-title-copy"><h1>จัดการสินค้า</h1><p>ข้อมูลสินค้า ราคา และสถานะสต็อกทั้งหมด</p></div>
   </div>
-  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
-    <button class="btn btn-ghost" onclick="loadTable()">🔄 รีเฟรช</button>
-    <button class="btn btn-primary" onclick="openAddModal()">+ เพิ่มสินค้า</button>
+  <div class="page-actions">
+    <button class="btn btn-ghost btn-icon" type="button" title="สลับความหนาแน่นแถว" aria-label="สลับความหนาแน่นแถว" onclick="toggleDensity()"><svg class="icon"><use href="#p-i-density"></use></svg></button>
+    <button class="btn btn-ghost" type="button" onclick="loadTable()"><svg class="icon"><use href="#p-i-refresh"></use></svg><span class="btn-label-optional">รีเฟรช</span></button>
+    <button class="btn btn-primary" type="button" onclick="openAddModal()"><svg class="icon"><use href="#p-i-plus"></use></svg>เพิ่มสินค้า</button>
   </div>
 </div>
 
 <div class="page-body">
+  <div class="product-stats" aria-label="ภาพรวมสินค้า">
+    <button type="button" class="product-stat active" data-filter="all" onclick="setProductQuickFilter('all')"><span class="product-stat-icon"><svg class="icon"><use href="#p-i-package"></use></svg></span><span class="product-stat-copy"><span class="product-stat-value" id="statAll">—</span><span class="product-stat-label">สินค้าทั้งหมด</span></span></button>
+    <button type="button" class="product-stat" data-filter="low" onclick="setProductQuickFilter('low')"><span class="product-stat-icon"><svg class="icon"><use href="#p-i-alert"></use></svg></span><span class="product-stat-copy"><span class="product-stat-value" id="statLow">—</span><span class="product-stat-label">ใกล้ถึงจุดสั่งซื้อ</span></span></button>
+    <button type="button" class="product-stat" data-filter="out" onclick="setProductQuickFilter('out')"><span class="product-stat-icon"><svg class="icon"><use href="#p-i-ban"></use></svg></span><span class="product-stat-copy"><span class="product-stat-value" id="statOut">—</span><span class="product-stat-label">สินค้าหมด</span></span></button>
+    <button type="button" class="product-stat" data-filter="inactive" onclick="setProductQuickFilter('inactive')"><span class="product-stat-icon"><svg class="icon"><use href="#p-i-ban"></use></svg></span><span class="product-stat-copy"><span class="product-stat-value" id="statInactive">—</span><span class="product-stat-label">ปิดใช้งาน</span></span></button>
+  </div>
   <!-- Add / Edit Modal Popup -->
   <div class="modal-overlay" id="productModal">
     <div class="modal-box">
       <div class="modal-header">
-        <span id="modalTitle">🛒 เพิ่มข้อมูลสินค้า</span>
+        <span id="modalTitle" class="modal-title-wrap"><svg class="icon"><use href="#p-i-package"></use></svg><span>เพิ่มข้อมูลสินค้า</span></span>
         <button class="modal-close" onclick="closeProductModal()">×</button>
       </div>
       <form id="productForm" onsubmit="handleSubmit(event)">
@@ -101,8 +169,8 @@
               <label>ประเภทสินค้า (Part Type)</label>
               <select id="inp_partType" class="form-control">
                 <option value="">-- ยังไม่ระบุ (รอดำเนินการ) --</option>
-                <option value="แท้">✅ แท้ (Genuine)</option>
-                <option value="เทียบ">🔧 เทียบ (Aftermarket)</option>
+                <option value="แท้">แท้ (Genuine)</option>
+                <option value="เทียบ">เทียบ (Aftermarket)</option>
               </select>
             </div>
 
@@ -116,7 +184,7 @@
               <label>บาร์โค้ด (Barcode)</label>
               <div style="display:flex;gap:8px;align-items:flex-start">
                 <input type="text" id="inp_barcode" class="form-control" style="flex:1" placeholder="สแกนด้วยเครื่องอ่านบาร์โค้ดลงช่องนี้ได้เลย หรือกรอกเอง (ไม่บังคับ)" oninput="updateBarcodeGenButton()">
-                <button type="button" class="btn btn-ghost" id="btnGenBarcodeInForm" style="white-space:nowrap;display:none" onclick="generateBarcodeInForm()">🔄 สร้างบาร์โค้ด</button>
+                <button type="button" class="btn btn-ghost" id="btnGenBarcodeInForm" style="white-space:nowrap;display:none" onclick="generateBarcodeInForm()">สร้างบาร์โค้ด</button>
               </div>
               <div class="field-hint" id="barcodeFieldHint">ไม่บังคับ — สินค้าที่ไม่มีบาร์โค้ดจากโรงงาน ใช้ "รหัสสินค้า" สแกน/ค้นหาแทนได้อยู่แล้ว</div>
             </div>
@@ -124,48 +192,48 @@
             <div class="form-group">
               <label>แบรนด์</label>
               <select id="inp_brandId" class="form-control">
-                <option value="">⏳ กำลังโหลด...</option>
+                <option value="">กำลังโหลด...</option>
               </select>
             </div>
 
             <div class="form-group">
               <label>หมวดหมู่</label>
               <select id="inp_categoryId" class="form-control">
-                <option value="">⏳ กำลังโหลด...</option>
+                <option value="">กำลังโหลด...</option>
               </select>
             </div>
 
             <div class="form-group">
               <label>ผู้จำหน่าย</label>
               <select id="inp_vendorId" class="form-control">
-                <option value="">⏳ กำลังโหลด...</option>
+                <option value="">กำลังโหลด...</option>
               </select>
             </div>
 
             <div class="form-group">
               <label>โซนจัดเก็บ</label>
               <select id="inp_zoneId" class="form-control">
-                <option value="">⏳ กำลังโหลด...</option>
+                <option value="">กำลังโหลด...</option>
               </select>
             </div>
 
             <div class="form-group full">
-              <label>🚗 รุ่นรถที่ใช้ <span id="carSelectedCount" class="car-count-badge"></span></label>
+              <label>รุ่นรถที่ใช้ <span id="carSelectedCount" class="car-count-badge"></span></label>
               <div id="carMultiBox" class="multi-select-box" onclick="toggleCarDropdown(event)">
                 <div id="carChips" class="chips-container">
-                  <span class="placeholder-text">⏳ กำลังโหลด...</span>
+                  <span class="placeholder-text">กำลังโหลด...</span>
                 </div>
               </div>
               <div id="carDropdownList" class="multi-dropdown-list">
                 <div class="multi-dropdown-search-wrap" onclick="event.stopPropagation()">
                   <input type="text" id="carSearchInput" class="multi-dropdown-search"
-                         placeholder="🔍 ค้นหารุ่นรถ..."
+                         placeholder="ค้นหารุ่นรถ..."
                          oninput="renderCarDropdownList(this.value)">
                 </div>
                 <div class="multi-dropdown-actions" onclick="event.stopPropagation()">
-                  <span class="dd-action-link" onclick="selectAllCars(event)">✅ เลือกทั้งหมด</span>
+                  <span class="dd-action-link" onclick="selectAllCars(event)">เลือกทั้งหมด</span>
                   <span class="dd-action-sep">|</span>
-                  <span class="dd-action-link" onclick="clearAllCars(event)">🗑️ ล้างทั้งหมด</span>
+                  <span class="dd-action-link" onclick="clearAllCars(event)">ล้างทั้งหมด</span>
                 </div>
                 <div id="carDropdownItems"></div>
               </div>
@@ -197,13 +265,13 @@
             <div class="form-group full">
               <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
                 <div id="imgPreviewBox" style="width:110px;height:110px;border:1px dashed #cbd5e1;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--bg);flex-shrink:0">
-                  <span style="font-size:28px;color:var(--faint)">📦</span>
+                  <svg class="icon icon-lg" style="color:var(--faint)"><use href="#p-i-package"></use></svg>
                 </div>
                 <div style="flex:1;min-width:180px">
                   <input type="file" id="inp_imageFile" accept="image/*" style="display:none" onchange="onProductImageSelected(this)">
                   <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button type="button" class="btn btn-ghost" id="btnPickImage" onclick="document.getElementById('inp_imageFile').click()">🖼️ เลือกรูป</button>
-                    <button type="button" class="btn btn-ghost" id="btnDeleteImage" style="display:none" onclick="deleteProductImageNow()">🗑️ ลบรูป</button>
+                    <button type="button" class="btn btn-ghost" id="btnPickImage" onclick="document.getElementById('inp_imageFile').click()">เลือกรูป</button>
+                    <button type="button" class="btn btn-ghost" id="btnDeleteImage" style="display:none" onclick="deleteProductImageNow()">ลบรูป</button>
                   </div>
                   <div id="imgUploadProgress" style="display:none;margin-top:8px">
                     <div class="img-upload-progress-track"><div class="img-upload-progress-bar"></div></div>
@@ -220,8 +288,8 @@
             <div class="form-group full">
               <label>สถานะสินค้า</label>
               <select id="inp_status" class="form-control">
-                <option value="Active">✅ Active — ใช้งานอยู่</option>
-                <option value="Inactive">❌ Inactive — ปิดใช้งาน</option>
+                <option value="Active">Active — ใช้งานอยู่</option>
+                <option value="Inactive">Inactive — ปิดใช้งาน</option>
               </select>
             </div>
           </div>
@@ -231,7 +299,7 @@
 
         <div class="modal-footer">
           <button type="button" class="btn btn-ghost" onclick="closeProductModal()">ยกเลิก</button>
-          <button type="submit" class="btn btn-primary" id="modalBtnSave">💾 บันทึก</button>
+          <button type="submit" class="btn btn-primary" id="modalBtnSave"><svg class="icon"><use href="#p-i-save"></use></svg>บันทึก</button>
         </div>
       </form>
     </div>
@@ -241,14 +309,14 @@
   <div class="modal-overlay" id="deleteModal">
     <div class="modal-box" style="width:420px">
       <div class="modal-body" style="text-align:center;padding:30px 24px 18px">
-        <div class="confirm-ic">🗑️</div>
+        <div class="confirm-ic"><svg class="icon icon-lg"><use href="#p-i-trash"></use></svg></div>
         <h3 style="margin:15px 0 5px;color:var(--ink);font-size:18px;font-weight:600">ยืนยันการลบข้อมูลสินค้า?</h3>
         <p style="color:var(--muted);font-size:13px;margin:0 0 15px">คุณกำลังจะลบรายการสินค้านี้ออกจากระบบ ลบแล้วกู้คืนไม่ได้</p>
         <div class="confirm-card" id="deleteTargetCard"></div>
       </div>
       <div class="modal-footer" style="justify-content:center">
         <button type="button" class="btn btn-ghost" style="min-width:100px" onclick="closeDeleteModal()">ยกเลิก</button>
-        <button type="button" class="btn btn-danger" style="min-width:120px" id="btnConfirmDelete" onclick="execDeleteProduct()">🗑️ ลบข้อมูล</button>
+        <button type="button" class="btn btn-danger" style="min-width:120px" id="btnConfirmDelete" onclick="execDeleteProduct()">ลบข้อมูล</button>
       </div>
     </div>
   </div>
@@ -257,13 +325,13 @@
   <div class="modal-overlay" id="viewProductModal">
     <div class="modal-box" style="width:680px">
       <div class="modal-header">
-        <span>📦 รายละเอียดสินค้า</span>
+        <span class="modal-title-wrap"><svg class="icon"><use href="#p-i-package"></use></svg><span>รายละเอียดสินค้า</span></span>
         <button class="modal-close" onclick="closeModal('viewProductModal')">×</button>
       </div>
       <div class="modal-body">
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px">
           <div id="viewImgBox" style="width:140px;height:140px;border:1px solid var(--line);border-radius:12px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg);box-shadow:0 1px 3px rgba(0,0,0,.08)">
-            <span style="font-size:36px;color:var(--faint)">📦</span>
+            <svg class="icon icon-lg" style="color:var(--faint)"><use href="#p-i-package"></use></svg>
           </div>
           <div style="flex:1;min-width:220px">
             <div id="viewProductName" style="font-size:18px;font-weight:700;color:var(--ink)"></div>
@@ -288,7 +356,7 @@
   <div class="modal-overlay" id="printBarcodeModal">
     <div class="modal-box" style="width:420px">
       <div class="modal-header">
-        <span>🖨️ พิมพ์บาร์โค้ด</span>
+        <span class="modal-title-wrap"><svg class="icon"><use href="#p-i-printer"></use></svg><span>พิมพ์บาร์โค้ด</span></span>
         <button class="modal-close" onclick="closeModal('printBarcodeModal')">×</button>
       </div>
       <div class="modal-body">
@@ -315,7 +383,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-ghost" onclick="closeModal('printBarcodeModal')">ยกเลิก</button>
-        <button type="button" class="btn btn-primary" onclick="doPrintBarcode()">🖨️ พิมพ์</button>
+        <button type="button" class="btn btn-primary" onclick="doPrintBarcode()">พิมพ์</button>
       </div>
     </div>
   </div>
@@ -324,15 +392,20 @@
   <div id="barcodePrintArea" class="barcode-print-area"></div>
 
   <!-- Expanded Card Container -->
-  <div class="card">
-    <div class="toolbar">
+  <div class="card product-table-card">
+    <div class="toolbar product-toolbar">
       <div class="search-box">
+        <span class="search-icon"><svg class="icon"><use href="#p-i-search"></use></svg></span>
         <input type="text" id="tableSearchInput" class="table-search-input" 
-               placeholder="🔍 ค้นหาสินค้า (ชื่อ, รหัส, แบรนด์, หมวดหมู่)..." 
+               placeholder="ค้นหาชื่อสินค้า รหัส P/N บาร์โค้ด หรือแบรนด์" aria-label="ค้นหาสินค้า"
                oninput="onSearchInput()">
+        <button type="button" class="search-clear" id="searchClearBtn" aria-label="ล้างคำค้นหา" onclick="clearProductSearch()"><svg class="icon icon-sm"><use href="#p-i-x"></use></svg></button>
       </div>
       <div class="toolbar-right">
-        <span class="count" id="recordCount">กำลังโหลด...</span>
+        <select id="quickFilterSelect" class="page-size-select quick-filter" onchange="setProductQuickFilter(this.value)" aria-label="กรองตามสถานะสต็อก">
+          <option value="all">ทุกสถานะ</option><option value="low">ใกล้ถึงจุดสั่งซื้อ</option><option value="out">สินค้าหมด</option><option value="inactive">ปิดใช้งาน</option>
+        </select>
+        <span class="count" id="tableRecordCount">กำลังโหลด...</span>
         <select id="pageSizeSelect" class="page-size-select" onchange="changePageSize(this.value)">
           <option value="10">10 / หน้า</option>
           <option value="25" selected>25 / หน้า</option>
@@ -388,18 +461,19 @@
           </tr>
         </thead>
         <tbody id="productBody">
-          <tr class="empty-row"><td colspan="16">⏳ กำลังโหลดข้อมูล...</td></tr>
+          <tr class="empty-row"><td colspan="16">กำลังโหลดข้อมูล...</td></tr>
         </tbody>
       </table>
     </div>
+    <div class="mobile-product-list" id="mobileProductList"></div>
 
     <!-- Pagination Footer -->
     <div class="pagination-bar">
       <div class="pagination-info" id="paginationInfo">แสดง 0 - 0 จาก 0 รายการ</div>
       <div class="pagination-controls">
-        <button class="btn-page" id="btnPrevPage" onclick="prevPage()" disabled>❮ ก่อนหน้า</button>
+        <button class="btn-page" id="btnPrevPage" onclick="prevPage()" disabled>ก่อนหน้า</button>
         <span class="page-num" id="pageIndicator">หน้า 1 / 1</span>
-        <button class="btn-page" id="btnNextPage" onclick="nextPage()" disabled>ถัดไป ❯</button>
+        <button class="btn-page" id="btnNextPage" onclick="nextPage()" disabled>ถัดไป</button>
       </div>
     </div>
   </div>
@@ -421,6 +495,7 @@
   // Pagination state
   var currentPage = 1;
   var pageSize    = 25;
+  var productQuickFilter = 'all';
 
   // Multi-select state สำหรับรุ่นรถ
   var selectedCarIds  = [];
@@ -428,7 +503,7 @@
   var viewingDocId    = null;
 
   // ★ ยังไม่เคยอัปโหลดรูป → request รูป 404 ตามคาด — สลับเป็นไอคอน placeholder แทนไอคอนรูปหักของเบราว์เซอร์
-  function prodImgFallback(el) { el.outerHTML = '<span style="font-size:16px;color:var(--faint)">📦</span>'; }
+  function prodImgFallback(el) { el.outerHTML = '<svg class="icon" style="color:var(--faint)"><use href="#p-i-package"></use></svg>'; }
 
   window.onload = function() {
     // ★ โหลดแบบเรียงลำดับ (ไม่ใช่พร้อมกัน) เพื่อลดการอ่าน Firestore ซ้ำ
@@ -530,7 +605,8 @@
   function loadTable() {
     var tbody = document.getElementById('productBody');
     tbody.innerHTML = skeletonRows(16,6);
-    document.getElementById('recordCount').innerText = 'กำลังโหลด';
+    document.getElementById('tableRecordCount').innerText = 'กำลังโหลด';
+    document.getElementById('mobileProductList').innerHTML = '<div class="empty-state"><div class="ti">กำลังโหลดข้อมูล...</div></div>';
 
     callApi('getAllProducts', [], function(data) {
         try {
@@ -538,10 +614,10 @@
           filterAndRenderTable();
         } catch (e) {
           console.error('filterAndRenderTable error:', e);
-          tbody.innerHTML = emptyStateHtml(16,{icon:'⚠️',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
+          tbody.innerHTML = emptyStateHtml(16,{icon:'',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
         }
       }, function(err) {
-        tbody.innerHTML = emptyStateHtml(16,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
+        tbody.innerHTML = emptyStateHtml(16,{icon:'',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
           actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]});
       });
   }
@@ -551,7 +627,47 @@
   // ==========================================
   function onSearchInput() {
     currentPage = 1;
+    document.getElementById('searchClearBtn').classList.toggle('show', !!document.getElementById('tableSearchInput').value);
     filterAndRenderTable();
+  }
+
+  function clearProductSearch() {
+    document.getElementById('tableSearchInput').value = '';
+    onSearchInput();
+    document.getElementById('tableSearchInput').focus();
+  }
+
+  function setProductQuickFilter(filter) {
+    productQuickFilter = filter || 'all';
+    currentPage = 1;
+    document.getElementById('quickFilterSelect').value = productQuickFilter;
+    document.querySelectorAll('.product-stat').forEach(function(el) {
+      el.classList.toggle('active', el.getAttribute('data-filter') === productQuickFilter);
+    });
+    filterAndRenderTable();
+  }
+
+  function updateProductStats() {
+    var stats = productsCache.reduce(function(acc, item) {
+      var stock = Number(item.currentStock || 0), min = Number(item.minStock || 0);
+      acc.all++;
+      if (stock <= 0) acc.out++;
+      else if (stock <= min) acc.low++;
+      if (item.status === 'Inactive') acc.inactive++;
+      return acc;
+    }, { all:0, low:0, out:0, inactive:0 });
+    Object.keys(stats).forEach(function(key) {
+      var id = 'stat' + key.charAt(0).toUpperCase() + key.slice(1);
+      document.getElementById(id).innerText = stats[key].toLocaleString('th-TH');
+    });
+  }
+
+  function productIcon(name, extraClass) {
+    return '<svg class="icon' + (extraClass ? ' ' + extraClass : '') + '" aria-hidden="true"><use href="#p-i-' + name + '"></use></svg>';
+  }
+
+  function setProductModalTitle(icon, text) {
+    document.getElementById('modalTitle').innerHTML = productIcon(icon) + '<span>' + esc(text) + '</span>';
   }
 
   function changePageSize(val) {
@@ -561,6 +677,7 @@
   }
 
   function filterAndRenderTable() {
+    updateProductStats();
     var thead = document.getElementById('productThead');
     thead.innerHTML =
       '<tr>' +
@@ -599,6 +716,17 @@
       });
     }
 
+    if (productQuickFilter === 'out') {
+      searched = searched.filter(function(item) { return Number(item.currentStock || 0) <= 0; });
+    } else if (productQuickFilter === 'low') {
+      searched = searched.filter(function(item) {
+        var stock = Number(item.currentStock || 0), min = Number(item.minStock || 0);
+        return stock > 0 && stock <= min;
+      });
+    } else if (productQuickFilter === 'inactive') {
+      searched = searched.filter(function(item) { return item.status === 'Inactive'; });
+    }
+
     // ★ ผ่านตัวกรอง/เรียงคอลัมน์แบบ Excel ก่อนแบ่งหน้า (filter/sort ต้องทำก่อน paginate เสมอ)
     filteredProducts = XLF.apply('products', searched, [
       { col: 'productCode' }, { col: 'productName' }, { col: 'partType' }, { col: 'partNumber' },
@@ -617,7 +745,7 @@
     }
 
     var total = filteredProducts.length;
-    document.getElementById('recordCount').innerText = '📋 ทั้งหมด ' + total + ' รายการ';
+    document.getElementById('tableRecordCount').innerText = total.toLocaleString('th-TH') + ' รายการ';
 
     var tbody = document.getElementById('productBody');
 
@@ -625,9 +753,10 @@
       tbody.innerHTML = productsCache.length
         ? emptyStateHtml(16,{title:'ไม่พบสินค้าที่ตรงกับตัวกรอง',sub:'ลองลดคำค้นหรือล้างตัวกรอง',
             actions:[{label:'ล้างตัวกรอง',onclick:'XLF.clearAll(\'products\');document.getElementById(\'tableSearchInput\').value=\'\';onSearchInput();'},{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]})
-        : emptyStateHtml(16,{icon:'🛒',title:'ยังไม่มีข้อมูลสินค้า',sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
+        : emptyStateHtml(16,{icon:'',title:'ยังไม่มีข้อมูลสินค้า',sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
             actions:[{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]});
       updatePaginationControls(0, 0, 0);
+      document.getElementById('mobileProductList').innerHTML = '<div class="empty-state"><div class="ti">' + (productsCache.length ? 'ไม่พบสินค้าที่ตรงกับเงื่อนไข' : 'ยังไม่มีข้อมูลสินค้า') + '</div><div class="su">' + (productsCache.length ? 'ลองเปลี่ยนคำค้นหาหรือตัวกรอง' : 'เพิ่มสินค้าแรกเพื่อเริ่มใช้งาน') + '</div></div>';
       return;
     }
 
@@ -656,54 +785,68 @@
         }
       }
 
-      var partTypeTxt = '<span style="display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:600; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; border-radius:20px; padding:2px 10px;">⏳ รอดำเนินการ</span>';
+      var partTypeTxt = '<span class="badge badge-warn">รอดำเนินการ</span>';
       if (item.partType === 'แท้') {
-        partTypeTxt = '<span class="badge badge-ok">✅ แท้</span>';
+        partTypeTxt = '<span class="badge badge-ok">แท้</span>';
       } else if (item.partType === 'เทียบ') {
-        partTypeTxt = '<span class="badge badge-warn">🔧 เทียบ</span>';
+        partTypeTxt = '<span class="badge badge-info">เทียบ</span>';
       } // ★ ค่าอื่น (PENDING หรือว่าง) ใช้ป้าย "รอดำเนินการ" ด้านบนเป็นค่าเริ่มต้นอยู่แล้ว
 
       var codeKey = item.id || item.productCode;
       var imgCell = item.imageUrl
         ? '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" style="width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--line)" onerror="prodImgFallback(this)">'
-        : '<span style="font-size:16px;color:var(--faint)">📦</span>';
+        : productIcon('package');
 
       var barcodeBadge = !item.barcode
-        ? '<span title="ยังไม่มีบาร์โค้ด — เปิด &quot;ดูรายละเอียด&quot; เพื่อสร้าง" style="opacity:.35;font-size:12px;margin-left:5px">🏷️</span>'
+        ? '<span title="ยังไม่มีบาร์โค้ด — เปิด &quot;ดูรายละเอียด&quot; เพื่อสร้าง" style="opacity:.35;color:var(--muted);margin-left:5px">' + productIcon('tag','icon-sm') + '</span>'
         : (item.barcodeGenerated
-            ? '<span title="บาร์โค้ดที่ระบบสร้าง: ' + esc(item.barcode) + '" style="color:#7c3aed;font-size:12px;margin-left:5px">🏷️</span>'
-            : '<span title="บาร์โค้ดจริง: ' + esc(item.barcode) + '" style="color:#166534;font-size:12px;margin-left:5px">🏷️</span>');
+            ? '<span title="บาร์โค้ดที่ระบบสร้าง: ' + esc(item.barcode) + '" style="color:#7c3aed;margin-left:5px">' + productIcon('tag','icon-sm') + '</span>'
+            : '<span title="บาร์โค้ดจริง: ' + esc(item.barcode) + '" style="color:#166534;margin-left:5px">' + productIcon('tag','icon-sm') + '</span>');
 
       return '<tr>' +
         '<td style="text-align: center; color: #94a3b8;">' + rowNum + '</td>' +
         '<td style="text-align:center">' + imgCell + '</td>' +
         '<td><span class="chip-code">' + esc(item.productCode || item.id) + '</span>' + barcodeBadge + '</td>' +
-        '<td style="font-weight:600;">' + esc(item.productName) + '</td>' +
+        '<td class="product-name-cell"><div class="product-name-main">' + esc(item.productName) + '</div><div class="product-name-meta">' + esc(item.brandName || item.categoryName || '') + '</div></td>' +
         '<td>' + partTypeTxt + '</td>' +
         '<td>' + (item.partNumber ? '<span class="chip-code" style="background:#f1f5f9; color:#475569;">' + esc(item.partNumber) + '</span>' : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
         '<td>' + esc(item.brandName || '—') + '</td>' +
         '<td>' + esc(item.categoryName || '—') + '</td>' +
         '<td>' + esc(item.vendorName || '—') + '</td>' +
         '<td>' + (item.zoneName === 'รอดำเนินการ'
-                    ? '<span style="display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:600; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; border-radius:20px; padding:2px 10px;">⏳ รอดำเนินการ</span>'
+                    ? '<span class="badge badge-warn">รอดำเนินการ</span>'
                     : esc(item.zoneName || '—')) + '</td>' +
         '<td class="models-cell">' + modelTxt + '</td>' +
         '<td class="price-cell">' + Number(item.costPrice || 0).toFixed(2) + '</td>' +
         '<td class="price-cell">' + Number(item.sellingPrice || 0).toFixed(2) + '</td>' +
-        '<td style="text-align:center; font-weight:600;">' + (item.currentStock || 0) + '</td>' +
-        '<td style="text-align:center;"><span style="font-size:12px; font-weight:600; color:' + (item.status === 'Active' ? '#166534' : '#991b1b') + ';">' + esc(item.status || 'Active') + '</span></td>' +
+        '<td style="text-align:center"><span class="stock-value ' + (Number(item.currentStock || 0) <= 0 ? 'out' : (Number(item.currentStock || 0) <= Number(item.minStock || 0) ? 'low' : '')) + '">' + Number(item.currentStock || 0).toLocaleString('th-TH') + '</span></td>' +
+        '<td style="text-align:center"><span class="badge ' + (item.status === 'Active' ? 'badge-ok' : 'badge-mute') + '"><span class="status-dot"></span>' + (item.status === 'Active' ? 'ใช้งาน' : 'ปิดใช้งาน') + '</span></td>' +
         '<td class="col-sticky-right" style="text-align:center;">' +
           '<div class="row-actions">' +
-            '<button class="btn btn-icon view" onclick="openViewModal(\'' + escJs(codeKey) + '\')" title="ดูรายละเอียด">👁️</button>' +
-            '<button class="btn btn-icon edit" onclick="openEditModal(\'' + escJs(codeKey) + '\')" title="แก้ไข">✏️</button>' +
-            '<button class="btn btn-icon del" onclick="confirmDeleteModal(\'' + escJs(codeKey) + '\')" title="ลบ">🗑️</button>' +
+            '<button class="btn btn-icon view" onclick="openViewModal(\'' + escJs(codeKey) + '\')" title="ดูรายละเอียด" aria-label="ดูรายละเอียด ' + esc(item.productName) + '">' + productIcon('eye') + '</button>' +
+            '<button class="btn btn-icon edit" onclick="openEditModal(\'' + escJs(codeKey) + '\')" title="แก้ไข" aria-label="แก้ไข ' + esc(item.productName) + '">' + productIcon('edit') + '</button>' +
+            '<button class="btn btn-icon del" onclick="confirmDeleteModal(\'' + escJs(codeKey) + '\')" title="ลบ" aria-label="ลบ ' + esc(item.productName) + '">' + productIcon('trash') + '</button>' +
           '</div>' +
         '</td>' +
       '</tr>';
     }).join('');
 
     tbody.innerHTML = rowsHtml;
+    renderMobileProducts(pageItems);
     updatePaginationControls(startIdx + 1, endIdx, total);
+  }
+
+  function renderMobileProducts(items) {
+    document.getElementById('mobileProductList').innerHTML = items.map(function(item) {
+      var codeKey = item.id || item.productCode;
+      var stock = Number(item.currentStock || 0), min = Number(item.minStock || 0);
+      var stockClass = stock <= 0 ? 'out' : (stock <= min ? 'low' : '');
+      var image = item.imageUrl ? '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" onerror="prodImgFallback(this)">' : productIcon('package','icon-lg');
+      return '<article class="mobile-product-card">' +
+        '<div class="mobile-product-top"><div class="mobile-product-img">' + image + '</div><div class="mobile-product-main"><div class="mobile-product-name">' + esc(item.productName) + '</div><div class="mobile-product-code">' + esc(item.productCode || item.id) + (item.partNumber ? ' · ' + esc(item.partNumber) : '') + '</div></div><div class="mobile-product-price">฿' + Number(item.sellingPrice || 0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</div></div>' +
+        '<div class="mobile-product-meta"><span>' + esc(item.brandName || 'ไม่ระบุแบรนด์') + '</span><span>•</span><span>' + esc(item.zoneName || 'ไม่ระบุโซน') + '</span><span>•</span><span class="mobile-stock stock-value ' + stockClass + '">คงเหลือ ' + stock.toLocaleString('th-TH') + '</span></div>' +
+        '<div class="mobile-card-actions"><button class="btn btn-ghost" onclick="openViewModal(\'' + escJs(codeKey) + '\')">' + productIcon('eye') + 'ดูรายละเอียด</button><button class="btn btn-soft" onclick="openEditModal(\'' + escJs(codeKey) + '\')">' + productIcon('edit') + 'แก้ไข</button><button class="btn btn-icon del" onclick="confirmDeleteModal(\'' + escJs(codeKey) + '\')" aria-label="ลบ ' + esc(item.productName) + '">' + productIcon('trash') + '</button></div></article>';
+    }).join('');
   }
 
   function updatePaginationControls(from, to, total) {
@@ -763,8 +906,8 @@
     updateImageSectionForEdit(null, '');
     updateBarcodeGenButton();
 
-    document.getElementById('modalTitle').innerText   = '🛒 เพิ่มข้อมูลสินค้า';
-    document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
+    setProductModalTitle('package', 'เพิ่มข้อมูลสินค้า');
+    document.getElementById('modalBtnSave').innerHTML = productIcon('save') + 'บันทึก';
     document.getElementById('modalAlert').style.display = 'none';
     openModal('productModal');
   }
@@ -795,8 +938,8 @@
     updateImageSectionForEdit(editingDocId, item.imageUrl);
     updateBarcodeGenButton();
 
-    document.getElementById('modalTitle').innerText   = '✏️ แก้ไขข้อมูลสินค้า (' + editingDocId + ')';
-    document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
+    setProductModalTitle('edit', 'แก้ไขข้อมูลสินค้า (' + editingDocId + ')');
+    document.getElementById('modalBtnSave').innerHTML = productIcon('save') + 'บันทึกการแก้ไข';
     document.getElementById('modalAlert').style.display = 'none';
     openModal('productModal');
   }
@@ -817,7 +960,7 @@
     updateImageSectionForEdit(null, '');
 
     var btn = document.getElementById('modalBtnSave');
-    btn.disabled = false; btn.innerText = '💾 บันทึก';
+    btn.disabled = false; btn.innerHTML = productIcon('save') + 'บันทึก';
     editingDocId = null;
     selectedCarIds = [];
     updateBarcodeGenButton();
@@ -832,7 +975,7 @@
     var partType = document.getElementById('inp_partType').value; // ★ ไม่บังคับเลือก — ว่างไว้ได้ (แสดงเป็น "รอดำเนินการ")
 
     btn.disabled  = true;
-    btn.innerText = '⏳ กำลังบันทึก...';
+    btn.innerText = 'กำลังบันทึก...';
 
     var formData = {
       docId        : editingDocId || null,
@@ -855,20 +998,20 @@
     var wasNew = !editingDocId;
     callApi('saveProduct', [formData], function(res) {
         btn.disabled  = false;
-        btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
+        btn.innerHTML = productIcon('save') + (editingDocId ? 'บันทึกการแก้ไข' : 'บันทึก');
         alertEl.style.display = 'block';
 
         if (res.success) {
           alertEl.className = 'modal-alert success';
-          alertEl.innerText = '✅ ' + res.message + ' (ID: ' + res.id + ')';
+          alertEl.innerText = res.message + ' (ID: ' + res.id + ')';
           loadTable();
           notifyParentRefreshProducts();
           if (wasNew && res.id) {
             // ★ เพิ่งสร้างสินค้าใหม่ (เพิ่งมีรหัสสินค้า) — เปิดโอกาสอัปโหลดรูปต่อได้เลยโดยไม่ต้องปิดแล้วเปิดแก้ไขใหม่
             editingDocId = res.id;
             document.getElementById('modalDocId').value = res.id;
-            document.getElementById('modalTitle').innerText = '✏️ แก้ไขข้อมูลสินค้า (' + res.id + ')';
-            document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
+            setProductModalTitle('edit', 'แก้ไขข้อมูลสินค้า (' + res.id + ')');
+            document.getElementById('modalBtnSave').innerHTML = productIcon('save') + 'บันทึกการแก้ไข';
             updateImageSectionForEdit(res.id, '');
             updateBarcodeGenButton();
             alertEl.innerText += ' — ตอนนี้เพิ่มรูปสินค้า/สร้างบาร์โค้ดได้แล้ว';
@@ -877,14 +1020,14 @@
           }
         } else {
           alertEl.className = 'modal-alert error';
-          alertEl.innerText = '❌ ' + res.message;
+          alertEl.innerText = res.message;
         }
       }, function(err) {
         btn.disabled  = false;
-        btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
+        btn.innerHTML = productIcon('save') + (editingDocId ? 'บันทึกการแก้ไข' : 'บันทึก');
         alertEl.style.display = 'block';
         alertEl.className     = 'modal-alert error';
-        alertEl.innerText     = '❌ Error: ' + JSON.stringify(err);
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
       });
   }
 
@@ -904,7 +1047,7 @@
   }
 
   function resetImagePreview() {
-    document.getElementById('imgPreviewBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
+    document.getElementById('imgPreviewBox').innerHTML = '<svg class="icon icon-lg" style="color:var(--faint)"><use href="#p-i-package"></use></svg>';
     document.getElementById('btnDeleteImage').style.display = 'none';
     document.getElementById('inp_imageFile').value = '';
   }
@@ -916,7 +1059,7 @@
   }
 
   function prodModalImgFallback() {
-    document.getElementById('imgPreviewBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
+    document.getElementById('imgPreviewBox').innerHTML = '<svg class="icon icon-lg" style="color:var(--faint)"><use href="#p-i-package"></use></svg>';
     document.getElementById('btnDeleteImage').style.display = 'none';
   }
 
@@ -1032,7 +1175,7 @@
       var btn = document.getElementById('btnDeleteImage');
       btnBusy(btn, 'กำลังลบ...');
       callApi('deleteProductImage', [editingDocId], function (res) {
-        btnDone(btn); btn.innerHTML = '🗑️ ลบรูป';
+        btnDone(btn); btn.innerHTML = productIcon('trash') + 'ลบรูป';
         if (res && res.success) {
           resetImagePreview();
           toast('ลบรูปเรียบร้อย');
@@ -1041,7 +1184,7 @@
           swyError('ลบไม่สำเร็จ', (res && res.message) || '');
         }
       }, function (err) {
-        btnDone(btn); btn.innerHTML = '🗑️ ลบรูป';
+        btnDone(btn); btn.innerHTML = productIcon('trash') + 'ลบรูป';
         swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
       });
     });
@@ -1051,7 +1194,7 @@
   // ดูรายละเอียดสินค้า + สร้าง/พิมพ์บาร์โค้ด
   // ==========================================
   function viewImgFallback() {
-    document.getElementById('viewImgBox').innerHTML = '<span style="font-size:36px;color:var(--faint)">📦</span>';
+    document.getElementById('viewImgBox').innerHTML = '<svg class="icon icon-lg" style="color:var(--faint)"><use href="#p-i-package"></use></svg>';
   }
 
   function openViewModal(docId) {
@@ -1078,10 +1221,10 @@
       { label: 'แบรนด์', value: item.brandName || '—' },
       { label: 'หมวดหมู่', value: item.categoryName || '—' },
       { label: 'ผู้จำหน่าย', value: item.vendorName || '—' },
-      { label: 'โซนจัดเก็บ', value: '📦 ' + (item.zoneName || '—') },
+      { label: 'โซนจัดเก็บ', value: item.zoneName || '—' },
       { label: 'สต๊อกขั้นต่ำ', value: mn + ' ชิ้น' }
     ];
-    if (item.carModel) fields.push({ label: '🚗 รุ่นรถที่ใส่ได้', value: item.carModel, wide: true });
+    if (item.carModel) fields.push({ label: 'รุ่นรถที่ใส่ได้', value: item.carModel, wide: true });
     document.getElementById('viewFieldGrid').innerHTML = fields.map(function (f) {
       return '<div class="view-field-tile' + (f.wide ? ' wide' : '') + '"><div class="vft-label">' + esc(f.label) + '</div><div class="vft-value">' + esc(f.value) + '</div></div>';
     }).join('');
@@ -1089,7 +1232,7 @@
     var imgBox = document.getElementById('viewImgBox');
     imgBox.innerHTML = item.imageUrl
       ? '<img src="' + esc(item.imageUrl) + '" style="width:100%;height:100%;object-fit:cover" onerror="viewImgFallback()">'
-      : '<span style="font-size:36px;color:var(--faint)">📦</span>';
+      : '<svg class="icon icon-lg" style="color:var(--faint)"><use href="#p-i-package"></use></svg>';
 
     renderViewBarcodeSection(item);
     openModal('viewProductModal');
@@ -1127,7 +1270,7 @@
         (item.barcodeGenerated ? 'บาร์โค้ดสร้างโดยระบบ (EAN-13 ใช้ภายในร้าน)' : 'บาร์โค้ดจริงจากผู้ผลิต') +
         ' — <span class="mono">' + esc(item.barcode) + '</span>' +
       '</div>' +
-      '<button type="button" class="btn btn-primary" style="width:100%" onclick="openPrintBarcodeModal()">🖨️ พิมพ์บาร์โค้ด</button>';
+      '<button type="button" class="btn btn-primary" style="width:100%" onclick="openPrintBarcodeModal()">' + productIcon('printer') + 'พิมพ์บาร์โค้ด</button>';
     renderBarcodeSvg('viewBarcodeSvg', item.barcode);
   }
 
@@ -1215,7 +1358,7 @@
     var codeStr = esc(item.productCode || item.id || '-');
 
     document.getElementById('deleteTargetCard').innerHTML =
-      '<div style="font-size:14px;font-weight:600;color:var(--ink)">📦 ' + nameStr + '</div>' +
+      '<div style="font-size:14px;font-weight:600;color:var(--ink)">' + nameStr + '</div>' +
       '<span class="chip-code" style="margin-top:5px">' + codeStr + '</span>';
 
     openModal('deleteModal');
@@ -1226,7 +1369,7 @@
     closeModal('deleteModal');
     var btn = document.getElementById('btnConfirmDelete');
     btn.disabled = false;
-    btn.innerText = '🗑️ ลบข้อมูล';
+    btn.innerHTML = productIcon('trash') + 'ลบข้อมูล';
   }
 
   function execDeleteProduct() {
@@ -1234,7 +1377,7 @@
     
     var btn = document.getElementById('btnConfirmDelete');
     btn.disabled = true;
-    btn.innerText = '⏳ กำลังลบ...';
+    btn.innerText = 'กำลังลบ...';
 
     callApi('deleteProduct', [targetDeleteDocId], function(res) {
         closeDeleteModal();
@@ -1293,7 +1436,7 @@
 
     var filtered = filterCars(keyword);
     if (filtered.length === 0) {
-      itemsBox.innerHTML = '<div class="multi-dropdown-empty">🔍 ไม่พบรุ่นรถที่ค้นหา</div>';
+      itemsBox.innerHTML = '<div class="multi-dropdown-empty">ไม่พบรุ่นรถที่ค้นหา</div>';
       return;
     }
 
