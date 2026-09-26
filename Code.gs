@@ -66,6 +66,7 @@ function doGet(e) {
   template.authToken = token;
   template.userRole  = session.role;
   template.userName  = session.fullName || session.username;
+  template.username  = session.username;
   template.resetMode  = mode;
   template.resetToken = rtoken;
 

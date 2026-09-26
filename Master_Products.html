@@ -13,11 +13,25 @@
   .table-search-input{width:100%;padding:9px 14px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:14px;outline:none;box-sizing:border-box;transition:border-color .2s}
   .table-search-input:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(0,80,136,.12)}
   .toolbar-right{display:flex;align-items:center;gap:16px}
+  .column-picker{position:relative}
+  .column-picker-panel{display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:40;width:310px;max-width:calc(100vw - 28px);background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);overflow:hidden}
+  .column-picker-panel.open{display:block}
+  .column-picker-head{padding:12px 14px 9px;border-bottom:1px solid var(--line-soft)}
+  .column-presets{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line-soft)}
+  .column-preset{border:1px solid var(--line);background:#fff;color:var(--text);border-radius:7px;padding:7px 8px;font:inherit;font-size:12px;cursor:pointer;text-align:left}
+  .column-preset:hover,.column-preset.active{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
+  .column-options{padding:7px 10px;max-height:300px;overflow:auto;overscroll-behavior:contain}
+  .column-option{display:flex;align-items:center;gap:9px;padding:7px 5px;border-radius:7px;font-size:13px;color:var(--text);cursor:pointer}
+  .column-option:hover{background:var(--bg)}
+  .column-option input{width:16px;height:16px;accent-color:var(--primary)}
+  .column-option.locked{color:var(--muted);cursor:not-allowed}
+  .column-picker-foot{display:flex;justify-content:space-between;gap:8px;padding:10px 12px;border-top:1px solid var(--line-soft);background:var(--bg)}
   .page-size-select{padding:7px 12px;border:1px solid #cbd5e1;border-radius:6px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px;outline:none;background:#fff;color:#334155;cursor:pointer}
   .price-cell{text-align:right;font-family:var(--font-sans);font-size:13px;font-weight:500}
   .product-name-cell{min-width:220px}
   .product-cost-cell{color:var(--muted)}
   .product-selling-cell{font-size:16px;font-weight:700;color:var(--primary)}
+  #productTable .col-sticky-right{position:sticky;right:0;box-shadow:-2px 0 4px rgba(15,23,42,.05)}
   .pagination-bar{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:12px 13px 0;border-top:1px solid var(--line-soft);flex-wrap:wrap;gap:10px}
   .pagination-info{font-size:13px;color:var(--muted)}
   .pagination-controls{display:flex;align-items:center;gap:6px}
@@ -49,6 +63,8 @@
   @media (max-width:767px){
     .search-box{max-width:100%}
     .product-selling-cell{font-size:17px}
+    .toolbar-right{width:100%;gap:8px;justify-content:space-between}
+    .column-picker-panel{position:fixed;left:10px;right:10px;top:auto;bottom:76px;width:auto;max-width:none}
   }
   .models-cell{max-width:280px}
   .chip-model-more{background:var(--line-soft);color:#475569;border-color:var(--line);cursor:help}
@@ -77,6 +93,7 @@
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
     <button class="btn btn-ghost" onclick="loadTable()">🔄 รีเฟรช</button>
+    <button class="btn btn-ghost" onclick="exportAllProductFields()">📥 Export CSV</button>
     <button class="btn btn-primary" onclick="openAddModal()">+ เพิ่มสินค้า</button>
   </div>
 </div>
@@ -340,6 +357,15 @@
       </div>
       <div class="toolbar-right">
         <span class="count" id="recordCount">กำลังโหลด...</span>
+        <div class="column-picker">
+          <button type="button" class="btn btn-ghost" id="btnColumns" aria-haspopup="dialog" aria-expanded="false" onclick="toggleColumnPicker(event)">คอลัมน์</button>
+          <div class="column-picker-panel" id="columnPickerPanel" role="dialog" aria-label="เลือกคอลัมน์ที่แสดง">
+            <div class="column-picker-head"><b style="font-size:13.5px;color:var(--ink)">คอลัมน์ที่แสดง</b><div class="field-hint">บันทึกในอุปกรณ์นี้ แยกตามบัญชีผู้ใช้</div></div>
+            <div class="column-presets" id="columnPresets"></div>
+            <div class="column-options" id="columnOptions"></div>
+            <div class="column-picker-foot"><button type="button" class="btn btn-ghost" onclick="resetProductColumns()">คืนค่าเริ่มต้น</button><button type="button" class="btn btn-primary" onclick="saveProductColumnPreference()">บันทึกมุมมอง</button></div>
+          </div>
+        </div>
         <select id="pageSizeSelect" class="page-size-select" onchange="changePageSize(this.value)">
           <option value="10">10 / หน้า</option>
           <option value="25" selected>25 / หน้า</option>
@@ -356,47 +382,11 @@
 
     <!-- Table Container Wide View -->
     <div class="table-wrap">
-      <table>
-        <colgroup>
-          <col style="width: 45px;">  <!-- # -->
-          <col style="width: 52px;">  <!-- รูป -->
-          <col style="width: 130px;"> <!-- รหัสสินค้า -->
-          <col style="width: 250px;"> <!-- ชื่อสินค้า -->
-          <col style="width: 90px;">  <!-- ประเภท -->
-          <col style="width: 130px;"> <!-- รหัสผู้ผลิต (P/N) -->
-          <col style="width: 120px;"> <!-- แบรนด์ -->
-          <col style="width: 120px;"> <!-- หมวดหมู่ -->
-          <col style="width: 130px;"> <!-- ผู้จำหน่าย -->
-          <col style="width: 100px;"> <!-- โซน -->
-          <col style="width: 220px;"> <!-- รุ่นรถ (Model) -->
-          <col style="width: 95px;">  <!-- ราคาต้นทุน -->
-          <col style="width: 95px;">  <!-- ราคาขาย -->
-          <col style="width: 80px;">  <!-- จำนวน -->
-          <col style="width: 90px;">  <!-- สถานะ -->
-          <col style="width: 90px;">  <!-- จัดการ -->
-        </colgroup>
-        <thead id="productThead">
-          <tr>
-            <th style="text-align: center;">#</th>
-            <th style="text-align: center;">รูป</th>
-            <th>รหัสสินค้า</th>
-            <th>ชื่อสินค้า</th>
-            <th>ประเภท</th>
-            <th>รหัสผู้ผลิต (P/N)</th>
-            <th>แบรนด์</th>
-            <th>หมวดหมู่</th>
-            <th>ผู้จำหน่าย</th>
-            <th>โซน</th>
-            <th>รุ่นรถ (Model)</th>
-            <th class="price-cell">ทุน (฿)</th>
-            <th class="price-cell">ขาย (฿)</th>
-            <th style="text-align: center;">จำนวน</th>
-            <th style="text-align: center;">สถานะ</th>
-            <th class="col-sticky-right" style="text-align: center;">จัดการ</th>
-          </tr>
-        </thead>
+      <table id="productTable" data-table-layout="wide">
+        <colgroup id="productColgroup"></colgroup>
+        <thead id="productThead"></thead>
         <tbody id="productBody">
-          <tr class="empty-row"><td colspan="16">⏳ กำลังโหลดข้อมูล...</td></tr>
+          <tr class="empty-row"><td>กำลังโหลดข้อมูล...</td></tr>
         </tbody>
       </table>
     </div>
@@ -419,6 +409,136 @@
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
   var WEB_APP_URL = "<?= webAppUrl ?>";
+  var CURRENT_USERNAME = "<?= username ?>";
+
+  var PRODUCT_COLUMNS = [
+    {id:'rownum',label:'#',width:45,defaultVisible:false,align:'center'},
+    {id:'image',label:'รูป',width:52,defaultVisible:true,align:'center'},
+    {id:'productCode',label:'รหัสสินค้า',width:130,defaultVisible:true,required:true,sort:true},
+    {id:'productName',label:'ชื่อสินค้า',width:250,defaultVisible:true,required:true,sort:true},
+    {id:'partType',label:'ประเภท',width:90,defaultVisible:false,sort:true},
+    {id:'partNumber',label:'รหัสผู้ผลิต (P/N)',width:130,defaultVisible:false,sort:true},
+    {id:'brandName',label:'แบรนด์',width:120,defaultVisible:true,sort:true},
+    {id:'categoryName',label:'หมวดหมู่',width:120,defaultVisible:true,sort:true},
+    {id:'vendorName',label:'ผู้จำหน่าย',width:140,defaultVisible:false,sort:true},
+    {id:'zoneName',label:'โซน',width:100,defaultVisible:false,sort:true},
+    {id:'carModel',label:'รุ่นรถ (Model)',width:220,defaultVisible:false},
+    {id:'costPrice',label:'ทุน (฿)',width:105,defaultVisible:false,sort:true,align:'right'},
+    {id:'sellingPrice',label:'ขาย (฿)',width:110,defaultVisible:true,sort:true,align:'right'},
+    {id:'currentStock',label:'จำนวน',width:80,defaultVisible:true,sort:true,align:'center'},
+    {id:'status',label:'สถานะ',width:95,defaultVisible:false,sort:true,align:'center'},
+    {id:'actions',label:'จัดการ',width:120,defaultVisible:true,required:true,align:'center'}
+  ];
+  var PRODUCT_COLUMN_PRESETS = {
+    sales:{label:'งานขาย',columns:['image','productCode','productName','brandName','categoryName','sellingPrice','currentStock','actions']},
+    purchasing:{label:'งานจัดซื้อ',columns:['productCode','productName','partNumber','vendorName','costPrice','currentStock','actions']},
+    warehouse:{label:'งานคลัง',columns:['productCode','productName','categoryName','zoneName','carModel','currentStock','actions']},
+    all:{label:'ข้อมูลครบ',columns:PRODUCT_COLUMNS.map(function(c){return c.id;})}
+  };
+  var PRODUCT_PREF_VERSION=1;
+  var productColumnPrefKey='syy_product_columns_v'+PRODUCT_PREF_VERSION+'_'+String(CURRENT_USERNAME||'local').toLowerCase();
+  var visibleProductColumns=[];
+  var pendingProductColumns=[];
+
+  function defaultProductColumns(){
+    if(window.innerWidth<768)return ['productCode','productName','sellingPrice','currentStock','actions'];
+    return PRODUCT_COLUMNS.filter(function(c){return c.defaultVisible;}).map(function(c){return c.id;});
+  }
+  function normalizeProductColumns(cols){
+    var allowed={}; PRODUCT_COLUMNS.forEach(function(c){allowed[c.id]=true;});
+    var out=(Array.isArray(cols)?cols:[]).filter(function(id,i,a){return allowed[id]&&a.indexOf(id)===i;});
+    PRODUCT_COLUMNS.forEach(function(c){if(c.required&&out.indexOf(c.id)<0)out.push(c.id);});
+    return PRODUCT_COLUMNS.filter(function(c){return out.indexOf(c.id)>-1;}).map(function(c){return c.id;});
+  }
+  function loadProductColumnPreference(){
+    var fallback=defaultProductColumns();
+    try{
+      var saved=JSON.parse(localStorage.getItem(productColumnPrefKey)||'null');
+      if(saved&&saved.version===PRODUCT_PREF_VERSION){
+        visibleProductColumns=normalizeProductColumns(saved.visibleColumns);
+        pageSize=[10,25,50,100].indexOf(Number(saved.pageSize))>-1?Number(saved.pageSize):25;
+      }else visibleProductColumns=normalizeProductColumns(fallback);
+    }catch(e){visibleProductColumns=normalizeProductColumns(fallback);}
+    pendingProductColumns=visibleProductColumns.slice();
+    document.getElementById('pageSizeSelect').value=String(pageSize);
+  }
+  function getVisibleProductColumnDefs(){
+    return PRODUCT_COLUMNS.filter(function(c){return visibleProductColumns.indexOf(c.id)>-1;});
+  }
+  function persistProductColumnPreference(){
+    try{localStorage.setItem(productColumnPrefKey,JSON.stringify({version:PRODUCT_PREF_VERSION,visibleColumns:visibleProductColumns,pageSize:pageSize}));}catch(e){}
+  }
+  function renderProductTableStructure(){
+    var defs=getVisibleProductColumnDefs(), table=document.getElementById('productTable');
+    document.getElementById('productColgroup').innerHTML=defs.map(function(c){return '<col style="width:'+c.width+'px">';}).join('');
+    document.getElementById('productThead').innerHTML='<tr>'+defs.map(function(c){
+      var cls=(c.id==='actions'?'col-sticky-right ':'')+(c.align==='right'?'price-cell':'');
+      if(c.sort)return XLF.th(c.label,'products',c.id,{width:c.width+'px',className:cls.trim()});
+      return '<th class="'+cls.trim()+'" style="width:'+c.width+'px;text-align:'+(c.align||'left')+'">'+esc(c.label)+'</th>';
+    }).join('')+'</tr>';
+    table.classList.toggle('table-compact',defs.length<=5);
+    table.classList.toggle('table-standard',defs.length>=6&&defs.length<=8);
+    table.classList.toggle('table-wide',defs.length>=9);
+  }
+  function renderProductColumnPicker(){
+    document.getElementById('columnPresets').innerHTML=Object.keys(PRODUCT_COLUMN_PRESETS).map(function(id){
+      return '<button type="button" class="column-preset" data-preset="'+id+'" onclick="applyProductColumnPreset(\''+id+'\')">'+esc(PRODUCT_COLUMN_PRESETS[id].label)+'</button>';
+    }).join('');
+    document.getElementById('columnOptions').innerHTML=PRODUCT_COLUMNS.filter(function(c){return c.id!=='rownum';}).map(function(c){
+      var checked=pendingProductColumns.indexOf(c.id)>-1;
+      return '<label class="column-option'+(c.required?' locked':'')+'"><input type="checkbox" data-column="'+c.id+'" '+(checked?'checked ':'')+(c.required?'disabled ':'')+'onchange="togglePendingProductColumn(\''+c.id+'\',this.checked)"><span>'+esc(c.label)+'</span>'+(c.required?'<span class="field-hint" style="margin-left:auto">จำเป็น</span>':'')+'</label>';
+    }).join('');
+    updateProductPresetState();
+  }
+  function toggleColumnPicker(event){
+    if(event)event.stopPropagation();
+    var panel=document.getElementById('columnPickerPanel'),open=!panel.classList.contains('open');
+    pendingProductColumns=visibleProductColumns.slice(); renderProductColumnPicker(); panel.classList.toggle('open',open);
+    document.getElementById('btnColumns').setAttribute('aria-expanded',open?'true':'false');
+  }
+  function closeColumnPicker(){document.getElementById('columnPickerPanel').classList.remove('open');document.getElementById('btnColumns').setAttribute('aria-expanded','false');}
+  function togglePendingProductColumn(id,on){
+    if(on&&pendingProductColumns.indexOf(id)<0)pendingProductColumns.push(id);
+    if(!on)pendingProductColumns=pendingProductColumns.filter(function(x){return x!==id;});
+    pendingProductColumns=normalizeProductColumns(pendingProductColumns); updateProductPresetState();
+  }
+  function applyProductColumnPreset(id){pendingProductColumns=normalizeProductColumns(PRODUCT_COLUMN_PRESETS[id].columns);renderProductColumnPicker();}
+  function resetProductColumns(){pendingProductColumns=normalizeProductColumns(defaultProductColumns());renderProductColumnPicker();}
+  function saveProductColumnPreference(){
+    visibleProductColumns=normalizeProductColumns(pendingProductColumns); currentPage=1; persistProductColumnPreference(); closeColumnPicker(); filterAndRenderTable();
+  }
+  function updateProductPresetState(){
+    document.querySelectorAll('.column-preset').forEach(function(btn){
+      var target=normalizeProductColumns(PRODUCT_COLUMN_PRESETS[btn.dataset.preset].columns);
+      btn.classList.toggle('active',JSON.stringify(target)===JSON.stringify(normalizeProductColumns(pendingProductColumns)));
+    });
+  }
+  function renderProductCell(col,ctx){
+    var item=ctx.item, align=col.align||'left', cls=[];
+    if(col.id==='actions')cls.push('col-sticky-right');
+    if(col.id==='productName')cls.push('product-name-cell');
+    if(col.id==='carModel')cls.push('models-cell');
+    if(col.id==='costPrice')cls.push('price-cell','product-cost-cell');
+    if(col.id==='sellingPrice')cls.push('price-cell','product-selling-cell');
+    var content='—';
+    if(col.id==='rownum')content=ctx.rowNum;
+    else if(col.id==='image')content=ctx.imgCell;
+    else if(col.id==='productCode')content='<span class="chip-code">'+esc(item.productCode||item.id)+'</span>'+ctx.barcodeBadge;
+    else if(col.id==='productName')content='<span class="product-name">'+esc(item.productName)+'</span>';
+    else if(col.id==='partType')content=ctx.partTypeTxt;
+    else if(col.id==='partNumber')content=item.partNumber?'<span class="chip-code" style="background:#f1f5f9;color:#475569">'+esc(item.partNumber)+'</span>':'<span class="cell-empty">—</span>';
+    else if(col.id==='brandName')content=esc(item.brandName||'—');
+    else if(col.id==='categoryName')content=esc(item.categoryName||'—');
+    else if(col.id==='vendorName')content=esc(item.vendorName||'—');
+    else if(col.id==='zoneName')content=item.zoneName==='รอดำเนินการ'?'<span class="badge badge-warn">รอดำเนินการ</span>':esc(item.zoneName||'—');
+    else if(col.id==='carModel')content=ctx.modelTxt;
+    else if(col.id==='costPrice')content='<span class="product-price-secondary">฿'+Number(item.costPrice||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span>';
+    else if(col.id==='sellingPrice')content='<span class="product-price">฿'+Number(item.sellingPrice||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span>';
+    else if(col.id==='currentStock')content=Number(item.currentStock||0).toLocaleString('th-TH');
+    else if(col.id==='status')content='<span class="badge '+(item.status==='Active'?'badge-ok':'badge-danger')+'">'+esc(item.status||'Active')+'</span>';
+    else if(col.id==='actions')content='<div class="row-actions"><button type="button" class="btn btn-icon view" onclick="openViewModal(\''+escJs(ctx.codeKey)+'\')" title="ดูรายละเอียด">👁️</button><button type="button" class="btn btn-icon edit" onclick="openEditModal(\''+escJs(ctx.codeKey)+'\')" title="แก้ไข">✏️</button><button type="button" class="btn btn-icon del" onclick="confirmDeleteModal(\''+escJs(ctx.codeKey)+'\')" title="ลบ">🗑️</button></div>';
+    return '<td class="'+cls.join(' ')+'" style="text-align:'+align+'">'+content+'</td>';
+  }
 
   // State variables
   var productsCache     = [];
@@ -440,6 +560,9 @@
   function prodImgFallback(el) { el.outerHTML = '<span style="font-size:16px;color:var(--faint)">📦</span>'; }
 
   window.onload = function() {
+    loadProductColumnPreference();
+    renderProductColumnPicker();
+    renderProductTableStructure();
     // ★ โหลดแบบเรียงลำดับ (ไม่ใช่พร้อมกัน) เพื่อลดการอ่าน Firestore ซ้ำ
     //   getAllMasterDropdowns() และ getAllProducts() ต่างดึง 5 master collections ชุดเดียวกัน
     //   ถ้ายิงพร้อมกัน = คนละ Apps Script execution รันขนานกัน มักอ่าน cache ไม่ทันกัน (race)
@@ -451,6 +574,8 @@
       // ★ แจ้งเชลล์ (index.html) ว่า dropdown พร้อมแล้ว รับคำขอเปิดฟอร์มเพิ่มสินค้าจากหน้าอื่นได้
       try { window.parent.postMessage({ action: 'PRODUCTS_READY' }, '*'); } catch (e) {}
     });
+    document.addEventListener('click',function(e){if(!e.target.closest('.column-picker'))closeColumnPicker();});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeColumnPicker();});
   };
 
   XLF.bindHeaderClicks('#productThead', function() { return productsCache; }, filterAndRenderTable);
@@ -538,7 +663,7 @@
 
   function loadTable() {
     var tbody = document.getElementById('productBody');
-    tbody.innerHTML = skeletonRows(16,6);
+    tbody.innerHTML = skeletonRows(visibleProductColumns.length,6);
     document.getElementById('recordCount').innerText = 'กำลังโหลด';
 
     callApi('getAllProducts', [], function(data) {
@@ -547,10 +672,10 @@
           filterAndRenderTable();
         } catch (e) {
           console.error('filterAndRenderTable error:', e);
-          tbody.innerHTML = emptyStateHtml(16,{icon:'⚠️',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
+          tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
         }
       }, function(err) {
-        tbody.innerHTML = emptyStateHtml(16,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
+        tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
           actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]});
       });
   }
@@ -566,30 +691,12 @@
   function changePageSize(val) {
     pageSize = parseInt(val, 10) || 25;
     currentPage = 1;
+    persistProductColumnPreference();
     filterAndRenderTable();
   }
 
   function filterAndRenderTable() {
-    var thead = document.getElementById('productThead');
-    thead.innerHTML =
-      '<tr>' +
-        '<th style="text-align:center; width:45px;">#</th>' +
-        '<th style="text-align:center; width:52px;">รูป</th>' +
-        XLF.th('รหัสสินค้า', 'products', 'productCode') +
-        XLF.th('ชื่อสินค้า', 'products', 'productName') +
-        XLF.th('ประเภท', 'products', 'partType') +
-        XLF.th('รหัสผู้ผลิต (P/N)', 'products', 'partNumber') +
-        XLF.th('แบรนด์', 'products', 'brandName') +
-        XLF.th('หมวดหมู่', 'products', 'categoryName') +
-        XLF.th('ผู้จำหน่าย', 'products', 'vendorName') +
-        XLF.th('โซน', 'products', 'zoneName') +
-        '<th>รุ่นรถ (Model)</th>' +
-        XLF.th('ทุน (฿)', 'products', 'costPrice') +
-        XLF.th('ขาย (฿)', 'products', 'sellingPrice') +
-        XLF.th('จำนวน', 'products', 'currentStock') +
-        XLF.th('สถานะ', 'products', 'status') +
-        '<th class="col-sticky-right" style="text-align:center; width:90px;">จัดการ</th>' +
-      '</tr>';
+    renderProductTableStructure();
 
     var query = (document.getElementById('tableSearchInput').value || '').trim().toLowerCase();
 
@@ -632,9 +739,9 @@
 
     if (total === 0) {
       tbody.innerHTML = productsCache.length
-        ? emptyStateHtml(16,{title:'ไม่พบสินค้าที่ตรงกับตัวกรอง',sub:'ลองลดคำค้นหรือล้างตัวกรอง',
+        ? emptyStateHtml(visibleProductColumns.length,{title:'ไม่พบสินค้าที่ตรงกับตัวกรอง',sub:'ลองลดคำค้นหรือล้างตัวกรอง',
             actions:[{label:'ล้างตัวกรอง',onclick:'XLF.clearAll(\'products\');document.getElementById(\'tableSearchInput\').value=\'\';onSearchInput();'},{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]})
-        : emptyStateHtml(16,{icon:'🛒',title:'ยังไม่มีข้อมูลสินค้า',sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
+        : emptyStateHtml(visibleProductColumns.length,{icon:'🛒',title:'ยังไม่มีข้อมูลสินค้า',sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
             actions:[{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]});
       updatePaginationControls(0, 0, 0);
       return;
@@ -683,32 +790,8 @@
             ? '<span title="บาร์โค้ดที่ระบบสร้าง: ' + esc(item.barcode) + '" style="color:#7c3aed;font-size:12px;margin-left:5px">🏷️</span>'
             : '<span title="บาร์โค้ดจริง: ' + esc(item.barcode) + '" style="color:#166534;font-size:12px;margin-left:5px">🏷️</span>');
 
-      return '<tr>' +
-        '<td style="text-align: center; color: #94a3b8;">' + rowNum + '</td>' +
-        '<td style="text-align:center">' + imgCell + '</td>' +
-        '<td><span class="chip-code">' + esc(item.productCode || item.id) + '</span>' + barcodeBadge + '</td>' +
-        '<td class="product-name-cell"><span class="product-name">' + esc(item.productName) + '</span></td>' +
-        '<td>' + partTypeTxt + '</td>' +
-        '<td>' + (item.partNumber ? '<span class="chip-code" style="background:#f1f5f9; color:#475569;">' + esc(item.partNumber) + '</span>' : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
-        '<td>' + esc(item.brandName || '—') + '</td>' +
-        '<td>' + esc(item.categoryName || '—') + '</td>' +
-        '<td>' + esc(item.vendorName || '—') + '</td>' +
-        '<td>' + (item.zoneName === 'รอดำเนินการ'
-                    ? '<span style="display:inline-flex; align-items:center; gap:4px; font-size:11.5px; font-weight:600; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; border-radius:20px; padding:2px 10px;">⏳ รอดำเนินการ</span>'
-                    : esc(item.zoneName || '—')) + '</td>' +
-        '<td class="models-cell">' + modelTxt + '</td>' +
-        '<td class="price-cell product-cost-cell"><span class="product-price-secondary">฿' + Number(item.costPrice || 0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span></td>' +
-        '<td class="price-cell product-selling-cell"><span class="product-price">฿' + Number(item.sellingPrice || 0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span></td>' +
-        '<td style="text-align:center; font-weight:600;">' + (item.currentStock || 0) + '</td>' +
-        '<td style="text-align:center;"><span style="font-size:12px; font-weight:600; color:' + (item.status === 'Active' ? '#166534' : '#991b1b') + ';">' + esc(item.status || 'Active') + '</span></td>' +
-        '<td class="col-sticky-right" style="text-align:center;">' +
-          '<div class="row-actions">' +
-            '<button class="btn btn-icon view" onclick="openViewModal(\'' + escJs(codeKey) + '\')" title="ดูรายละเอียด">👁️</button>' +
-            '<button class="btn btn-icon edit" onclick="openEditModal(\'' + escJs(codeKey) + '\')" title="แก้ไข">✏️</button>' +
-            '<button class="btn btn-icon del" onclick="confirmDeleteModal(\'' + escJs(codeKey) + '\')" title="ลบ">🗑️</button>' +
-          '</div>' +
-        '</td>' +
-      '</tr>';
+      var ctx={item:item,rowNum:rowNum,modelTxt:modelTxt,partTypeTxt:partTypeTxt,codeKey:codeKey,imgCell:imgCell,barcodeBadge:barcodeBadge};
+      return '<tr>'+getVisibleProductColumnDefs().map(function(col){return renderProductCell(col,ctx);}).join('')+'</tr>';
     }).join('');
 
     tbody.innerHTML = rowsHtml;
@@ -738,6 +821,27 @@
       currentPage++;
       filterAndRenderTable();
     }
+  }
+
+  // Export ใช้ทุก field เสมอ ไม่ขึ้นกับคอลัมน์ที่ผู้ใช้เลือกแสดง และไม่อ่าน Firestore เพิ่ม
+  function exportAllProductFields(){
+    var rows=(filteredProducts||[]).slice();
+    if(!rows.length){swyWarning('ไม่มีข้อมูลสำหรับ Export');return;}
+    var fields=[
+      ['รหัสสินค้า','productCode'],['ชื่อสินค้า','productName'],['ประเภท','partType'],['รหัสผู้ผลิต (P/N)','partNumber'],
+      ['บาร์โค้ด','barcode'],['แบรนด์','brandName'],['หมวดหมู่','categoryName'],['ผู้จำหน่าย','vendorName'],
+      ['โซน','zoneName'],['รุ่นรถ','carModel'],['ราคาทุน','costPrice'],['ราคาขาย','sellingPrice'],
+      ['สต็อกปัจจุบัน','currentStock'],['สต็อกขั้นต่ำ','minStock'],['สถานะ','status'],['URL รูปสินค้า','imageUrl']
+    ];
+    function csvCell(v){
+      var text=String(v==null?'':v); if(/^[=+\-@]/.test(text))text="'"+text;
+      return '"'+text.replace(/"/g,'""')+'"';
+    }
+    var csv=[fields.map(function(f){return csvCell(f[0]);}).join(',')].concat(rows.map(function(row){
+      return fields.map(function(f){return csvCell(row[f[1]]);}).join(',');
+    })).join('\r\n');
+    var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download='SYY_Products_'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   }
 
   // ==========================================

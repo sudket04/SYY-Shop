@@ -103,11 +103,14 @@ a:hover{color:var(--primary-dark);text-decoration:underline}
 .table-wrap{overflow:auto;max-height:62vh;overscroll-behavior:contain;scrollbar-gutter:stable}
 table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;table-layout:auto}
 .table-wrap table.table-compact,.table-container table.table-compact{width:auto;min-width:min(100%,720px);margin-right:auto}
+.table-wrap table.table-standard,.table-container table.table-standard{width:100%;min-width:840px}
 .table-wrap table.table-wide,.table-container table.table-wide{min-width:max-content}
 th{position:sticky;top:0;z-index:10;background:var(--line-soft);color:#475569;font-weight:600;font-size:11.5px;
   text-align:left;padding:10px 13px;border-bottom:1px solid #e2e8f0;white-space:nowrap}
 td{padding:11px 13px;border-bottom:1px solid var(--line-soft);color:var(--text);vertical-align:middle;line-height:1.55}
 .table-compact th,.table-compact td{white-space:nowrap}
+.table-compact .col-sticky-right{position:static;box-shadow:none}
+.table-standard th,.table-standard td{white-space:nowrap}
 .table-wide th,.table-wide td{white-space:nowrap}
 .table-wide .product-name-cell,.table-wide .models-cell{white-space:normal}
 tbody tr:last-child td{border-bottom:none}

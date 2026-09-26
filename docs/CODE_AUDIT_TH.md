@@ -47,3 +47,13 @@ Mobile navigation สร้างจากเงื่อนไข role ชุ�
 - เพิ่ม local inline SVG icon system และ runtime upgrader สำหรับ markup เดิม ทำให้ emoji ที่ผู้ใช้มองเห็นถูกแทนด้วย line icon ขนาดมาตรฐาน โดยไม่เรียก icon CDN และไม่เปลี่ยนข้อความสำหรับ screen reader
 - Add/Edit modal ใช้ viewport-safe max height, body scroll ภายใน, stable scrollbar gutter และ overscroll containment; mobile แสดงเป็น bottom-aligned sheet โดย footer ยังเข้าถึงได้
 - การเปลี่ยนแปลงทั้งหมดเป็น presentation/client-side enhancement ไม่เพิ่ม Firestore reads/writes และไม่เปลี่ยน API contract
+
+## Product Table Custom Views
+
+- Master Product ใช้ `PRODUCT_COLUMNS` เป็นแหล่งข้อมูลเดียวสำหรับ colgroup, header, body และ dynamic colspan
+- มี preset งานขาย, งานจัดซื้อ, งานคลัง และข้อมูลครบ พร้อมบังคับรหัสสินค้า ชื่อสินค้า และคอลัมน์จัดการ
+- ค่า visible columns และ page size บันทึกใน `localStorage` โดยแยก key ด้วย authenticated username; ไม่ sync ข้ามอุปกรณ์ตามขอบเขตที่อนุมัติ
+- Mobile ที่ยังไม่มี preference เริ่มด้วยชุดย่อ รหัส/ชื่อ/ราคาขาย/คงเหลือ/จัดการ
+- Global search, Excel-style filter และ sort ยังใช้ข้อมูลทุก field แม้ field ถูกซ่อน
+- Export CSV ส่งออกทุก field ที่ใช้งาน ไม่ขึ้นกับ visible columns และป้องกัน spreadsheet formula injection เบื้องต้น
+- การเปลี่ยน view, preset, page size และ export ทำจาก cache ฝั่ง client: Firestore reads เพิ่ม 0, writes เพิ่ม 0 และไม่มีการเพิ่ม `Ui_Preferences` หรือแก้ schema

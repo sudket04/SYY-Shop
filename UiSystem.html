@@ -36,9 +36,18 @@
   }
   window.syyUpgradeIcons=upgrade;
   function classify(root){
-    (root||document).querySelectorAll('.table-wrap table, .table-container table').forEach(function(t){
+    var tables=[];
+    if(root&&root.nodeType===1){
+      var own=root.matches&&root.matches('.table-wrap table, .table-container table')?root:null;
+      var parent=root.closest&&root.closest('.table-wrap table, .table-container table');
+      if(own)tables.push(own); if(parent&&tables.indexOf(parent)<0)tables.push(parent);
+    }
+    (root||document).querySelectorAll('.table-wrap table, .table-container table').forEach(function(t){if(tables.indexOf(t)<0)tables.push(t);});
+    tables.forEach(function(t){
+      if(t.dataset.tableLayout)return;
       var row=t.tHead&&t.tHead.rows[0], count=row?row.cells.length:0;
       t.classList.toggle('table-compact',count>0&&count<=5);
+      t.classList.toggle('table-standard',count>=6&&count<=8);
       t.classList.toggle('table-wide',count>=9);
     });
   }
