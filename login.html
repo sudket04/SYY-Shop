@@ -268,11 +268,11 @@
           display.innerHTML = 'ชื่อผู้ใช้: <b>' + escHtml(res.username) + '</b><br>กรุณาตั้งรหัสผ่านใหม่ด้านล่าง';
           form.style.display = 'block';
         } else {
-          display.innerText = '❌ ' + res.message;
+          display.innerText = '' + res.message;
         }
       })
       .withFailureHandler(function(err) {
-        document.getElementById('resetUsernameDisplay').innerText = '❌ เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+        document.getElementById('resetUsernameDisplay').innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
       })
       .authVerifyResetToken(RESET_TOKEN);
   }
@@ -469,5 +469,6 @@ if (res.success) { showLoginSuccessThenRedirect(res.token); return; }
       .authResetPassword(RESET_TOKEN, newPw);
   }
 </script>
+<?!= include('UiSystem'); ?>
 </body>
 </html>

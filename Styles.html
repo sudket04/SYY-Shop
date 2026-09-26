@@ -100,11 +100,16 @@ a:hover{color:var(--primary-dark);text-decoration:underline}
 .stat .clear{position:absolute;right:8px;bottom:7px;font-size:10.5px;color:var(--primary)}
 
 /* ── ตาราง: หัวสีอ่อน, hover ไม่ทำให้แถวขยับ ── */
-.table-wrap{overflow:auto;max-height:62vh}
-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.table-wrap{overflow:auto;max-height:62vh;overscroll-behavior:contain;scrollbar-gutter:stable}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;table-layout:auto}
+.table-wrap table.table-compact,.table-container table.table-compact{width:auto;min-width:min(100%,720px);margin-right:auto}
+.table-wrap table.table-wide,.table-container table.table-wide{min-width:max-content}
 th{position:sticky;top:0;z-index:10;background:var(--line-soft);color:#475569;font-weight:600;font-size:11.5px;
   text-align:left;padding:10px 13px;border-bottom:1px solid #e2e8f0;white-space:nowrap}
-td{padding:11px 13px;border-bottom:1px solid var(--line-soft);color:var(--text);vertical-align:middle}
+td{padding:11px 13px;border-bottom:1px solid var(--line-soft);color:var(--text);vertical-align:middle;line-height:1.55}
+.table-compact th,.table-compact td{white-space:nowrap}
+.table-wide th,.table-wide td{white-space:nowrap}
+.table-wide .product-name-cell,.table-wide .models-cell{white-space:normal}
 tbody tr:last-child td{border-bottom:none}
 tbody tr:hover td{background:#f8fbfe}
 tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--primary)}
@@ -154,22 +159,23 @@ tbody tr:hover td.col-sticky-right{background:#f8fbfe}
 .page-btn.active{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:600}
 
 /* ── modal ── */
-.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;justify-content:center;align-items:flex-start;
-  overflow-y:auto;padding:40px 16px;z-index:2000;backdrop-filter:blur(2px)}
+.modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;justify-content:center;align-items:center;
+  overflow:auto;padding:24px 16px;z-index:2000;backdrop-filter:blur(2px);overscroll-behavior:contain;scrollbar-gutter:stable}
 .modal-overlay.active{display:flex}
 /* ★ SweetAlert2 (swyError/swyWarning/swySuccess/swyConfirm) เดิม z-index ต่ำกว่า .modal-overlay (2000)
    ทำให้ป๊อปอัปแจ้งเตือนที่ยิงขึ้นมาระหว่างเปิด modal อยู่ (เช่น อัปโหลดรูปไม่สำเร็จตอนฟอร์มแก้ไขสินค้าเปิดอยู่)
    ไปโผล่ "อยู่หลัง" modal มองไม่เห็น/กดไม่ได้ — ดันให้สูงกว่า modal เสมอ */
 .swal2-container{z-index:4000!important}
-.modal-box{background:#fff;width:560px;max-width:96%;border-radius:16px;box-shadow:var(--shadow-lg);overflow:hidden;
-  display:flex;flex-direction:column;animation:mIn .2s ease-out}
+.modal-box{background:#fff;width:560px;max-width:min(96%,calc(100vw - 24px));max-height:calc(100dvh - 48px);border-radius:16px;box-shadow:var(--shadow-lg);overflow:hidden;
+  display:flex;flex-direction:column;animation:mIn .18s ease-out;contain:layout paint}
+.modal-box>form{display:flex;flex-direction:column;min-height:0;max-height:inherit}
 @keyframes mIn{from{transform:translateY(-14px);opacity:0}to{transform:translateY(0);opacity:1}}
 .modal-header{background:var(--primary);color:#fff;padding:15px 22px;font-size:16px;font-weight:600;display:flex;
   justify-content:space-between;align-items:center;gap:10px;flex-shrink:0}
 .modal-header.danger{background:var(--danger)}
 .modal-header.view{background:var(--warn)}
 .modal-close{background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;padding:0 2px}
-.modal-body{padding:20px 22px}
+.modal-body{padding:20px 22px;overflow-y:auto;min-height:0;overscroll-behavior:contain;scrollbar-gutter:stable;scroll-behavior:auto;-webkit-overflow-scrolling:touch}
 .modal-footer{background:var(--bg);padding:13px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:9px;flex-shrink:0;flex-wrap:wrap}
 .section-label{font-size:10.5px;font-weight:600;color:var(--faint);letter-spacing:1.2px;text-transform:uppercase;
   margin:16px 0 10px;border-top:1px solid var(--line-soft);padding-top:13px}
@@ -258,6 +264,9 @@ th.xlf-th{position:sticky;padding-right:40px !important}
   .form-grid{grid-template-columns:1fr}
   .table-wrap{max-height:70vh}
   .xlf-popover{width:min(290px,calc(100vw - 24px))}
+  .modal-overlay{padding:10px;align-items:flex-end}
+  .modal-box{max-width:100%;max-height:calc(100dvh - 20px);border-radius:16px 16px 10px 10px}
+  .modal-body{padding:16px}
 }
 
 /* ── Typography system: product content and responsive readability ── */

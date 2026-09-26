@@ -69,8 +69,9 @@
   .qty-box button{border:none;background:var(--bg);color:#475569;font-weight:600;padding:6px 11px;cursor:pointer;font-size:14px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif}
   .qty-box input{border:none;border-left:1px solid var(--line);border-right:1px solid var(--line);width:52px;text-align:center;padding:6px 4px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:14px;font-weight:600;color:var(--ink);outline:none}
   .price-input{border:1px solid #cbd5e1;border-radius:8px;padding:6px 10px;font-size:13px;width:92px;text-align:right;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;outline:none}
-  .price-locked{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;background:var(--bg);color:#475569;font-weight:600;cursor:not-allowed}
-  .price-locked::before{content:'🔒';font-size:10px}
+  .price-locked{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;background:var(--bg);color:#475569;font-weight:600;cursor:not-allowed;position:relative;padding-left:22px}
+  .price-locked::before{content:'';width:10px;height:8px;border:1.5px solid currentColor;border-radius:2px;display:inline-block;opacity:.8}
+  .price-locked::after{content:'';width:6px;height:5px;border:1.5px solid currentColor;border-bottom:0;border-radius:5px 5px 0 0;position:absolute;left:8px;top:5px;opacity:.8}
   .b-total{margin-left:auto;font-size:14px;font-weight:600;color:var(--ok)}
 
   .totals{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
@@ -138,7 +139,7 @@
 
           <div class="pill-row">
             <button class="pill active" data-stock="all" onclick="setStockFilter('all',this)">ทั้งหมด <span id="cntAll"></span></button>
-            <button class="pill" data-stock="instock"    onclick="setStockFilter('instock',this)">✅ มีของ <span id="cntIn"></span></button>
+            <button class="pill" data-stock="instock"    onclick="setStockFilter('instock',this)">มีของ <span id="cntIn"></span></button>
             <button class="pill" data-stock="low"        onclick="setStockFilter('low',this)">⚠️ สต็อกต่ำ <span id="cntLow"></span></button>
             <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
               <select id="filterCategory" class="select" style="max-width:170px" onchange="renderResults()"><option value="">หมวดหมู่: ทั้งหมด</option></select>
@@ -169,7 +170,7 @@
                 <select id="inpReason" class="form-control" onchange="renderPreview()">
                   <option value="ขายหน้าร้าน">🛒 ขายหน้าร้าน</option>
                   <option value="ขาย Online">🌐 ขาย Online</option>
-                  <option value="เบิกใช้ภายใน">🔧 เบิกใช้ภายใน</option>
+                  <option value="เบิกใช้ภายใน">เบิกใช้ภายใน</option>
                   <option value="คืน Supplier">↩️ คืน Supplier</option>
                   <option value="สินค้าชำรุด">💥 สินค้าชำรุด</option>
                   <option value="สูญหาย">❓ สูญหาย</option>
@@ -268,6 +269,7 @@
   </div>
 </div>
 
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN = "<?= authToken ?>";
@@ -393,7 +395,7 @@
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดสินค้าเสร็จแล้ว พร้อมรับรายการจากใบเสนอราคามาเติมตะกร้า
       try { window.parent.postMessage({ action: 'STOCKISSUE_READY' }, '*'); } catch (e) {}
     }, function (err) {
-      document.getElementById('resultCount').innerText = '❌ โหลดข้อมูลสินค้าไม่สำเร็จ';
+      document.getElementById('resultCount').innerText = 'โหลดข้อมูลสินค้าไม่สำเร็จ';
       document.getElementById('resultList').innerHTML = '<div class="empty-box">' + esc(JSON.stringify(err)) + '</div>';
     });
   }

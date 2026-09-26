@@ -469,6 +469,7 @@
 
 <?!= include('ThaiAddressData'); ?>
 <?!= include('XLFilter'); ?>
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
@@ -803,7 +804,7 @@ function submitQuickAddCustomer() {
 
   if (!ok) {
     alertEl.className = 'modal-alert error';
-    alertEl.innerText = '❌ กรุณาตรวจสอบข้อมูลที่กรอก';
+    alertEl.innerText = 'กรุณาตรวจสอบข้อมูลที่กรอก';
     alertEl.style.display = 'block';
     return;
   }
@@ -843,14 +844,14 @@ function submitQuickAddCustomer() {
           }, function() { closeQuickAddCustomer(); });
       } else {
         alertEl.className = 'modal-alert error';
-        alertEl.innerText = '❌ ' + res.message;
+        alertEl.innerText = '' + res.message;
         alertEl.style.display = 'block';
       }
     }, function(err) {
       btn.disabled = false;
       btn.innerText = '💾 บันทึกลูกค้า';
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
       alertEl.style.display = 'block';
     });
 }
@@ -1161,7 +1162,7 @@ function handleSubmit() {
 
   if (!validateForm()) {
     alertEl.className = 'modal-alert error';
-    alertEl.innerText = '❌ กรุณาตรวจสอบข้อมูลที่กรอก — มีช่องที่ยังไม่ถูกต้อง (ไฮไลต์สีแดง)';
+    alertEl.innerText = 'กรุณาตรวจสอบข้อมูลที่กรอก — มีช่องที่ยังไม่ถูกต้อง (ไฮไลต์สีแดง)';
     alertEl.style.display = 'block';
     // เลื่อนไปที่ error แรกให้เห็นทันที
     var firstErr = document.querySelector('.is-invalid, .field-error.show');
@@ -1193,7 +1194,7 @@ function handleSubmit() {
         var savedYearBE = new Date(document.getElementById('modalInvoiceDate').value + 'T00:00:00').getFullYear() + 543;
         var noteYearShift = (currentPageYear !== 'all' && savedYearBE !== currentPageYear)
           ? ' (หมายเหตุ: ใบนี้อยู่ปี พ.ศ. ' + savedYearBE + ' จะไม่แสดงในมุมมองปี พ.ศ. ' + currentPageYear + ' ปัจจุบัน)' : '';
-        alertEl.innerText = '✅ ' + res.message + (res.id ? ' (' + res.id + ')' : '') + noteYearShift;
+        alertEl.innerText = '' + res.message + (res.id ? ' (' + res.id + ')' : '') + noteYearShift;
         var savedId = res.id || editingDocId;
         setTimeout(function() {
           closeInvoiceModal();
@@ -1205,13 +1206,13 @@ function handleSubmit() {
         }, 1400);
       } else {
         alertEl.className = 'modal-alert error';
-        alertEl.innerText = '❌ ' + res.message;
+        alertEl.innerText = '' + res.message;
       }
     }, function(err) {
       btn.disabled = false;
       btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
       alertEl.style.display = 'block';
     });
 }

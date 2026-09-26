@@ -192,7 +192,7 @@
 
               <div class="pill-row">
                 <button class="pill active" data-stock="all" onclick="setStockFilter('all',this)">ทั้งหมด</button>
-                <button class="pill" data-stock="instock" onclick="setStockFilter('instock',this)">✅ มีของ</button>
+                <button class="pill" data-stock="instock" onclick="setStockFilter('instock',this)">มีของ</button>
                 <button class="pill" data-stock="low" onclick="setStockFilter('low',this)">⚠️ สต็อกต่ำ</button>
                 <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
                   <select id="filterCategory" class="select" style="max-width:150px" onchange="renderResults()"><option value="">หมวดหมู่: ทั้งหมด</option></select>
@@ -314,6 +314,7 @@
   </div>
 </div>
 
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
 var AUTH_TOKEN  = "<?= authToken ?>";
@@ -900,7 +901,7 @@ function renderDoc() {
   var btnIssue = document.getElementById('btnIssueFromDoc');
   if (docQ && docQ.status === 'ปิดงาน-ขายสำเร็จ') {
     btnIssue.style.display = '';
-    btnIssue.innerHTML = docQ.stockIssued ? '✅ ตัดสต๊อกแล้ว (' + esc(docQ.stockIssueDoc) + ') · ตัดซ้ำ' : '📤 ตัดสต๊อกจากใบนี้';
+    btnIssue.innerHTML = docQ.stockIssued ? 'ตัดสต๊อกแล้ว (' + esc(docQ.stockIssueDoc) + ') · ตัดซ้ำ' : '📤 ตัดสต๊อกจากใบนี้';
   } else {
     btnIssue.style.display = 'none';
   }

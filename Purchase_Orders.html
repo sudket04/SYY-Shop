@@ -145,8 +145,8 @@
       <button class="pill"        data-status="Pending"    onclick="setStatusFilter('Pending', this)">🕐 รอดำเนินการ</button>
       <button class="pill"        data-status="Ordered"    onclick="setStatusFilter('Ordered', this)">📦 สั่งซื้อแล้ว</button>
       <button class="pill"        data-status="PartiallyReceived" onclick="setStatusFilter('PartiallyReceived', this)">🔶 ได้รับบางส่วน</button>
-      <button class="pill"        data-status="Received"   onclick="setStatusFilter('Received', this)">✅ ได้รับครบแล้ว</button>
-      <button class="pill"        data-status="Cancelled"  onclick="setStatusFilter('Cancelled', this)">❌ ยกเลิก</button>
+      <button class="pill"        data-status="Received"   onclick="setStatusFilter('Received', this)">ได้รับครบแล้ว</button>
+      <button class="pill"        data-status="Cancelled"  onclick="setStatusFilter('Cancelled', this)">ยกเลิก</button>
     </div>
 
     <div class="table-wrap">
@@ -299,6 +299,7 @@
   </div>
 
 <?!= include('XLFilter'); ?>
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
@@ -327,8 +328,8 @@
     Pending           : '🕐 รอดำเนินการ',
     Ordered           : '📦 สั่งซื้อแล้ว',
     PartiallyReceived : '🔶 ได้รับบางส่วน',
-    Received          : '✅ ได้รับครบแล้ว',
-    Cancelled         : '❌ ยกเลิก'
+    Received          : 'ได้รับครบแล้ว',
+    Cancelled         : 'ยกเลิก'
   };
 
   var pendingReceivePO = null; // PO object ที่กำลังบันทึกรับสินค้าอยู่ใน modal
@@ -661,7 +662,7 @@
         alertEl.style.display = 'block';
         if (res.success) {
           alertEl.className = 'modal-alert success';
-          alertEl.innerText = '✅ บันทึกใบสั่งซื้อเรียบร้อย (' + res.id + ') — ต้องการ Export Excel เพื่อส่งให้ผู้จัดจำหน่ายไหม?';
+          alertEl.innerText = 'บันทึกใบสั่งซื้อเรียบร้อย (' + res.id + ') — ต้องการ Export Excel เพื่อส่งให้ผู้จัดจำหน่ายไหม?';
 
           var totalAmount = items.reduce(function(s,it){ return s + it.qty*it.costPrice; }, 0);
           var totalQty    = items.reduce(function(s,it){ return s + it.qty; }, 0);
@@ -683,13 +684,13 @@
         } else {
           btn.disabled = false; btn.innerText = '💾 บันทึกใบสั่งซื้อ';
           alertEl.className = 'modal-alert error';
-          alertEl.innerText = '❌ ' + res.message;
+          alertEl.innerText = '' + res.message;
         }
       }, function(err) {
         btn.disabled = false; btn.innerText = '💾 บันทึกใบสั่งซื้อ';
         alertEl.style.display = 'block';
         alertEl.className = 'modal-alert error';
-        alertEl.innerText = '❌ Error: ' + JSON.stringify(err);
+        alertEl.innerText = 'Error: ' + JSON.stringify(err);
       });
   }
 
@@ -904,7 +905,7 @@
     banner.style.display = 'block';
     if (allComplete) {
       banner.className = 'receive-complete-banner full';
-      banner.innerText = '✅ รับสินค้าครบทุกรายการ — สถานะจะเปลี่ยนเป็น "ได้รับครบแล้ว" และล็อกใบสั่งซื้อนี้';
+      banner.innerText = 'รับสินค้าครบทุกรายการ — สถานะจะเปลี่ยนเป็น "ได้รับครบแล้ว" และล็อกใบสั่งซื้อนี้';
       hint.classList.remove('show');
       reqTag.style.display = 'none';
     } else {
@@ -928,7 +929,7 @@
 
     if (!invoiceNo || !receiptDate || !receiverName) {
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ กรุณากรอกเลขที่ Invoice, วันที่รับสินค้า และชื่อผู้รับสินค้าให้ครบ';
+      alertEl.innerText = 'กรุณากรอกเลขที่ Invoice, วันที่รับสินค้า และชื่อผู้รับสินค้าให้ครบ';
       alertEl.style.display = 'block';
       return;
     }
@@ -945,13 +946,13 @@
 
     if (!items.length) {
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ กรุณาระบุจำนวนที่รับอย่างน้อย 1 รายการ';
+      alertEl.innerText = 'กรุณาระบุจำนวนที่รับอย่างน้อย 1 รายการ';
       alertEl.style.display = 'block';
       return;
     }
     if (!allComplete && !deliveryNote) {
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ ได้รับสินค้าไม่ครบ กรุณากรอกเลขที่ใบส่งของชั่วคราว';
+      alertEl.innerText = 'ได้รับสินค้าไม่ครบ กรุณากรอกเลขที่ใบส่งของชั่วคราว';
       alertEl.style.display = 'block';
       return;
     }
@@ -976,20 +977,20 @@
           alertEl.style.display = 'block';
           if (res.success) {
             alertEl.className = 'modal-alert success';
-            alertEl.innerText = '✅ ' + res.message;
+            alertEl.innerText = '' + res.message;
             setTimeout(function() {
               closeReceiveModal();
               loadAll();
             }, 1000);
           } else {
             alertEl.className = 'modal-alert error';
-            alertEl.innerText = '❌ ' + res.message;
+            alertEl.innerText = '' + res.message;
           }
         }, function(err) {
           btn.disabled = false; btn.innerText = '💾 บันทึกการรับสินค้า';
           alertEl.style.display = 'block';
           alertEl.className = 'modal-alert error';
-          alertEl.innerText = '❌ Error: ' + JSON.stringify(err);
+          alertEl.innerText = 'Error: ' + JSON.stringify(err);
         });
     });
   }
@@ -1030,7 +1031,7 @@
         var itemsTxt = (r.items || []).map(function(it) { return escHtml(it.productName) + ' ×' + it.qtyReceivedNow; }).join(', ');
         return '<div class="receipt-entry">' +
           '<div class="r-head"><b>' + escHtml(r.date) + ' — Invoice: ' + escHtml(r.invoiceNo) + '</b>' +
-          '<span class="r-tag ' + (r.isFinal ? 'full' : 'partial') + '">' + (r.isFinal ? '✅ รับครบ' : '🔶 รับบางส่วน') + '</span></div>' +
+          '<span class="r-tag ' + (r.isFinal ? 'full' : 'partial') + '">' + (r.isFinal ? 'รับครบ' : '🔶 รับบางส่วน') + '</span></div>' +
           '<div>ผู้รับ: ' + escHtml(r.receiverName) + (r.deliveryNoteNo ? ' • ใบส่งของ: ' + escHtml(r.deliveryNoteNo) : '') + '</div>' +
           '<div class="r-items">' + itemsTxt + '</div>' +
         '</div>';

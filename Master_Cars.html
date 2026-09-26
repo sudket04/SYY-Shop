@@ -147,6 +147,7 @@
 </div>
 
 <?!= include('XLFilter'); ?>
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
@@ -320,7 +321,7 @@
       });
       if(isDuplicate){
         alertEl.className='modal-alert error';
-        alertEl.innerText='❌ รหัสรุ่น "'+inputModelCode+'" มีอยู่ในระบบแล้ว';
+        alertEl.innerText='รหัสรุ่น "'+inputModelCode+'" มีอยู่ในระบบแล้ว';
         return;
       }
     }
@@ -347,12 +348,12 @@
         notifyParentRefreshDropdowns();
       } else {
         alertEl.className='modal-alert error';
-        alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');
+        alertEl.innerText=''+((res&&res.message)||'บันทึกไม่สำเร็จ');
       }
     }, function(err){
       btnDone(btn);
       alertEl.className='modal-alert error';
-      alertEl.innerText='❌ '+JSON.stringify(err);
+      alertEl.innerText=''+JSON.stringify(err);
     });
   }
 

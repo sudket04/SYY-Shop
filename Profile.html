@@ -187,7 +187,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn-outline" onclick="closeTotpSetupModal()">ยกเลิก</button>
-      <button class="btn-primary" id="btnConfirmTotp" onclick="doConfirmTotpSetup()">✅ ยืนยันการเปิดใช้งาน</button>
+      <button class="btn-primary" id="btnConfirmTotp" onclick="doConfirmTotpSetup()">ยืนยันการเปิดใช้งาน</button>
     </div>
   </div>
 </div>
@@ -233,6 +233,7 @@
   </div>
 </div>
 
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
 /* ══════════════════════════════════════════════════════════════
@@ -499,7 +500,7 @@ function doConfirmTotpSetup() {
   callApi('authConfirmTotpSetup', AUTH_TOKEN, code)
     .withSuccessHandler(function (res) {
       btn.disabled = false;
-      btn.innerText = '✅ ยืนยันการเปิดใช้งาน';
+      btn.innerText = 'ยืนยันการเปิดใช้งาน';
       if (res.success) {
         closeTotpSetupModal();
         showRecoveryCodes(res.recoveryCodes);
@@ -511,7 +512,7 @@ function doConfirmTotpSetup() {
     })
     .withFailureHandler(function (err) {
       btn.disabled = false;
-      btn.innerText = '✅ ยืนยันการเปิดใช้งาน';
+      btn.innerText = 'ยืนยันการเปิดใช้งาน';
       alertEl.className = 'alert error show';
       alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
     })
@@ -582,7 +583,7 @@ function loadActivityLog() {
       renderLogTable();
     })
     .withFailureHandler(function (err) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">❌ โหลดไม่สำเร็จ: ' + esc(JSON.stringify(err)) + '</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">โหลดไม่สำเร็จ: ' + esc(JSON.stringify(err)) + '</td></tr>';
     })
     .run();
 }

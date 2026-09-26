@@ -39,3 +39,11 @@ Mobile navigation สร้างจากเงื่อนไข role ชุ�
 - ราคาขาย: 16px/700 บน desktop และ 17px บน mobile ใช้สี primary พร้อม tabular numerals; ราคาทุนลดลำดับชั้นเป็น 13px/500 และสี muted
 - form controls รับ font และ spacing จากระบบเดียวกัน เพื่อไม่ให้ browser fallback ทำให้ข้อความไทยสูงไม่เท่ากัน
 - การเปลี่ยนแปลงเป็น CSS/presentation เท่านั้น ไม่มี Firestore read/write, schema หรือ API contract เพิ่มเติม
+
+## UI Consistency Audit (Tables, Icons, Modals)
+
+- ตารางถูกจำแนกตามจำนวนคอลัมน์อัตโนมัติ: ตารางไม่เกิน 5 คอลัมน์ใช้ความกว้างตามเนื้อหาและชิดซ้าย ส่วนตารางตั้งแต่ 9 คอลัมน์รักษาความกว้างคอลัมน์และเลื่อนแนวนอนแทนการบีบข้อความ
+- Product Listing แก้ `colgroup` ให้จำนวนและลำดับตรงกับ header รวมคอลัมน์ Part Number แล้ว
+- เพิ่ม local inline SVG icon system และ runtime upgrader สำหรับ markup เดิม ทำให้ emoji ที่ผู้ใช้มองเห็นถูกแทนด้วย line icon ขนาดมาตรฐาน โดยไม่เรียก icon CDN และไม่เปลี่ยนข้อความสำหรับ screen reader
+- Add/Edit modal ใช้ viewport-safe max height, body scroll ภายใน, stable scrollbar gutter และ overscroll containment; mobile แสดงเป็น bottom-aligned sheet โดย footer ยังเข้าถึงได้
+- การเปลี่ยนแปลงทั้งหมดเป็น presentation/client-side enhancement ไม่เพิ่ม Firestore reads/writes และไม่เปลี่ยน API contract
