@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -8,7 +9,7 @@
   <style>
   /* ─── เฉพาะหน้านี้: แท็บ, ตะกร้ารายการ, สรุปยอด, ใบพิมพ์ A4, ทะเบียน (ไม่ซ้ำหน้าอื่น) ─── */
   .tab-bar{display:flex;gap:6px;margin-bottom:16px;border-bottom:2px solid var(--line);flex-wrap:wrap}
-  .tab-btn{background:transparent;border:none;padding:10px 20px;cursor:pointer;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
+  .tab-btn{background:transparent;border:none;padding:10px 20px;cursor:pointer;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
   .tab-btn:hover{color:var(--primary)}
   .tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
   .tab-panel{display:none}
@@ -20,7 +21,7 @@
 
   .search-wrap{position:relative}
   .search-wrap .ico{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--faint);pointer-events:none}
-  .search-input{width:100%;border:2px solid #cbd5e1;border-radius:10px;padding:11px 14px 11px 38px;font-family:'Prompt',sans-serif;font-size:14px;outline:none;background:#fff;transition:.15s}
+  .search-input{width:100%;border:2px solid #cbd5e1;border-radius:10px;padding:11px 14px 11px 38px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:14px;outline:none;background:#fff;transition:.15s}
   .search-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,80,136,.12)}
   .result-list{display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto;margin-top:4px}
   .res-row{border:1px solid var(--line);border-radius:8px;padding:9px 11px;display:flex;gap:10px;align-items:center;background:#fff;cursor:pointer}
@@ -41,7 +42,7 @@
   .part-badge{border-radius:20px;padding:2px 8px;font-size:10.5px;font-weight:600}
   .part-genuine{background:#dbeafe;color:#1e40af}
   .part-copy{background:var(--warn-bg);color:#92400e}
-  .btn-add-mini{background:var(--primary-soft);color:var(--primary);border:none;border-radius:7px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;flex-shrink:0}
+  .btn-add-mini{background:var(--primary-soft);color:var(--primary);border:none;border-radius:7px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;flex-shrink:0}
   .res-row.sel .btn-add-mini{background:var(--primary);color:#fff}
 
   .item-basket-head{display:grid;grid-template-columns:1fr 92px 110px 110px 32px;gap:8px;padding:0 4px 6px;font-size:11px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
@@ -191,7 +192,7 @@
 
               <div class="pill-row">
                 <button class="pill active" data-stock="all" onclick="setStockFilter('all',this)">ทั้งหมด</button>
-                <button class="pill" data-stock="instock" onclick="setStockFilter('instock',this)">✅ มีของ</button>
+                <button class="pill" data-stock="instock" onclick="setStockFilter('instock',this)">มีของ</button>
                 <button class="pill" data-stock="low" onclick="setStockFilter('low',this)">⚠️ สต็อกต่ำ</button>
                 <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
                   <select id="filterCategory" class="select" style="max-width:150px" onchange="renderResults()"><option value="">หมวดหมู่: ทั้งหมด</option></select>
@@ -313,6 +314,7 @@
   </div>
 </div>
 
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
 var AUTH_TOKEN  = "<?= authToken ?>";
@@ -899,7 +901,7 @@ function renderDoc() {
   var btnIssue = document.getElementById('btnIssueFromDoc');
   if (docQ && docQ.status === 'ปิดงาน-ขายสำเร็จ') {
     btnIssue.style.display = '';
-    btnIssue.innerHTML = docQ.stockIssued ? '✅ ตัดสต๊อกแล้ว (' + esc(docQ.stockIssueDoc) + ') · ตัดซ้ำ' : '📤 ตัดสต๊อกจากใบนี้';
+    btnIssue.innerHTML = docQ.stockIssued ? 'ตัดสต๊อกแล้ว (' + esc(docQ.stockIssueDoc) + ') · ตัดซ้ำ' : '📤 ตัดสต๊อกจากใบนี้';
   } else {
     btnIssue.style.display = 'none';
   }

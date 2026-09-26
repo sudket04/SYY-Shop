@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -95,6 +96,7 @@
 </div>
 
 <?!= include('XLFilter'); ?>
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
@@ -251,12 +253,12 @@
         notifyParentRefreshDropdowns();
       } else {
         alertEl.className='modal-alert error';
-        alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');
+        alertEl.innerText=''+((res&&res.message)||'บันทึกไม่สำเร็จ');
       }
     }, function(err){
       btnDone(btn);
       alertEl.className='modal-alert error';
-      alertEl.innerText='❌ '+JSON.stringify(err);
+      alertEl.innerText=''+JSON.stringify(err);
     });
   }
 

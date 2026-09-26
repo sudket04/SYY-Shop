@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root { 
       --primary: #005088; 
@@ -14,7 +15,7 @@
     }
     
     body { 
-      font-family: 'Prompt', sans-serif; 
+      font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif;
       background-color: var(--bg); 
       margin: 0; 
       padding: 20px; 
@@ -30,7 +31,7 @@
     .header-section { 
       display: flex; 
       justify-content: space-between; 
-      align-items: center; 
+      align-items: center;
       margin-bottom: 20px; 
       flex-wrap: wrap; 
       gap: 12px; 
@@ -51,10 +52,10 @@
       border-radius: 8px; 
       cursor: pointer; 
       font-weight: 600; 
-      font-family: 'Prompt', sans-serif; 
+      font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif;
       font-size: 14px; 
       display: flex; 
-      align-items: center; 
+      align-items: center;
       gap: 8px; 
       white-space: nowrap; 
       transition: background 0.2s;
@@ -74,7 +75,7 @@
     .card-toolbar { 
       display: flex; 
       justify-content: space-between; 
-      align-items: center; 
+      align-items: center;
       margin-bottom: 12px; 
       flex-wrap: wrap; 
       gap: 5px; 
@@ -158,12 +159,13 @@
     /* Modal */
     .modal-overlay { 
       position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-      background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: flex-start; 
-      overflow-y: auto; padding: 40px 16px; box-sizing: border-box; z-index: 2000; backdrop-filter: blur(2px); 
+      background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center;
+      overflow: auto; padding: 24px 16px; box-sizing: border-box; z-index: 2000; backdrop-filter: blur(2px);
+      overscroll-behavior: contain; scrollbar-gutter: stable;
     }
     .modal-overlay.active { display: flex; }
     .modal-box { 
-      background: white; width: 460px; max-width: 95%; border-radius: 14px; 
+      background: white; width: 460px; max-width: 95%; max-height: calc(100dvh - 48px); border-radius: 14px;
       box-shadow: 0 10px 30px rgba(0,0,0,0.25); overflow: hidden; 
       display: flex; flex-direction: column; animation: modalIn 0.25s ease; 
     }
@@ -173,7 +175,8 @@
       font-size: 17px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; 
     }
     .modal-close { background: none; border: none; color: white; font-size: 22px; cursor: pointer; line-height: 1; }
-    .modal-body { padding: 24px; }
+    .modal-box > form { display:flex; flex-direction:column; min-height:0; max-height:inherit; }
+    .modal-body { padding: 24px; overflow-y:auto; min-height:0; overscroll-behavior:contain; scrollbar-gutter:stable; -webkit-overflow-scrolling:touch; }
     .modal-footer { 
       background: #f8fafc; padding: 14px 24px; border-top: 1px solid #e2e8f0; 
       display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0; 
@@ -187,21 +190,21 @@
     .form-group label { font-size: 13px; font-weight: 600; color: #475569; }
     .form-control { 
       padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 6px; 
-      font-family: 'Prompt', sans-serif; font-size: 13px; outline: none; width: 100%; box-sizing: border-box; 
+      font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; font-size: 13px; outline: none; width: 100%; box-sizing: border-box;
     }
     .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(0,80,136,0.15); }
     .form-control:disabled { background: #f1f5f9; color: #64748b; }
 
     .btn-save { 
       background: var(--primary); color: white; border: none; padding: 10px 20px; 
-      border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; 
+      border-radius: 6px; font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; font-size: 14px; font-weight: 600;
       cursor: pointer; transition: 0.2s; 
     }
     .btn-save:hover { background: var(--primary-dark); }
     .btn-save:disabled { background: #cbd5e1; cursor: not-allowed; }
     .btn-cancel { 
       background: #e2e8f0; color: #475569; border: none; padding: 10px 20px; 
-      border-radius: 6px; font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; 
+      border-radius: 6px; font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; font-size: 14px; font-weight: 600; cursor: pointer;
     }
     .btn-cancel:hover { background: #cbd5e1; }
 
@@ -227,7 +230,7 @@
     .confirm-target-title { font-size: 14px; font-weight: 600; color: #1e293b; word-break: break-word; }
     .btn-confirm-action { 
       background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 8px; 
-      font-family: 'Prompt', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; 
+      font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s ease;
       box-shadow: 0 2px 6px rgba(0,80,136,0.3); 
     }
     .btn-confirm-action:hover { background: var(--primary-dark); }
@@ -256,12 +259,12 @@
     .xlf-popover {
       position: absolute; z-index: 3000; width: 240px; max-height: 440px; display: flex; flex-direction: column; overflow: hidden;
       background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 10px 30px rgba(15,23,42,.18); padding: 8px;
-      font-family: 'Prompt', sans-serif; font-size: 13px;
+      font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; font-size: 13px;
     }
-    .xlf-sort-btn { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: #1e293b; font-family: 'Prompt', sans-serif; flex-shrink: 0; }
+    .xlf-sort-btn { display: block; width: 100%; text-align: left; background: transparent; border: none; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: #1e293b; font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; flex-shrink: 0; }
     .xlf-sort-btn:hover { background: #f1f5f9; }
     .xlf-divider { height: 1px; background: #e2e8f0; margin: 6px 0; flex-shrink: 0; }
-    .xlf-search { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; font-family: 'Prompt', sans-serif; margin-bottom: 6px; flex-shrink: 0; }
+    .xlf-search { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; margin-bottom: 6px; flex-shrink: 0; }
     .xlf-search:focus { outline: none; border-color: #005088; box-shadow: 0 0 0 2px rgba(0,80,136,.15); }
     .xlf-selectall-row { padding: 4px 8px 6px; border-bottom: 1px solid #e2e8f0; margin-bottom: 4px; flex-shrink: 0; }
     .xlf-selectall-row label, .xlf-item { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: #334155; }
@@ -270,8 +273,8 @@
     .xlf-item:hover { background: #f1f5f9; }
     .xlf-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .xlf-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; flex-shrink: 0; }
-    .xlf-btn-clear { background: transparent; border: none; color: #64748b; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 4px 2px; font-family: 'Prompt', sans-serif; }
-    .xlf-btn-ok { background: #005088; color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Prompt', sans-serif; }
+    .xlf-btn-clear { background: transparent; border: none; color: #64748b; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 4px 2px; font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; }
+    .xlf-btn-ok { background: #005088; color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Noto Sans Thai','Inter',system-ui,sans-serif; }
     .xlf-btn-ok:hover { background: #003d68; }
 
     @media (max-width: 767px) {
@@ -293,7 +296,8 @@
       table { font-size: 12px; }
       td, th { padding: 8px; }
       .xlf-popover { width: min(280px, calc(100vw - 24px)); }
-      .modal-box { width: 95%; margin: 10px; }
+      .modal-overlay { padding:10px; align-items:flex-end; }
+      .modal-box { width: 100%; max-height:calc(100dvh - 20px); margin: 0; border-radius:16px 16px 10px 10px; }
     }
   </style>
 </head>
@@ -731,7 +735,7 @@ function loadTable() {
     usersCache = data || [];
     renderUserRows();
   }, function(err) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">❌ โหลดไม่สำเร็จ: ' + JSON.stringify(err) + '</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">โหลดไม่สำเร็จ: ' + JSON.stringify(err) + '</td></tr>';
   });
 }
 
@@ -826,7 +830,7 @@ function openAddModal() {
 
 function openEditModal(docId) {
   var item = usersCache.find(function(u) { return u.docId === docId; });
-  if (!item) { alert('❌ ไม่พบข้อมูล'); return; }
+  if (!item) { alert('ไม่พบข้อมูล'); return; }
   editingDocId = docId;
   document.getElementById('groupUsername').style.display = 'flex';
   document.getElementById('modalUsername').value = item.username;
@@ -870,19 +874,19 @@ function handleSubmit(e) {
     alertEl.style.display = 'block';
     if (res.success) {
       alertEl.className = 'modal-alert success';
-      alertEl.innerText = '✅ ' + res.message + (res.tempPassword ? ' (รหัสผ่านชั่วคราว: ' + res.tempPassword + ')' : '');
+      alertEl.innerText = '' + res.message + (res.tempPassword ? ' (รหัสผ่านชั่วคราว: ' + res.tempPassword + ')' : '');
       loadTable();
       setTimeout(function() { closeUserModal(); }, 1500);
     } else {
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ ' + res.message;
+      alertEl.innerText = '' + res.message;
     }
   }, function(err) {
     btn.disabled  = false;
     btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
     alertEl.style.display = 'block';
     alertEl.className = 'modal-alert error';
-    alertEl.innerText = '❌ ' + JSON.stringify(err);
+    alertEl.innerText = '' + JSON.stringify(err);
   });
 }
 
@@ -890,7 +894,7 @@ function handleSubmit(e) {
 
 function confirmToggleModal(docId, currentStatus) {
   var item = usersCache.find(function(u) { return u.docId === docId; });
-  if (!item) { alert('❌ ไม่พบข้อมูล'); return; }
+  if (!item) { alert('ไม่พบข้อมูล'); return; }
   targetToggleDocId  = docId;
   targetToggleStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
 
@@ -930,15 +934,15 @@ function execToggleStatus() {
     btn.disabled = false;
     closeToggleModal();
     if (res.success) {
-      alert('✅ ' + res.message);
+      alert('' + res.message);
       loadTable();
     } else {
-      alert('❌ ' + res.message);
+      alert('' + res.message);
     }
   }, function(err) {
     btn.disabled = false;
     closeToggleModal();
-    alert('❌ เกิดข้อผิดพลาด: ' + JSON.stringify(err));
+    alert('เกิดข้อผิดพลาด: ' + JSON.stringify(err));
   });
 }
 
@@ -946,7 +950,7 @@ function execToggleStatus() {
 
 function confirmResetPwModal(docId) {
   var item = usersCache.find(function(u) { return u.docId === docId; });
-  if (!item) { alert('❌ ไม่พบข้อมูล'); return; }
+  if (!item) { alert('ไม่พบข้อมูล'); return; }
   targetResetDocId = docId;
   document.getElementById('resetPwTargetCard').innerHTML =
     '<div class="confirm-target-title">' + esc(item.fullName) + ' (' + esc(item.username) + ')</div>';
@@ -971,15 +975,15 @@ function execResetPassword() {
     btn.disabled = false;
     closeResetPwModal();
     if (res.success) {
-      alert('✅ ' + res.message);
+      alert('' + res.message);
       loadTable();
     } else {
-      alert('❌ ' + res.message);
+      alert('' + res.message);
     }
   }, function(err) {
     btn.disabled = false;
     closeResetPwModal();
-    alert('❌ เกิดข้อผิดพลาด: ' + JSON.stringify(err));
+    alert('เกิดข้อผิดพลาด: ' + JSON.stringify(err));
   });
 }
 
@@ -989,5 +993,6 @@ function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 //   (หน้านี้ไม่ได้ include('Shared') จึงมี esc()/escJs() ของตัวเองแยกต่างหาก ไม่ใช้ตัวกลาง)
 function escJs(v) { return esc(v).replace(/'/g,"\\'"); }
 </script>
+<?!= include('UiSystem'); ?>
 </body>
 </html>

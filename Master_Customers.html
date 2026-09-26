@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -139,8 +140,8 @@
           <div class="form-group full">
             <label>สถานะลูกค้า</label>
             <select id="fStatus" class="form-control select">
-              <option value="Active">✅ Active — ใช้งานอยู่</option>
-              <option value="Inactive">❌ Inactive — ปิดใช้งาน</option>
+              <option value="Active">Active — ใช้งานอยู่</option>
+              <option value="Inactive">Inactive — ปิดใช้งาน</option>
             </select>
           </div>
         </div>
@@ -173,6 +174,7 @@
 
 <?!= include('ThaiAddressData'); ?>
 <?!= include('XLFilter'); ?>
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
@@ -272,7 +274,7 @@
 
     tbody.innerHTML = rows.map(function(it,i){
       var isActive = (it.Status||'Active')==='Active';
-      var statusHtml = '<span class="badge '+(isActive?'badge-ok':'badge-danger')+'">'+(isActive?'✅ Active':'❌ Inactive')+'</span>';
+      var statusHtml = '<span class="badge '+(isActive?'badge-ok':'badge-danger')+'">'+(isActive?'Active':'Inactive')+'</span>';
       var phoneTxt = it.Phone ? formatPhoneDisplay(it.Phone) : '<span class="cell-empty">—</span>';
       var addrTxt  = it.Address ? esc(it.Address) : '<span class="cell-empty">—</span>';
       var taxTxt = (it.Tax_ID && it.Tax_ID.length===13)
@@ -460,7 +462,7 @@
     var taxIdVal=document.getElementById('fTaxId').value.trim();
     if(taxIdVal && taxIdVal.length!==13){
       alertEl.className='modal-alert error';
-      alertEl.innerText='❌ เลขประจำตัวผู้เสียภาษีอากรต้องมี 13 หลัก (กรอกมา '+taxIdVal.length+' หลัก) หรือเว้นว่างไว้ถ้าไม่มี';
+      alertEl.innerText='เลขประจำตัวผู้เสียภาษีอากรต้องมี 13 หลัก (กรอกมา '+taxIdVal.length+' หลัก) หรือเว้นว่างไว้ถ้าไม่มี';
       return;
     }
 
@@ -508,12 +510,12 @@
         //   (เดิมเรียก notifyParentRefresh() ซึ่งทำให้ index.html รีโหลด dashboard เต็มโดยไม่จำเป็น)
       } else {
         alertEl.className='modal-alert error';
-        alertEl.innerText='❌ '+((res&&res.message)||'บันทึกไม่สำเร็จ');
+        alertEl.innerText=''+((res&&res.message)||'บันทึกไม่สำเร็จ');
       }
     }, function(err){
       btnDone(btn);
       alertEl.className='modal-alert error';
-      alertEl.innerText='❌ '+JSON.stringify(err);
+      alertEl.innerText=''+JSON.stringify(err);
     });
   }
 

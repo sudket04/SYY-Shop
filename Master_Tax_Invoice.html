@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -14,9 +15,9 @@
   .amount-cell{font-family:'Courier New',monospace;font-weight:700;color:#166534;text-align:right}
   .seller-info-box{background:var(--info-bg);border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;font-size:12.5px;color:#1e3a5f;line-height:1.6}
   .seller-info-box b{color:var(--primary)}
-  .btn-danger-solid{background:var(--danger);color:#fff;border:none;padding:10px 20px;border-radius:6px;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;cursor:pointer}
+  .btn-danger-solid{background:var(--danger);color:#fff;border:none;padding:10px 20px;border-radius:6px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:14px;font-weight:600;cursor:pointer}
   .btn-danger-solid:hover{background:var(--danger-dark)}
-  .btn-purple-solid{background:#7c3aed;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;cursor:pointer}
+  .btn-purple-solid{background:#7c3aed;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:14px;font-weight:600;cursor:pointer}
   .btn-purple-solid:hover{background:#6d28d9}
   .btn-icon.print{background:#ede9fe;color:#7c3aed}
   .btn-icon.print:hover{background:#7c3aed;color:#fff}
@@ -38,7 +39,7 @@
   .item-basket-row.is-invalid{background:#fef2f2;border-radius:6px}
   .btn-remove-row{background:#fee2e2;color:#dc2626;border:none;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center}
   .btn-remove-row:hover{background:#fca5a5}
-  .btn-add-row{margin-top:10px;background:var(--info-bg);color:var(--primary);border:1px dashed #93c5fd;padding:9px;width:100%;border-radius:8px;cursor:pointer;font-weight:600;font-family:'Prompt',sans-serif;font-size:13px}
+  .btn-add-row{margin-top:10px;background:var(--info-bg);color:var(--primary);border:1px dashed #93c5fd;padding:9px;width:100%;border-radius:8px;cursor:pointer;font-weight:600;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px}
   .btn-add-row:hover{background:#dbeafe}
   .totals-box{margin-top:14px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
   .totals-row{display:flex;justify-content:space-between;padding:4px 0;font-size:13.5px;color:#475569}
@@ -73,7 +74,7 @@
   .print-totals-table .line.grand{font-weight:700;border-top:1px solid #94a3b8;margin-top:3px;padding-top:3px}
   .print-sign-row{margin-top:30px;text-align:center;font-size:13px}
   .tab-bar{display:flex;gap:6px;margin-bottom:16px;border-bottom:2px solid var(--line)}
-  .tab-btn{background:transparent;border:none;padding:10px 20px;cursor:pointer;font-family:'Prompt',sans-serif;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
+  .tab-btn{background:transparent;border:none;padding:10px 20px;cursor:pointer;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:14px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px;transition:.2s}
   .tab-btn:hover{color:var(--primary)}
   .tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
   .tab-panel{display:none}
@@ -101,7 +102,7 @@
   .top-name{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .top-amount{font-family:'Courier New',monospace;font-weight:700;color:#166534;white-space:nowrap}
   .dash-filter{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-  .dash-filter select{padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Prompt',sans-serif;font-size:13px}
+  .dash-filter select{padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px}
   .a4-page{width:210mm;min-height:297mm;margin:0 auto 16px;background:#fff;padding:12mm;box-sizing:border-box;box-shadow:0 2px 12px rgba(0,0,0,.15);font-size:13px;color:#1e293b;position:relative}
   .a4-page + .a4-page{page-break-before:always}
   .a4-foot-note{position:absolute;bottom:8mm;left:12mm;right:12mm;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;border-top:1px solid #cbd5e1;padding-top:4px}
@@ -468,6 +469,7 @@
 
 <?!= include('ThaiAddressData'); ?>
 <?!= include('XLFilter'); ?>
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
@@ -802,7 +804,7 @@ function submitQuickAddCustomer() {
 
   if (!ok) {
     alertEl.className = 'modal-alert error';
-    alertEl.innerText = '❌ กรุณาตรวจสอบข้อมูลที่กรอก';
+    alertEl.innerText = 'กรุณาตรวจสอบข้อมูลที่กรอก';
     alertEl.style.display = 'block';
     return;
   }
@@ -842,14 +844,14 @@ function submitQuickAddCustomer() {
           }, function() { closeQuickAddCustomer(); });
       } else {
         alertEl.className = 'modal-alert error';
-        alertEl.innerText = '❌ ' + res.message;
+        alertEl.innerText = '' + res.message;
         alertEl.style.display = 'block';
       }
     }, function(err) {
       btn.disabled = false;
       btn.innerText = '💾 บันทึกลูกค้า';
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
       alertEl.style.display = 'block';
     });
 }
@@ -1160,7 +1162,7 @@ function handleSubmit() {
 
   if (!validateForm()) {
     alertEl.className = 'modal-alert error';
-    alertEl.innerText = '❌ กรุณาตรวจสอบข้อมูลที่กรอก — มีช่องที่ยังไม่ถูกต้อง (ไฮไลต์สีแดง)';
+    alertEl.innerText = 'กรุณาตรวจสอบข้อมูลที่กรอก — มีช่องที่ยังไม่ถูกต้อง (ไฮไลต์สีแดง)';
     alertEl.style.display = 'block';
     // เลื่อนไปที่ error แรกให้เห็นทันที
     var firstErr = document.querySelector('.is-invalid, .field-error.show');
@@ -1192,7 +1194,7 @@ function handleSubmit() {
         var savedYearBE = new Date(document.getElementById('modalInvoiceDate').value + 'T00:00:00').getFullYear() + 543;
         var noteYearShift = (currentPageYear !== 'all' && savedYearBE !== currentPageYear)
           ? ' (หมายเหตุ: ใบนี้อยู่ปี พ.ศ. ' + savedYearBE + ' จะไม่แสดงในมุมมองปี พ.ศ. ' + currentPageYear + ' ปัจจุบัน)' : '';
-        alertEl.innerText = '✅ ' + res.message + (res.id ? ' (' + res.id + ')' : '') + noteYearShift;
+        alertEl.innerText = '' + res.message + (res.id ? ' (' + res.id + ')' : '') + noteYearShift;
         var savedId = res.id || editingDocId;
         setTimeout(function() {
           closeInvoiceModal();
@@ -1204,13 +1206,13 @@ function handleSubmit() {
         }, 1400);
       } else {
         alertEl.className = 'modal-alert error';
-        alertEl.innerText = '❌ ' + res.message;
+        alertEl.innerText = '' + res.message;
       }
     }, function(err) {
       btn.disabled = false;
       btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
       alertEl.style.display = 'block';
     });
 }

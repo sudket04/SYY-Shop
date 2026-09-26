@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <base target="_top">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -9,7 +10,7 @@
   /* ─── เฉพาะหน้านี้: แท็บ, การ์ดผู้จัดจำหน่าย, สถานะใบสั่งซื้อ, รับสินค้า (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
   .modal-box{width:640px}
   .tab-bar{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line)}
-  .tab-btn{padding:10px 18px;font-family:'Prompt',sans-serif;font-size:13px;font-weight:600;color:var(--faint);background:none;border:none;border-bottom:3px solid transparent;cursor:pointer;transition:.15s}
+  .tab-btn{padding:10px 18px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px;font-weight:600;color:var(--faint);background:none;border:none;border-bottom:3px solid transparent;cursor:pointer;transition:.15s}
   .tab-btn:hover{color:var(--primary)}
   .tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
   .tab-panel{display:none}
@@ -23,7 +24,7 @@
   .stat-label{font-size:11px;color:var(--muted);margin-top:3px}
   .search-wrap{position:relative;max-width:360px;margin-bottom:16px}
   .search-wrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none}
-  .search-input{width:100%;padding:9px 12px 9px 34px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Prompt',sans-serif;font-size:13px;outline:none;background:#fff}
+  .search-input{width:100%;padding:9px 12px 9px 34px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px;outline:none;background:#fff}
   .search-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,80,136,.12)}
   .vendor-card{background:#fff;border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow);margin-bottom:16px;overflow:hidden}
   .vendor-head{background:var(--bg);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;border-bottom:1px solid var(--line-soft)}
@@ -39,7 +40,7 @@
   table.order-table tr:hover td{background:var(--bg)}
   .stock-pair{font-size:12px}
   .stock-pair b{color:#b91c1c}
-  .qty-input{width:70px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-family:'Prompt',sans-serif;font-size:13px;text-align:center}
+  .qty-input{width:70px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px;text-align:center}
   .qty-input:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 2px rgba(0,80,136,.12)}
   .vendor-foot{padding:12px 18px;background:var(--bg);border-top:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
   .vendor-foot .sum{font-size:13px;color:#475569}
@@ -49,7 +50,7 @@
   .no-vendor-list{display:flex;flex-wrap:wrap;gap:6px}
   .no-vendor-chip{font-size:12px;background:#fff;border:1px solid #fcd34d;color:#92400e;border-radius:20px;padding:3px 10px}
   table.history-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
-  .status-select{padding:5px 9px;border-radius:20px;font-family:'Prompt',sans-serif;font-size:11.5px;font-weight:600;border:1px solid;cursor:pointer;outline:none}
+  .status-select{padding:5px 9px;border-radius:20px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:11.5px;font-weight:600;border:1px solid;cursor:pointer;outline:none}
   .status-Pending{background:#fef9c3;color:#92400e;border-color:#fde68a}
   .status-Ordered{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
   .status-PartiallyReceived{background:#ffedd5;color:#c2410c;border-color:#fdba74}
@@ -64,7 +65,7 @@
   .receive-complete-banner{font-size:12.5px;border-radius:6px;padding:8px 12px;margin:10px 0;font-weight:600}
   .receive-complete-banner.full{background:#dcfce7;color:#166534}
   .receive-complete-banner.partial{background:#ffedd5;color:#c2410c}
-  .recv-qty-input{width:65px;padding:5px 7px;border:1px solid #cbd5e1;border-radius:6px;font-family:'Prompt',sans-serif;font-size:12.5px;text-align:center}
+  .recv-qty-input{width:65px;padding:5px 7px;border:1px solid #cbd5e1;border-radius:6px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:12.5px;text-align:center}
   .recv-qty-input:focus{border-color:var(--primary);outline:none}
   .recv-remaining{font-size:11px;color:var(--faint)}
   .receipts-log{margin-top:16px}
@@ -144,8 +145,8 @@
       <button class="pill"        data-status="Pending"    onclick="setStatusFilter('Pending', this)">🕐 รอดำเนินการ</button>
       <button class="pill"        data-status="Ordered"    onclick="setStatusFilter('Ordered', this)">📦 สั่งซื้อแล้ว</button>
       <button class="pill"        data-status="PartiallyReceived" onclick="setStatusFilter('PartiallyReceived', this)">🔶 ได้รับบางส่วน</button>
-      <button class="pill"        data-status="Received"   onclick="setStatusFilter('Received', this)">✅ ได้รับครบแล้ว</button>
-      <button class="pill"        data-status="Cancelled"  onclick="setStatusFilter('Cancelled', this)">❌ ยกเลิก</button>
+      <button class="pill"        data-status="Received"   onclick="setStatusFilter('Received', this)">ได้รับครบแล้ว</button>
+      <button class="pill"        data-status="Cancelled"  onclick="setStatusFilter('Cancelled', this)">ยกเลิก</button>
     </div>
 
     <div class="table-wrap">
@@ -298,6 +299,7 @@
   </div>
 
 <?!= include('XLFilter'); ?>
+<?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
@@ -326,8 +328,8 @@
     Pending           : '🕐 รอดำเนินการ',
     Ordered           : '📦 สั่งซื้อแล้ว',
     PartiallyReceived : '🔶 ได้รับบางส่วน',
-    Received          : '✅ ได้รับครบแล้ว',
-    Cancelled         : '❌ ยกเลิก'
+    Received          : 'ได้รับครบแล้ว',
+    Cancelled         : 'ยกเลิก'
   };
 
   var pendingReceivePO = null; // PO object ที่กำลังบันทึกรับสินค้าอยู่ใน modal
@@ -660,7 +662,7 @@
         alertEl.style.display = 'block';
         if (res.success) {
           alertEl.className = 'modal-alert success';
-          alertEl.innerText = '✅ บันทึกใบสั่งซื้อเรียบร้อย (' + res.id + ') — ต้องการ Export Excel เพื่อส่งให้ผู้จัดจำหน่ายไหม?';
+          alertEl.innerText = 'บันทึกใบสั่งซื้อเรียบร้อย (' + res.id + ') — ต้องการ Export Excel เพื่อส่งให้ผู้จัดจำหน่ายไหม?';
 
           var totalAmount = items.reduce(function(s,it){ return s + it.qty*it.costPrice; }, 0);
           var totalQty    = items.reduce(function(s,it){ return s + it.qty; }, 0);
@@ -682,13 +684,13 @@
         } else {
           btn.disabled = false; btn.innerText = '💾 บันทึกใบสั่งซื้อ';
           alertEl.className = 'modal-alert error';
-          alertEl.innerText = '❌ ' + res.message;
+          alertEl.innerText = '' + res.message;
         }
       }, function(err) {
         btn.disabled = false; btn.innerText = '💾 บันทึกใบสั่งซื้อ';
         alertEl.style.display = 'block';
         alertEl.className = 'modal-alert error';
-        alertEl.innerText = '❌ Error: ' + JSON.stringify(err);
+        alertEl.innerText = 'Error: ' + JSON.stringify(err);
       });
   }
 
@@ -903,7 +905,7 @@
     banner.style.display = 'block';
     if (allComplete) {
       banner.className = 'receive-complete-banner full';
-      banner.innerText = '✅ รับสินค้าครบทุกรายการ — สถานะจะเปลี่ยนเป็น "ได้รับครบแล้ว" และล็อกใบสั่งซื้อนี้';
+      banner.innerText = 'รับสินค้าครบทุกรายการ — สถานะจะเปลี่ยนเป็น "ได้รับครบแล้ว" และล็อกใบสั่งซื้อนี้';
       hint.classList.remove('show');
       reqTag.style.display = 'none';
     } else {
@@ -927,7 +929,7 @@
 
     if (!invoiceNo || !receiptDate || !receiverName) {
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ กรุณากรอกเลขที่ Invoice, วันที่รับสินค้า และชื่อผู้รับสินค้าให้ครบ';
+      alertEl.innerText = 'กรุณากรอกเลขที่ Invoice, วันที่รับสินค้า และชื่อผู้รับสินค้าให้ครบ';
       alertEl.style.display = 'block';
       return;
     }
@@ -944,13 +946,13 @@
 
     if (!items.length) {
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ กรุณาระบุจำนวนที่รับอย่างน้อย 1 รายการ';
+      alertEl.innerText = 'กรุณาระบุจำนวนที่รับอย่างน้อย 1 รายการ';
       alertEl.style.display = 'block';
       return;
     }
     if (!allComplete && !deliveryNote) {
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = '❌ ได้รับสินค้าไม่ครบ กรุณากรอกเลขที่ใบส่งของชั่วคราว';
+      alertEl.innerText = 'ได้รับสินค้าไม่ครบ กรุณากรอกเลขที่ใบส่งของชั่วคราว';
       alertEl.style.display = 'block';
       return;
     }
@@ -975,20 +977,20 @@
           alertEl.style.display = 'block';
           if (res.success) {
             alertEl.className = 'modal-alert success';
-            alertEl.innerText = '✅ ' + res.message;
+            alertEl.innerText = '' + res.message;
             setTimeout(function() {
               closeReceiveModal();
               loadAll();
             }, 1000);
           } else {
             alertEl.className = 'modal-alert error';
-            alertEl.innerText = '❌ ' + res.message;
+            alertEl.innerText = '' + res.message;
           }
         }, function(err) {
           btn.disabled = false; btn.innerText = '💾 บันทึกการรับสินค้า';
           alertEl.style.display = 'block';
           alertEl.className = 'modal-alert error';
-          alertEl.innerText = '❌ Error: ' + JSON.stringify(err);
+          alertEl.innerText = 'Error: ' + JSON.stringify(err);
         });
     });
   }
@@ -1029,7 +1031,7 @@
         var itemsTxt = (r.items || []).map(function(it) { return escHtml(it.productName) + ' ×' + it.qtyReceivedNow; }).join(', ');
         return '<div class="receipt-entry">' +
           '<div class="r-head"><b>' + escHtml(r.date) + ' — Invoice: ' + escHtml(r.invoiceNo) + '</b>' +
-          '<span class="r-tag ' + (r.isFinal ? 'full' : 'partial') + '">' + (r.isFinal ? '✅ รับครบ' : '🔶 รับบางส่วน') + '</span></div>' +
+          '<span class="r-tag ' + (r.isFinal ? 'full' : 'partial') + '">' + (r.isFinal ? 'รับครบ' : '🔶 รับบางส่วน') + '</span></div>' +
           '<div>ผู้รับ: ' + escHtml(r.receiverName) + (r.deliveryNoteNo ? ' • ใบส่งของ: ' + escHtml(r.deliveryNoteNo) : '') + '</div>' +
           '<div class="r-items">' + itemsTxt + '</div>' +
         '</div>';
