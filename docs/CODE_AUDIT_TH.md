@@ -30,3 +30,12 @@ Phase นี้ปรับ Application Shell, navigation และการจ�
 ## การตรวจสอบสิทธิ์
 
 Mobile navigation สร้างจากเงื่อนไข role ชุดเดียวกับ sidebar และ `switchPage` ตรวจ permission ซ้ำก่อนเปิดปลายทาง จึงไม่ลดทอน role-based navigation เดิม ทั้งนี้ backend gateway ยังคงเป็นแหล่งบังคับสิทธิ์หลัก
+
+## Typography System (Product Listing และทั้งระบบ)
+
+- ใช้ `Noto Sans Thai` เป็นฟอนต์หลักสำหรับภาษาไทย และ `Inter` เป็น fallback สำหรับอักษรละติน โดยมี `system-ui` รองรับกรณีโหลด web font ไม่สำเร็จ
+- เนื้อหาทั่วไป: 14px บน desktop, line-height 1.65, letter-spacing 0.005em; mobile เพิ่มเป็น 15px และ line-height 1.7
+- ชื่อสินค้า: 14px/600/line-height 1.55 บน desktop และ 15px/line-height 1.6 บน mobile ใช้สี `--ink`
+- ราคาขาย: 16px/700 บน desktop และ 17px บน mobile ใช้สี primary พร้อม tabular numerals; ราคาทุนลดลำดับชั้นเป็น 13px/500 และสี muted
+- form controls รับ font และ spacing จากระบบเดียวกัน เพื่อไม่ให้ browser fallback ทำให้ข้อความไทยสูงไม่เท่ากัน
+- การเปลี่ยนแปลงเป็น CSS/presentation เท่านั้น ไม่มี Firestore read/write, schema หรือ API contract เพิ่มเติม
