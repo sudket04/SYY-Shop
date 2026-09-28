@@ -37,20 +37,26 @@ function swyConfirm(o){return Swal.fire({icon:o.icon||'question',title:o.title,h
    P0 client data layer
    ═══════════════════════════════════════════════════════════ */
 function p0UpsertByKey_(arr,item,keyFn){if(!Array.isArray(arr)||!item)return;var key=keyFn(item),idx=-1;for(var i=0;i<arr.length;i++){if(keyFn(arr[i])===key){idx=i;break;}}if(idx>=0)arr[idx]=item;else arr.unshift(item);}
+function p0RebuildPendingPoMap_(){if(!Array.isArray(window.purchaseOrders))return;window.pendingProductCodes={};window.purchaseOrders.forEach(function(po){if(['Pending','Ordered','PartiallyReceived'].indexOf(po.status)>-1)(po.items||[]).forEach(function(it){window.pendingProductCodes[it.productCode]=true;});});}
 function p0ApplySuccess_(fnName,args,res){
   if(!res||res.success===false)return;
   if(fnName==='getDashboardBootstrap')window.__p0DashMeta={poWaitingCount:num(res.poWaitingCount),dataWindowDays:num(res.dataWindowDays),truncated:!!res.truncated};
 
   if(fnName==='saveProduct'&&res.product){if(Array.isArray(window.productsCache))p0UpsertByKey_(window.productsCache,res.product,function(p){return p.productCode||p.id;});window.__p0LastProductDelta={product:res.product};window.__p0SkipProductLoad=true;}
+  if(fnName==='adjustProductStock'&&res.product){if(Array.isArray(window.productsCache))p0UpsertByKey_(window.productsCache,res.product,function(p){return p.productCode||p.id;});window.__p0LastProductDelta={product:res.product};window.__p0SkipProductLoad=true;}
   if(fnName==='deleteProduct'&&(res.deletedId||(args&&args[0]))){var deletedId=res.deletedId||args[0];if(Array.isArray(window.productsCache))window.productsCache=window.productsCache.filter(function(p){return(p.productCode||p.id)!==deletedId;});window.__p0LastProductDelta={deletedId:deletedId};window.__p0SkipProductLoad=true;}
   if((fnName==='uploadProductImage'||fnName==='deleteProductImage'||fnName==='uploadProductGalleryImage'||fnName==='deleteProductGalleryImage'||fnName==='setProductGalleryPrimary')&&res.product){if(Array.isArray(window.productsCache))p0UpsertByKey_(window.productsCache,res.product,function(p){return p.productCode||p.id;});window.__p0LastProductDelta={product:res.product};}
 
-  if(fnName==='savePurchaseOrder'&&res.purchaseOrder&&Array.isArray(window.purchaseOrders)){p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});window.__p0SkipPoLoad=true;}
+  if(fnName==='savePurchaseOrder'&&res.purchaseOrder&&Array.isArray(window.purchaseOrders)){p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});p0RebuildPendingPoMap_();window.__p0SkipPoLoad=true;}
   if(fnName==='receiveGoods'&&res.purchaseOrder&&Array.isArray(window.purchaseOrders)){
     var old=window.purchaseOrders.find(function(p){return p.poId===res.purchaseOrder.poId;});
     if(old){old.status=res.purchaseOrder.status;old.items=res.purchaseOrder.items;old.receipts=res.purchaseOrder.receipts;}
     else p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});
-    /* Correctness first: receiving goods changes low-stock data, so the PO page reload remains enabled. */
+    if(Array.isArray(window.lowStockItems)&&Array.isArray(res.stockChanges)){
+      res.stockChanges.forEach(function(ch){var p=window.lowStockItems.find(function(x){return x.productCode===ch.productCode;});if(p)p.currentStock=num(ch.after);});
+      window.lowStockItems=window.lowStockItems.filter(function(p){return num(p.currentStock)<=num(p.minStock);});
+    }
+    p0RebuildPendingPoMap_();window.__p0SkipPoLoad=true;
   }
 
   if(fnName==='saveTaxInvoice'&&res.invoice&&Array.isArray(window.invoicesCache)){p0UpsertByKey_(window.invoicesCache,res.invoice,function(x){return x.id;});window.__p0SkipTaxLoad=true;}
@@ -65,7 +71,7 @@ function callApi(fnName,args,onSuccess,onFailure){
     if(res&&res.__authError){swyError('เซสชันหมดอายุ','กรุณาเข้าสู่ระบบใหม่').then(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';});return;}
     try{p0ApplySuccess_(fnName,args||[],res);}catch(e){console.error('p0ApplySuccess_',e);}
     if(onSuccess)onSuccess(res);
-  }).withFailureHandler(onFailure||function(err){swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));}).p0Gateway(token,fnName,args||[],navigator.userAgent);
+  }).withFailureHandler(onFailure||function(err){swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));}).p0GatewayV2(token,fnName,args||[],navigator.userAgent);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -75,20 +81,21 @@ function p0InstallReloadGuards_(){
   if(typeof window.loadTable==='function'&&document.getElementById('productBody')&&!window.loadTable.__p0){var productLoad=window.loadTable;window.loadTable=function(){if(window.__p0SkipProductLoad){window.__p0SkipProductLoad=false;if(typeof window.filterAndRenderTable==='function')window.filterAndRenderTable();return;}return productLoad.apply(this,arguments);};window.loadTable.__p0=true;}
   if(typeof window.loadAll==='function'&&document.getElementById('vendorGroupsContainer')&&!window.loadAll.__p0){var poLoad=window.loadAll;window.loadAll=function(){if(window.__p0SkipPoLoad){window.__p0SkipPoLoad=false;if(typeof window.renderCreateTab==='function')window.renderCreateTab();if(typeof window.renderHistoryTab==='function')window.renderHistoryTab();if(typeof window.updateStatCards==='function')window.updateStatCards();return;}return poLoad.apply(this,arguments);};window.loadAll.__p0=true;}
   if(typeof window.loadAll==='function'&&document.getElementById('taxBody')&&!window.loadAll.__p0){var taxLoad=window.loadAll;window.loadAll=function(){var cb=arguments.length>1?arguments[1]:null;if(window.__p0SkipTaxLoad){window.__p0SkipTaxLoad=false;if(typeof window.renderRows==='function')window.renderRows();if(typeof window.renderDashboard==='function')window.renderDashboard();if(typeof cb==='function')cb();return;}return taxLoad.apply(this,arguments);};window.loadAll.__p0=true;}
+  if(typeof window.loadPageData==='function'&&document.getElementById('quotationBody')&&!window.loadPageData.__p0){var quoteLoad=window.loadPageData;window.loadPageData=function(){if(window.__p0SkipQuoteLoad){window.__p0SkipQuoteLoad=false;if(typeof window.renderList==='function')window.renderList();if(typeof window.renderQuoteStats==='function')window.renderQuoteStats();return;}return quoteLoad.apply(this,arguments);};window.loadPageData.__p0=true;}
 }
 
 function p0ProtectStockFields_(){
   var inp=document.getElementById('inp_currentStock');
-  if(inp&&!inp.dataset.p0Protected){inp.dataset.p0Protected='1';var oldOpen=window.openEditModal;if(typeof oldOpen==='function'&&document.getElementById('productForm')){window.openEditModal=function(){var r=oldOpen.apply(this,arguments);var stock=document.getElementById('inp_currentStock');if(stock){stock.readOnly=true;stock.setAttribute('aria-readonly','true');stock.title='สต๊อกแก้ผ่านรายการรับเข้า/ตัดสต๊อกเท่านั้น';var grp=stock.closest('.form-group');if(grp&&!grp.querySelector('.p0-stock-hint')){var h=document.createElement('div');h.className='field-hint p0-stock-hint';h.textContent='สต๊อกปัจจุบันเป็น Read-only เพื่อรักษาประวัติและความถูกต้อง ใช้รับสินค้า/ตัดสต๊อกในการปรับยอด';grp.appendChild(h);}}return r;};}}
+  if(inp&&!inp.dataset.p0Protected){inp.dataset.p0Protected='1';var oldOpen=window.openEditModal;if(typeof oldOpen==='function'&&document.getElementById('productForm')){window.openEditModal=function(){var r=oldOpen.apply(this,arguments);var stock=document.getElementById('inp_currentStock');if(stock){stock.readOnly=true;stock.setAttribute('aria-readonly','true');stock.title='สต๊อกแก้ผ่านรายการรับเข้า/ตัดสต๊อกเท่านั้น';var grp=stock.closest('.form-group');if(grp&&!grp.querySelector('.p0-stock-hint')){var h=document.createElement('div');h.className='field-hint p0-stock-hint';h.textContent='สต๊อกปัจจุบันเป็น Read-only เพื่อรักษาประวัติและความถูกต้อง ใช้ปุ่มปรับยอด/รับสินค้า/ตัดสต๊อกในการเปลี่ยนยอด';grp.appendChild(h);}}return r;};}}
   var m=document.getElementById('mStock');if(m){m.readOnly=true;m.setAttribute('aria-readonly','true');m.title='สต๊อกแก้ผ่าน Transaction เท่านั้น';}
 }
 
 function p0InstallDashboard_(){
   if(typeof window.dashRenderKpi!=='function'||window.dashRenderKpi.__p0)return;
-  window.DASH_YEARS_BACK=1;
+  window.DASH_YEARS_BACK=2;
   window.dashRenderKpi=function(period){
     var rows=(window.DASH&&DASH.health&&DASH.health.rows)||[],totalValue=rows.reduce(function(s,r){return s+num(r.value);},0),out=rows.filter(function(r){return num(r.qty)<=0;}).length,low=rows.filter(function(r){return num(r.qty)>0&&num(r.qty)<=num(r.rop)*(1+(window.DASH_LOW_BUFFER||.2));}).length;
-    var cur=period&&period.cur?period.cur:{salesValue:0,rows:[]},sales=num(cur.salesValue),cogs=0;(cur.rows||[]).forEach(function(m){if(m.type==='OUT'&&m.reason==='ขายหน้าร้าน')cogs+=num(m.qty)*num(m.costPrice);});
+    var cur=period&&period.cur?period.cur:{salesValue:0,rows:[]},sales=num(cur.salesValue),cogs=0;(cur.rows||[]).forEach(function(m){if(m.type==='OUT'&&/ขาย|sale/i.test(String(m.reason||'')))cogs+=num(m.qty)*num(m.costPrice);});
     var profit=sales-cogs,meta=window.__p0DashMeta||{},po=num(meta.poWaitingCount),label=document.getElementById('dashPeriodLabel');if(label)label.innerText=period.periodLabel;
     var grid=document.getElementById('dashKpiRow');if(!grid)return;
     function card(cls,lb,val,sub,onclick){return '<div class="dash-kpi p0-kpi '+cls+'"'+(onclick?' onclick="'+onclick+'" role="button" tabindex="0"':'')+'><div class="dash-kpi-lb">'+lb+'</div><div class="dash-kpi-val dash-mono">'+val+'</div><div class="dash-kpi-sub">'+sub+'</div></div>';}
