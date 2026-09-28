@@ -50,7 +50,7 @@ function p0ApplySuccess_(fnName,args,res){
     var old=window.purchaseOrders.find(function(p){return p.poId===res.purchaseOrder.poId;});
     if(old){old.status=res.purchaseOrder.status;old.items=res.purchaseOrder.items;old.receipts=res.purchaseOrder.receipts;}
     else p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});
-    /* Correctness first: do NOT skip PO reload here. Receiving goods changes low-stock data. */
+    /* Correctness first: receiving goods changes low-stock data, so the PO page reload remains enabled. */
   }
 
   if(fnName==='saveTaxInvoice'&&res.invoice&&Array.isArray(window.invoicesCache)){p0UpsertByKey_(window.invoicesCache,res.invoice,function(x){return x.id;});window.__p0SkipTaxLoad=true;}
@@ -90,11 +90,13 @@ function p0InstallDashboard_(){
     var rows=(window.DASH&&DASH.health&&DASH.health.rows)||[],totalValue=rows.reduce(function(s,r){return s+num(r.value);},0),out=rows.filter(function(r){return num(r.qty)<=0;}).length,low=rows.filter(function(r){return num(r.qty)>0&&num(r.qty)<=num(r.rop)*(1+(window.DASH_LOW_BUFFER||.2));}).length;
     var cur=period&&period.cur?period.cur:{salesValue:0,rows:[]},sales=num(cur.salesValue),cogs=0;(cur.rows||[]).forEach(function(m){if(m.type==='OUT'&&m.reason==='ขายหน้าร้าน')cogs+=num(m.qty)*num(m.costPrice);});
     var profit=sales-cogs,meta=window.__p0DashMeta||{},po=num(meta.poWaitingCount),label=document.getElementById('dashPeriodLabel');if(label)label.innerText=period.periodLabel;
-    var grid=document.getElementById('dashKpiGrid');if(!grid)return;
+    var grid=document.getElementById('dashKpiRow');if(!grid)return;
     function card(cls,lb,val,sub,onclick){return '<div class="dash-kpi p0-kpi '+cls+'"'+(onclick?' onclick="'+onclick+'" role="button" tabindex="0"':'')+'><div class="dash-kpi-lb">'+lb+'</div><div class="dash-kpi-val dash-mono">'+val+'</div><div class="dash-kpi-sub">'+sub+'</div></div>';}
     grid.innerHTML=card('p0-blue','มูลค่าสต๊อก','฿'+Math.round(totalValue).toLocaleString('th-TH'),DASH.products.length.toLocaleString('th-TH')+' SKU','')+card('p0-green','ยอดขาย','฿'+Math.round(sales).toLocaleString('th-TH'),period.periodLabel,'')+card('p0-amber','กำไรขั้นต้น','฿'+Math.round(profit).toLocaleString('th-TH'),sales?((profit/sales)*100).toFixed(1)+'% margin':'ไม่มีการขาย','')+card('p0-red','สินค้าหมด',out.toLocaleString('th-TH')+' SKU','ต้องดำเนินการ','dashSetTab(\'out\')')+card('p0-orange','ใกล้หมด',low.toLocaleString('th-TH')+' SKU','ควรตรวจสอบการสั่งซื้อ','dashSetTab(\'low\')')+card('p0-purple','PO รอรับ',po.toLocaleString('th-TH')+' รายการ','Pending / Ordered / Partial','switchPage(\'orders\')');
   };
   window.dashRenderKpi.__p0=true;
+  var alertRow=document.getElementById('dashAlertRow');
+  if(alertRow&&alertRow.parentElement){var head=alertRow.parentElement.querySelector('div:first-child span:first-child');if(head)head.textContent='งานที่ต้องทำ (Action Center)';}
   var st=document.createElement('style');st.textContent='.dash-kpi-grid{grid-template-columns:repeat(6,minmax(0,1fr))!important}.p0-kpi{min-height:126px!important;cursor:default;border-width:1px!important;box-shadow:none!important}.p0-kpi[role=button]{cursor:pointer}.p0-kpi[role=button]:hover{transform:translateY(-1px);box-shadow:0 5px 16px rgba(15,23,42,.08)!important}.p0-kpi .dash-kpi-val{font-size:22px!important;margin-top:8px}.p0-kpi .dash-kpi-sub{font-size:11.5px;margin-top:4px}.p0-blue{background:#f0f6ff!important;border-color:#cfe0ff!important}.p0-blue .dash-kpi-val{color:#0757c8!important}.p0-green{background:#f0fbf4!important;border-color:#ccefd8!important}.p0-green .dash-kpi-val{color:#15803d!important}.p0-amber{background:#fff9ed!important;border-color:#f8ddb0!important}.p0-amber .dash-kpi-val{color:#d97706!important}.p0-red{background:#fff2f2!important;border-color:#ffd0d0!important}.p0-red .dash-kpi-val{color:#dc2626!important}.p0-orange{background:#fff8ed!important;border-color:#fed7aa!important}.p0-orange .dash-kpi-val{color:#ea580c!important}.p0-purple{background:#f7f2ff!important;border-color:#e5d5ff!important}.p0-purple .dash-kpi-val{color:#7c3aed!important}@media(max-width:1280px){.dash-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}@media(max-width:640px){.dash-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.p0-kpi{min-height:110px!important}.p0-kpi .dash-kpi-val{font-size:18px!important}}';document.head.appendChild(st);
 }
 
