@@ -1,133 +1,34 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-  <meta charset="UTF-8">
-  <base target="_top">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <?!= include('Styles'); ?>
-  <style>
-    .user-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
-    .user-stat{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 14px}
-    .user-stat .lb{font-size:11.5px;color:var(--muted);font-weight:600}.user-stat .val{font-size:23px;font-weight:750;color:var(--ink);margin-top:5px;font-variant-numeric:tabular-nums}
-    .user-main{padding:16px 18px}.user-toolbar{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
-    .user-search{position:relative;flex:1;min-width:240px;max-width:480px}.user-search input{width:100%;padding-left:37px}.user-search .ic{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint);pointer-events:none}
-    .user-name{font-weight:650;color:var(--ink)}.user-meta{font-size:11.5px;color:var(--muted);margin-top:2px}.user-avatar{width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--primary-soft);color:var(--primary);font-weight:700;margin-right:9px;vertical-align:middle}
-    .role-pill,.security-pill,.state-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:650;white-space:nowrap}.role-admin{background:#f3e8ff;color:#7e22ce}.role-staff{background:#eaf4ff;color:#0369a1}.role-viewer{background:#f1f5f9;color:#475569}.security-on{background:#ecfdf3;color:#15803d}.security-off{background:#fff7ed;color:#c2410c}.state-active{background:#ecfdf3;color:#15803d}.state-inactive{background:#fff1f2;color:#be123c}
-    .user-actions{display:flex;justify-content:center;gap:5px}.user-more{position:relative}.user-more-menu{display:none;position:absolute;right:0;top:calc(100% + 5px);min-width:190px;background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow-lg);padding:5px;z-index:200}.user-more.open .user-more-menu{display:block}.user-more-menu button{width:100%;border:0;background:#fff;text-align:left;padding:9px 10px;border-radius:7px;font:inherit;font-size:12.5px;color:#334155;cursor:pointer}.user-more-menu button:hover{background:#f5f8fc}.user-more-menu button.danger{color:var(--danger)}
-    .last-login{white-space:nowrap;font-size:12px;color:#475569}.muted-empty{color:var(--faint)}
-    @media(max-width:900px){.user-stats{grid-template-columns:repeat(2,1fr)}}
-    @media(max-width:680px){.user-main{padding:12px}.user-stats{grid-template-columns:repeat(2,1fr);gap:8px}.hide-mobile{display:none}.user-toolbar{padding:10px}.user-search{max-width:none;min-width:100%}.user-stat .val{font-size:20px}}
-  </style>
+<meta charset="UTF-8"><base target="_top"><meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<?!= include('Styles'); ?>
+<style>
+.user-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}.user-stat{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 14px}.user-stat .lb{font-size:11.5px;color:var(--muted);font-weight:600}.user-stat .val{font-size:23px;font-weight:750;color:var(--ink);margin-top:5px;font-variant-numeric:tabular-nums}.user-main{padding:16px 18px}.user-toolbar{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}.user-search{position:relative;flex:1;min-width:240px;max-width:480px}.user-search input{width:100%;padding-left:37px}.user-search .ic{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--faint);pointer-events:none}.user-name{font-weight:650;color:var(--ink)}.user-meta{font-size:11.5px;color:var(--muted);margin-top:2px}.user-avatar{width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--primary-soft);color:var(--primary);font-weight:700;margin-right:9px;vertical-align:middle}.role-pill,.security-pill,.state-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:650;white-space:nowrap}.role-admin{background:#f3e8ff;color:#7e22ce}.role-staff{background:#eaf4ff;color:#0369a1}.role-viewer{background:#f1f5f9;color:#475569}.security-on{background:#ecfdf3;color:#15803d}.security-off{background:#fff7ed;color:#c2410c}.state-active{background:#ecfdf3;color:#15803d}.state-inactive{background:#fff1f2;color:#be123c}.user-actions{display:flex;justify-content:center;gap:5px}.user-more{position:relative}.user-more-menu{display:none;position:absolute;right:0;top:calc(100% + 5px);min-width:190px;background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow-lg);padding:5px;z-index:200}.user-more.open .user-more-menu{display:block}.user-more-menu button{width:100%;border:0;background:#fff;text-align:left;padding:9px 10px;border-radius:7px;font:inherit;font-size:12.5px;color:#334155;cursor:pointer}.user-more-menu button:hover{background:#f5f8fc}.user-more-menu button.danger{color:var(--danger)}.last-login{white-space:nowrap;font-size:12px;color:#475569}@media(max-width:900px){.user-stats{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.user-main{padding:12px}.user-stats{grid-template-columns:repeat(2,1fr);gap:8px}.hide-mobile{display:none}.user-toolbar{padding:10px}.user-search{max-width:none;min-width:100%}.user-stat .val{font-size:20px}}
+</style>
 </head>
 <body>
-  <div class="page-head">
-    <div class="crumb"><span>ระบบ</span><span class="sep">›</span><b>จัดการบัญชีผู้ใช้</b></div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <button type="button" class="btn btn-ghost" onclick="loadUsers()">🔄 รีเฟรช</button>
-      <button type="button" class="btn btn-primary" onclick="openCreateUser()">➕ เพิ่มบัญชีผู้ใช้</button>
-    </div>
-  </div>
-
-  <div class="user-main">
-    <div class="user-stats">
-      <div class="user-stat"><div class="lb">บัญชีทั้งหมด</div><div class="val" id="statAll">—</div></div>
-      <div class="user-stat"><div class="lb">ใช้งานอยู่</div><div class="val" id="statActive" style="color:var(--ok)">—</div></div>
-      <div class="user-stat"><div class="lb">เปิด 2FA</div><div class="val" id="stat2fa" style="color:var(--primary)">—</div></div>
-      <div class="user-stat"><div class="lb">Admin</div><div class="val" id="statAdmin" style="color:#7c3aed">—</div></div>
-    </div>
-
-    <div class="card">
-      <div class="user-toolbar">
-        <div class="user-search"><span class="ic">⌕</span><input class="input" id="userSearch" type="search" autocomplete="off" placeholder="ค้นหา username, ชื่อ, อีเมล, role…" oninput="renderUsers()"></div>
-        <select class="select" id="roleFilter" onchange="renderUsers()" data-searchable="false"><option value="">ทุก Role</option><option value="admin">Admin</option><option value="staff">Staff</option><option value="viewer">Viewer</option></select>
-        <select class="select" id="statusFilter" onchange="renderUsers()" data-searchable="false"><option value="">ทุกสถานะ</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select>
-        <span class="count" id="recordCount">กำลังโหลด...</span>
-      </div>
-      <div class="table-wrap" style="max-height:none">
-        <table>
-          <thead><tr><th>ผู้ใช้</th><th>ชื่อ / อีเมล</th><th class="text-center">Role</th><th class="text-center">2FA</th><th class="hide-mobile">เข้าสู่ระบบล่าสุด</th><th class="text-center">สถานะ</th><th class="text-center" style="width:105px">จัดการ</th></tr></thead>
-          <tbody id="userBody"><tr class="empty-row"><td colspan="7">กำลังโหลดข้อมูล...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-overlay" id="userModal" role="dialog" aria-modal="true" aria-labelledby="userModalTitle">
-    <div class="modal-box" style="width:560px">
-      <div class="modal-header"><span id="userModalTitle">เพิ่มบัญชีผู้ใช้</span><button type="button" class="modal-close" onclick="closeModal('userModal')">×</button></div>
-      <form id="userForm" onsubmit="submitUser(event)">
-        <div class="modal-body">
-          <div class="section-label">ข้อมูลบัญชี</div>
-          <div class="form-grid">
-            <div class="form-group full" id="usernameViewGroup" style="display:none"><label>ชื่อผู้ใช้</label><input id="uUsername" class="form-control" disabled></div>
-            <div class="form-group full"><label>ชื่อ-นามสกุล *</label><input id="uFullName" class="form-control" required autocomplete="name"></div>
-            <div class="form-group full"><label>อีเมล *</label><input id="uEmail" type="email" class="form-control" required autocomplete="email"></div>
-            <div class="form-group full"><label>Role *</label><select id="uRole" class="form-control" data-searchable="false"><option value="viewer">Viewer — ดูข้อมูลและออกเอกสาร</option><option value="staff">Staff — เพิ่ม/แก้ไขข้อมูลและทำธุรกรรม</option><option value="admin">Admin — สิทธิ์เต็ม</option></select></div>
-          </div>
-          <div id="createHint" style="margin-top:13px;padding:10px 12px;background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:8px;font-size:12px;color:#35536f;line-height:1.6">ระบบจะสร้าง Username และรหัสผ่านชั่วคราวอัตโนมัติ ส่งให้ผู้ใช้ทางอีเมล และบังคับเปลี่ยนรหัสผ่านเมื่อเข้าสู่ระบบครั้งแรก</div>
-          <div class="modal-alert" id="userAlert"></div>
-        </div>
-        <div class="modal-footer"><button type="button" class="btn btn-ghost" onclick="closeModal('userModal')">ยกเลิก</button><button type="submit" class="btn btn-primary" id="btnSaveUser">💾 บันทึก</button></div>
-      </form>
-    </div>
-  </div>
-
-  <?!= include('UiSystem'); ?>
-  <?!= include('Shared'); ?>
-  <script>
-    var AUTH_TOKEN = "<?= authToken ?>";
-    var CURRENT_USER = "<?= userName ?>";
-    var users = [], editingUserId = null;
-
-    window.addEventListener('load', loadUsers);
-    document.addEventListener('click', function(e){ document.querySelectorAll('.user-more.open').forEach(function(m){ if(!m.contains(e.target))m.classList.remove('open'); }); });
-
-    function loadUsers(){
-      document.getElementById('userBody').innerHTML='<tr class="empty-row"><td colspan="7">'+skeletonRows(5,7)+'</td></tr>';
-      callApi('getAllUsers',[],function(data){ users=Array.isArray(data)?data:[]; renderStats(); renderUsers(); },function(err){ document.getElementById('userBody').innerHTML=emptyStateHtml(7,{icon:'⚠️',title:'โหลดผู้ใช้ไม่สำเร็จ',sub:String(err&&err.message||err)}); });
-    }
-
-    function renderStats(){
-      document.getElementById('statAll').textContent=users.length.toLocaleString();
-      document.getElementById('statActive').textContent=users.filter(function(u){return u.status==='Active'}).length.toLocaleString();
-      document.getElementById('stat2fa').textContent=users.filter(function(u){return !!u.totpEnabled}).length.toLocaleString();
-      document.getElementById('statAdmin').textContent=users.filter(function(u){return u.role==='admin'}).length.toLocaleString();
-    }
-
-    function fmtDate(v){ if(!v)return '—'; var d=new Date(v); if(isNaN(d))return '—'; return d.toLocaleString('th-TH',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
-    function initials(u){ var s=String(u.fullName||u.username||'?').trim(); return esc(s.charAt(0).toUpperCase()); }
-    function js(v){ return String(v||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
-
-    function filteredUsers(){
-      var q=document.getElementById('userSearch').value.trim().toLowerCase(), role=document.getElementById('roleFilter').value, status=document.getElementById('statusFilter').value;
-      return users.filter(function(u){
-        if(role&&u.role!==role)return false; if(status&&u.status!==status)return false;
-        if(!q)return true; return [u.username,u.fullName,u.email,u.role,u.status].join(' ').toLowerCase().indexOf(q)>-1;
-      });
-    }
-
-    function renderUsers(){
-      var rows=filteredUsers(); document.getElementById('recordCount').textContent='แสดง '+rows.length+' จาก '+users.length+' รายการ';
-      var body=document.getElementById('userBody'); if(!rows.length){body.innerHTML=emptyStateHtml(7,{icon:'👤',title:'ไม่พบผู้ใช้',sub:users.length?'ลองเปลี่ยนคำค้นหาหรือตัวกรอง':'ยังไม่มีบัญชีผู้ใช้'});return;}
-      body.innerHTML=rows.map(function(u){
-        var self=String(u.username).toLowerCase()===String(CURRENT_USER).toLowerCase();
-        var role='<span class="role-pill role-'+esc(u.role)+'">'+esc((u.role||'').charAt(0).toUpperCase()+(u.role||'').slice(1))+'</span>';
-        var sec='<span class="security-pill '+(u.totpEnabled?'security-on':'security-off')+'">'+(u.totpEnabled?'2FA เปิด':'2FA ปิด')+'</span>';
-        var state='<span class="state-pill '+(u.status==='Active'?'state-active':'state-inactive')+'">'+esc(u.status||'')+'</span>';
-        return '<tr><td><span class="user-avatar">'+initials(u)+'</span><span class="mono">'+esc(u.username)+'</span>'+(self?'<span class="badge badge-info" style="margin-left:6px">คุณ</span>':'')+'</td>'+
-          '<td><div class="user-name">'+esc(u.fullName||'—')+'</div><div class="user-meta">'+esc(u.email||'—')+'</div></td><td class="text-center">'+role+'</td><td class="text-center">'+sec+'</td><td class="hide-mobile"><span class="last-login">'+fmtDate(u.lastLogin)+'</span></td><td class="text-center">'+state+'</td><td><div class="user-actions"><button class="btn btn-ghost btn-icon" title="แก้ไข" onclick="openEditUser(\''+js(u.docId)+'\')">✏️</button><div class="user-more"><button class="btn btn-ghost btn-icon" title="เพิ่มเติม" onclick="event.stopPropagation();this.parentElement.classList.toggle(\'open\')">•••</button><div class="user-more-menu"><button onclick="resetPassword(\''+js(u.docId)+'\')">🔑 รีเซ็ตรหัสผ่าน</button><button '+(self?'disabled style="opacity:.45"':'')+' class="'+(u.status==='Active'?'danger':'')+'" onclick="toggleStatus(\''+js(u.docId)+'\',\''+(u.status==='Active'?'Inactive':'Active')+'\')">'+(u.status==='Active'?'ปิดใช้งานบัญชี':'เปิดใช้งานบัญชี')+'</button></div></div></div></td></tr>';
-      }).join('');
-    }
-
-    function openCreateUser(){ editingUserId=null; document.getElementById('userForm').reset(); document.getElementById('userModalTitle').textContent='เพิ่มบัญชีผู้ใช้'; document.getElementById('usernameViewGroup').style.display='none'; document.getElementById('createHint').style.display='block'; document.getElementById('userAlert').className='modal-alert'; openModal('userModal'); setTimeout(function(){document.getElementById('uFullName').focus()},80); }
-    function openEditUser(id){ var u=users.find(function(x){return x.docId===id}); if(!u)return; editingUserId=id; document.getElementById('uUsername').value=u.username; document.getElementById('uFullName').value=u.fullName; document.getElementById('uEmail').value=u.email; document.getElementById('uRole').value=u.role; document.getElementById('userModalTitle').textContent='แก้ไขบัญชีผู้ใช้'; document.getElementById('usernameViewGroup').style.display='block'; document.getElementById('createHint').style.display='none'; document.getElementById('userAlert').className='modal-alert'; openModal('userModal'); }
-
-    function submitUser(e){ e.preventDefault(); var btn=document.getElementById('btnSaveUser'), name=document.getElementById('uFullName').value.trim(), email=document.getElementById('uEmail').value.trim(), role=document.getElementById('uRole').value; btnBusy(btn,'กำลังบันทึก...'); var fn=editingUserId?'updateUserAccount':'createUserAccount'; var args=editingUserId?[editingUserId,name,email,role]:[email,name,role]; callApi(fn,args,function(res){btnDone(btn);if(res&&res.success){closeModal('userModal');toast(res.message||'บันทึกสำเร็จ');loadUsers()}else showUserError((res&&res.message)||'บันทึกไม่สำเร็จ')},function(err){btnDone(btn);showUserError(String(err&&err.message||err))}); }
-    function showUserError(msg){var a=document.getElementById('userAlert');a.className='modal-alert error';a.textContent=msg;}
-
-    function toggleStatus(id,status){ var u=users.find(function(x){return x.docId===id}); if(!u)return; swyConfirm({icon:status==='Inactive'?'warning':'question',title:status==='Inactive'?'ปิดใช้งานบัญชี?':'เปิดใช้งานบัญชี?',html:'<b>'+esc(u.fullName||u.username)+'</b><br>'+(status==='Inactive'?'ผู้ใช้จะออกจาก session เดิมและไม่สามารถเข้าสู่ระบบได้':'ผู้ใช้จะสามารถเข้าสู่ระบบได้ตามปกติ'),confirmText:status==='Inactive'?'ปิดใช้งาน':'เปิดใช้งาน'}).then(function(ok){if(!ok)return;callApi('toggleUserStatus',[id,status],function(res){if(res&&res.success){toast(res.message);loadUsers()}else swyError('ดำเนินการไม่สำเร็จ',(res&&res.message)||'ไม่ทราบสาเหตุ')})}); }
-    function resetPassword(id){ var u=users.find(function(x){return x.docId===id}); if(!u)return; swyConfirm({icon:'question',title:'รีเซ็ตรหัสผ่าน?',html:'ระบบจะเพิกถอน session เดิมและส่งลิงก์ตั้งรหัสผ่านใหม่ไปยัง<br><b>'+esc(u.email)+'</b>',confirmText:'ส่งลิงก์รีเซ็ต'}).then(function(ok){if(!ok)return;callApi('resetUserPassword',[id],function(res){if(res&&res.success)swySuccess('ดำเนินการสำเร็จ',esc(res.message));else swyError('ดำเนินการไม่สำเร็จ',(res&&res.message)||'ไม่ทราบสาเหตุ')})}); }
-  </script>
-</body>
-</html>
+<div class="page-head"><div class="crumb"><span>ระบบ</span><span class="sep">›</span><b>จัดการบัญชีผู้ใช้</b></div><div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn btn-ghost" onclick="loadUsers()">🔄 รีเฟรช</button><button type="button" class="btn btn-primary" onclick="openCreateUser()">➕ เพิ่มบัญชีผู้ใช้</button></div></div>
+<div class="user-main">
+<div class="user-stats"><div class="user-stat"><div class="lb">บัญชีทั้งหมด</div><div class="val" id="statAll">—</div></div><div class="user-stat"><div class="lb">ใช้งานอยู่</div><div class="val" id="statActive" style="color:var(--ok)">—</div></div><div class="user-stat"><div class="lb">เปิด 2FA</div><div class="val" id="stat2fa" style="color:var(--primary)">—</div></div><div class="user-stat"><div class="lb">Admin</div><div class="val" id="statAdmin" style="color:#7c3aed">—</div></div></div>
+<div class="card"><div class="user-toolbar"><div class="user-search"><span class="ic">⌕</span><input class="input" id="userSearch" type="search" autocomplete="off" placeholder="ค้นหา username, ชื่อ, อีเมล, role…" oninput="renderUsers()"></div><select class="select" id="roleFilter" onchange="renderUsers()" data-searchable="false"><option value="">ทุก Role</option><option value="admin">Admin</option><option value="staff">Staff</option><option value="viewer">Viewer</option></select><select class="select" id="statusFilter" onchange="renderUsers()" data-searchable="false"><option value="">ทุกสถานะ</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select><span class="count" id="recordCount">กำลังโหลด...</span></div><div class="table-wrap" style="max-height:none"><table><thead><tr><th>ผู้ใช้</th><th>ชื่อ / อีเมล</th><th class="text-center">Role</th><th class="text-center">2FA</th><th class="hide-mobile">เข้าสู่ระบบล่าสุด</th><th class="text-center">สถานะ</th><th class="text-center" style="width:105px">จัดการ</th></tr></thead><tbody id="userBody"><tr class="empty-row"><td colspan="7">กำลังโหลดข้อมูล...</td></tr></tbody></table></div></div>
+</div>
+<div class="modal-overlay" id="userModal" role="dialog" aria-modal="true" aria-labelledby="userModalTitle"><div class="modal-box" style="width:560px"><div class="modal-header"><span id="userModalTitle">เพิ่มบัญชีผู้ใช้</span><button type="button" class="modal-close" onclick="closeModal('userModal')">×</button></div><form id="userForm" onsubmit="submitUser(event)"><div class="modal-body"><div class="section-label">ข้อมูลบัญชี</div><div class="form-grid"><div class="form-group full" id="usernameViewGroup" style="display:none"><label>ชื่อผู้ใช้</label><input id="uUsername" class="form-control" disabled></div><div class="form-group full"><label>ชื่อ-นามสกุล *</label><input id="uFullName" class="form-control" required autocomplete="name"></div><div class="form-group full"><label>อีเมล *</label><input id="uEmail" type="email" class="form-control" required autocomplete="email"></div><div class="form-group full"><label>Role *</label><select id="uRole" class="form-control" data-searchable="false"><option value="viewer">Viewer — ดูข้อมูลและออกเอกสาร</option><option value="staff">Staff — เพิ่ม/แก้ไขข้อมูลและทำธุรกรรม</option><option value="admin">Admin — สิทธิ์เต็ม</option></select></div></div><div id="createHint" style="margin-top:13px;padding:10px 12px;background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:8px;font-size:12px;color:#35536f;line-height:1.6">ระบบจะสร้าง Username และรหัสผ่านชั่วคราวอัตโนมัติ ส่งให้ผู้ใช้ทางอีเมล และบังคับเปลี่ยนรหัสผ่านเมื่อเข้าสู่ระบบครั้งแรก</div><div class="modal-alert" id="userAlert"></div></div><div class="modal-footer"><button type="button" class="btn btn-ghost" onclick="closeModal('userModal')">ยกเลิก</button><button type="submit" class="btn btn-primary" id="btnSaveUser">💾 บันทึก</button></div></form></div></div>
+<?!= include('UiSystem'); ?><?!= include('Shared'); ?>
+<script>
+var AUTH_TOKEN="<?= authToken ?>",CURRENT_USER="<?= username ?>";var users=[],editingUserId=null;
+window.addEventListener('load',loadUsers);document.addEventListener('click',function(e){document.querySelectorAll('.user-more.open').forEach(function(m){if(!m.contains(e.target))m.classList.remove('open')})});
+function loadUsers(){document.getElementById('userBody').innerHTML=skeletonRows(7,5);document.getElementById('recordCount').textContent='กำลังโหลด...';callApi('getAllUsers',[],function(data){users=Array.isArray(data)?data:[];renderStats();renderUsers()},function(err){document.getElementById('userBody').innerHTML=emptyStateHtml(7,{icon:'⚠️',title:'โหลดผู้ใช้ไม่สำเร็จ',sub:String(err&&err.message||err)})})}
+function renderStats(){document.getElementById('statAll').textContent=users.length.toLocaleString();document.getElementById('statActive').textContent=users.filter(function(u){return u.status==='Active'}).length.toLocaleString();document.getElementById('stat2fa').textContent=users.filter(function(u){return !!u.totpEnabled}).length.toLocaleString();document.getElementById('statAdmin').textContent=users.filter(function(u){return u.role==='admin'}).length.toLocaleString()}
+function fmtDate(v){if(!v)return'—';var d=new Date(v);if(isNaN(d))return'—';return d.toLocaleString('th-TH',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}function initials(u){var s=String(u.fullName||u.username||'?').trim();return esc(s.charAt(0).toUpperCase())}function js(v){return String(v||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'")}
+function filteredUsers(){var q=document.getElementById('userSearch').value.trim().toLowerCase(),role=document.getElementById('roleFilter').value,status=document.getElementById('statusFilter').value;return users.filter(function(u){if(role&&u.role!==role)return false;if(status&&u.status!==status)return false;if(!q)return true;return[u.username,u.fullName,u.email,u.role,u.status].join(' ').toLowerCase().indexOf(q)>-1})}
+function renderUsers(){var rows=filteredUsers();document.getElementById('recordCount').textContent='แสดง '+rows.length+' จาก '+users.length+' รายการ';var body=document.getElementById('userBody');if(!rows.length){body.innerHTML=emptyStateHtml(7,{icon:'👤',title:'ไม่พบผู้ใช้',sub:users.length?'ลองเปลี่ยนคำค้นหาหรือตัวกรอง':'ยังไม่มีบัญชีผู้ใช้'});return}body.innerHTML=rows.map(function(u){var self=String(u.username).toLowerCase()===String(CURRENT_USER).toLowerCase(),role='<span class="role-pill role-'+esc(u.role)+'">'+esc((u.role||'').charAt(0).toUpperCase()+(u.role||'').slice(1))+'</span>',sec='<span class="security-pill '+(u.totpEnabled?'security-on':'security-off')+'">'+(u.totpEnabled?'2FA เปิด':'2FA ปิด')+'</span>',state='<span class="state-pill '+(u.status==='Active'?'state-active':'state-inactive')+'">'+esc(u.status||'')+'</span>';return '<tr><td><span class="user-avatar">'+initials(u)+'</span><span class="mono">'+esc(u.username)+'</span>'+(self?'<span class="badge badge-info" style="margin-left:6px">คุณ</span>':'')+'</td><td><div class="user-name">'+esc(u.fullName||'—')+'</div><div class="user-meta">'+esc(u.email||'—')+'</div></td><td class="text-center">'+role+'</td><td class="text-center">'+sec+'</td><td class="hide-mobile"><span class="last-login">'+fmtDate(u.lastLogin)+'</span></td><td class="text-center">'+state+'</td><td><div class="user-actions"><button class="btn btn-ghost btn-icon" title="แก้ไข" onclick="openEditUser(\''+js(u.docId)+'\')">✏️</button><div class="user-more"><button class="btn btn-ghost btn-icon" title="เพิ่มเติม" onclick="event.stopPropagation();this.parentElement.classList.toggle(\'open\')">•••</button><div class="user-more-menu"><button onclick="resetPassword(\''+js(u.docId)+'\')">🔑 รีเซ็ตรหัสผ่าน</button><button '+(self?'disabled style="opacity:.45"':'')+' class="'+(u.status==='Active'?'danger':'')+'" onclick="toggleStatus(\''+js(u.docId)+'\',\''+(u.status==='Active'?'Inactive':'Active')+'\')">'+(u.status==='Active'?'ปิดใช้งานบัญชี':'เปิดใช้งานบัญชี')+'</button></div></div></div></td></tr>'}).join('')}
+function openCreateUser(){editingUserId=null;document.getElementById('userForm').reset();document.getElementById('userModalTitle').textContent='เพิ่มบัญชีผู้ใช้';document.getElementById('usernameViewGroup').style.display='none';document.getElementById('createHint').style.display='block';document.getElementById('userAlert').className='modal-alert';openModal('userModal');setTimeout(function(){document.getElementById('uFullName').focus()},80)}
+function openEditUser(id){var u=users.find(function(x){return x.docId===id});if(!u)return;editingUserId=id;document.getElementById('uUsername').value=u.username;document.getElementById('uFullName').value=u.fullName;document.getElementById('uEmail').value=u.email;document.getElementById('uRole').value=u.role;document.getElementById('userModalTitle').textContent='แก้ไขบัญชีผู้ใช้';document.getElementById('usernameViewGroup').style.display='block';document.getElementById('createHint').style.display='none';document.getElementById('userAlert').className='modal-alert';openModal('userModal')}
+function submitUser(e){e.preventDefault();var btn=document.getElementById('btnSaveUser'),name=document.getElementById('uFullName').value.trim(),email=document.getElementById('uEmail').value.trim(),role=document.getElementById('uRole').value,isNew=!editingUserId,fn=isNew?'createUserAccount':'updateUserAccount',args=isNew?[email,name,role]:[editingUserId,name,email,role];btnBusy(btn,'กำลังบันทึก...');callApi(fn,args,function(res){btnDone(btn);if(res&&res.success){closeModal('userModal');toast(res.message||'บันทึกสำเร็จ');if(isNew&&res.user){users.unshift(res.user);renderStats();renderUsers()}else loadUsers()}else showUserError((res&&res.message)||'บันทึกไม่สำเร็จ')},function(err){btnDone(btn);showUserError(String(err&&err.message||err))})}
+function showUserError(msg){var a=document.getElementById('userAlert');a.className='modal-alert error';a.textContent=msg}
+function toggleStatus(id,status){var u=users.find(function(x){return x.docId===id});if(!u)return;swyConfirm({icon:status==='Inactive'?'warning':'question',title:status==='Inactive'?'ปิดใช้งานบัญชี?':'เปิดใช้งานบัญชี?',html:'<b>'+esc(u.fullName||u.username)+'</b><br>'+(status==='Inactive'?'ผู้ใช้จะออกจาก session เดิมและไม่สามารถเข้าสู่ระบบได้':'ผู้ใช้จะสามารถเข้าสู่ระบบได้ตามปกติ'),confirmText:status==='Inactive'?'ปิดใช้งาน':'เปิดใช้งาน'}).then(function(ok){if(!ok)return;callApi('toggleUserStatus',[id,status],function(res){if(res&&res.success){u.status=status;renderStats();renderUsers();toast(res.message)}else swyError('ดำเนินการไม่สำเร็จ',(res&&res.message)||'ไม่ทราบสาเหตุ')})})}
+function resetPassword(id){var u=users.find(function(x){return x.docId===id});if(!u)return;swyConfirm({icon:'question',title:'รีเซ็ตรหัสผ่าน?',html:'ระบบจะเพิกถอน session เดิมและส่งลิงก์ตั้งรหัสผ่านใหม่ไปยัง<br><b>'+esc(u.email)+'</b>',confirmText:'ส่งลิงก์รีเซ็ต'}).then(function(ok){if(!ok)return;callApi('resetUserPassword',[id],function(res){if(res&&res.success)swySuccess('ดำเนินการสำเร็จ',esc(res.message));else swyError('ดำเนินการไม่สำเร็จ',(res&&res.message)||'ไม่ทราบสาเหตุ')})})}
+</script>
+</body></html>
