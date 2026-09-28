@@ -1,18 +1,11 @@
 <script>
 /* ═══════════════════════════════════════════════════════════
-   SYY Shop Control — Shared.html  (ฟังก์ชันกลางของทุกหน้า)
-   ใช้: <?!= include('Shared'); ?>  ก่อน </body>
-   ต้องมี SweetAlert2 โหลดไว้แล้วใน <head>
-  <meta charset="UTF-8">
+   SYY Shop Control — Shared.html
+   P0 gateway + shared UX/performance helpers
    ═══════════════════════════════════════════════════════════ */
 
 /* ── escape / format ── */
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-// ★ ใช้แทน esc() เฉพาะตอนฝังค่าไว้ในสตริง JS ที่ครอบด้วย ' อยู่แล้ว (เช่น onclick="fn('...')")
-//   esc() เพียงอย่างเดียวไม่ escape เครื่องหมาย ' — ถ้าค่านั้นมี ' ปนอยู่จะหลุดออกจากสตริงกลางทาง
-//   ทำให้ onclick พังหรือรันโค้ดแปลกปลอมได้ ปัจจุบันทุกจุดที่ใช้ esc() แบบนี้ฝังแต่รหัส/รหัสเอกสารที่
-//   ระบบสร้างเอง (ไม่มี ' ปนอยู่แน่ๆ) จึงยังไม่เคยเป็นปัญหาจริง แต่เป็นจุดเสี่ยงถ้าวันหลังมีใครเผลอเอา
-//   ข้อความที่ผู้ใช้พิมพ์เองมาฝังแบบเดียวกัน
 function escJs(v){return esc(v).replace(/'/g,"\\'");}
 function num(v){return parseFloat(v)||0;}
 function money(n){return '฿ '+num(n).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -25,7 +18,7 @@ function thDate(iso,withTime){
   return s;
 }
 
-/* ── Toast: ใช้แทน popup "บันทึกสำเร็จ" ที่ต้องกดตกลง ── */
+/* ── Toast ── */
 function toast(msg,type,ms){
   var wrap=document.getElementById('toastWrap');
   if(!wrap){wrap=document.createElement('div');wrap.id='toastWrap';wrap.className='toast-wrap';document.body.appendChild(wrap);}
@@ -37,10 +30,7 @@ function toast(msg,type,ms){
   setTimeout(function(){t.classList.add('out');setTimeout(function(){if(t.parentNode)t.parentNode.removeChild(t);},260);},ms||2800);
 }
 
-/* ── Modal: เปิด/ปิด (ทุกหน้าได้เหมือนกัน) ──
-   ★ Static/Persistent Modal — ปิดได้เฉพาะกดปุ่มในตัว Modal เอง (× / ยกเลิก / บันทึก / ปิด ฯลฯ
-   ซึ่งเรียก closeModal() ตรงๆ อยู่แล้วทุกจุด) ไม่มีทางปิดโดยไม่ตั้งใจจากคลิกฉากหลังหรือกด Esc
-   เพื่อกันข้อมูลที่กรอกในฟอร์มหายจากการคลิกพลาด — ใช้จุดเดียวนี้จุดเดียวทั้งโปรเจกต์ ไม่ต้องแก้ทีละหน้า */
+/* ── Modal ── */
 function openModal(id){
   var el=document.getElementById(id);
   if(!el) return;
@@ -80,10 +70,10 @@ function emptyStateHtml(colspan,opt){
     '</div></td></tr>';
 }
 
-/* ── ปุ่มที่กำลังโหลด ── */
+/* ── loading buttons ── */
 function btnBusy(el,text){
   if(!el) return;
-  el.dataset.label=el.innerHTML;
+  if(!el.dataset.label) el.dataset.label=el.innerHTML;
   el.disabled=true;
   el.innerHTML='<span class="spinner"></span>'+(text||'กำลังบันทึก...');
 }
@@ -93,7 +83,7 @@ function btnDone(el){
   if(el.dataset.label) el.innerHTML=el.dataset.label;
 }
 
-/* ── ความหนาแน่นแถว (จำค่าไว้ต่อเบราว์เซอร์) ── */
+/* ── density ── */
 function initDensity(){
   var d=localStorage.getItem('syy_density')||'normal';
   document.body.setAttribute('data-density',d);
@@ -105,63 +95,104 @@ function toggleDensity(){
   toast(d==='compact'?'แสดงแบบแน่น':'แสดงแบบสบายตา');
 }
 
-/* ── แจ้ง index (parent shell) ว่าข้อมูลเปลี่ยน — แยกตามผลกระทบจริง กันยิง Firestore reads เกินจำเป็น
-   ★ FIX (โควตา Firestore Reads): เดิมมี notifyParentRefresh() ตัวเดียวใช้ร่วมกันทุกหน้า แล้ว index.html
-   ตีความเป็น "รีโหลด dashboard เต็ม" (อ่าน Stock_Movements ทั้งหมด + Master_Products + Purchase_Orders)
-   ทุกครั้ง — ทำให้บันทึก/ลบ 1 รายการในหน้า master data ที่ไม่เกี่ยวกับสต๊อกเลย (โซน/หมวดหมู่/แบรนด์/
-   ผู้จำหน่าย/รุ่นรถ/ลูกค้า) ไปลากอ่านประวัติสต๊อกทั้งร้านซ้ำเบื้องหลังโดยไม่จำเป็น แยกเป็น 3 ระดับ:
-     1) REFRESH_DROPDOWNS — ข้อมูลที่เป็น dropdown ของฟอร์มอื่น (brand/category/vendor/zone/car) เปลี่ยน
-        → index.html แค่ loadMasters() (ใช้ cache เดิม เบามาก)
-     2) REFRESH_PRODUCTS  — สินค้าเปลี่ยน (เพิ่ม/แก้/ลบ) → อ่านแค่ Master_Products ใหม่ ไม่แตะ
-        Stock_Movements/Purchase_Orders เพราะบันทึกสินค้าไม่ได้สร้างรายการเคลื่อนไหวสต๊อก
-     3) REFRESH_STOCK_FULL — สต๊อกเคลื่อนไหวจริง (ตัดสต๊อก) → ต้องรีโหลด dashboard เต็มเท่านั้น */
+/* ── parent notifications ── */
 function notifyParentRefreshDropdowns(){
   try{ window.parent.postMessage({action:'REFRESH_DROPDOWNS'},'*'); }catch(e){}
 }
 function notifyParentRefreshProducts(){
-  try{ window.parent.postMessage({action:'REFRESH_PRODUCTS'},'*'); }catch(e){}
+  try{
+    if(window.__p0LastProductDelta){
+      window.parent.postMessage({action:'PRODUCT_DELTA',delta:window.__p0LastProductDelta},'*');
+      window.__p0LastProductDelta=null;
+    }else{
+      window.parent.postMessage({action:'PRODUCTS_STALE'},'*');
+    }
+  }catch(e){}
 }
 function notifyParentRefreshStockFull(){
   try{ window.parent.postMessage({action:'REFRESH_STOCK_FULL'},'*'); }catch(e){}
 }
 
-/* ── SweetAlert2 helper (เหลือใช้เฉพาะยืนยัน / error) ── */
-/* ★ ทุกกล่อง SweetAlert ปิดได้เฉพาะกดปุ่มในตัวเองเท่านั้น (allowOutsideClick/allowEscapeKey: false)
-   ให้สอดคล้องกับนโยบาย Static/Persistent Modal เดียวกับ .modal-overlay (ดู openModal/closeModal
-   ด้านบน) — กันคลิกพลาด/กด Esc หลุดโดยไม่ตั้งใจ โดยเฉพาะ swyConfirm ที่เป็นกล่องยืนยันการกระทำสำคัญ
-   (เช่น ลบข้อมูล/ยืนยันตัดสต๊อก) */
+/* ── SweetAlert2 helpers ── */
 function swySuccess(title,html){
-  return Swal.fire({icon:'success',title:title,html:html||'',confirmButtonText:'ตกลง',
-    allowOutsideClick:false,allowEscapeKey:false,
+  return Swal.fire({icon:'success',title:title,html:html||'',confirmButtonText:'ตกลง',allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
 }
 function swyError(title,html){
-  return Swal.fire({icon:'error',title:title,html:html||'',confirmButtonText:'ตกลง',
-    allowOutsideClick:false,allowEscapeKey:false,
+  return Swal.fire({icon:'error',title:title,html:html||'',confirmButtonText:'ตกลง',allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn danger'},buttonsStyling:false});
 }
 function swyWarning(title,html){
-  return Swal.fire({icon:'warning',title:title,html:html||'',confirmButtonText:'ตกลง',
-    allowOutsideClick:false,allowEscapeKey:false,
+  return Swal.fire({icon:'warning',title:title,html:html||'',confirmButtonText:'ตกลง',allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
 }
 function swyConfirm(o){
-  return Swal.fire({
-    icon:o.icon||'question',title:o.title,html:o.html||'',showCancelButton:true,
-    confirmButtonText:o.confirmText||'ยืนยัน',cancelButtonText:o.cancelText||'ยกเลิก',reverseButtons:true,
-    allowOutsideClick:false,allowEscapeKey:false,
-    customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',
-      confirmButton:'swy-confirm-btn'+(o.danger?' danger':''),cancelButton:'swy-cancel-btn'},
-    buttonsStyling:false
+  return Swal.fire({icon:o.icon||'question',title:o.title,html:o.html||'',showCancelButton:true,
+    confirmButtonText:o.confirmText||'ยืนยัน',cancelButtonText:o.cancelText||'ยกเลิก',reverseButtons:true,allowOutsideClick:false,allowEscapeKey:false,
+    customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'+(o.danger?' danger':''),cancelButton:'swy-cancel-btn'},buttonsStyling:false
   }).then(function(r){return r.isConfirmed;});
 }
 
-/* ── เรียก backend: ต้องผ่าน apiGateway เท่านั้น (เช็คสิทธิ์ role + ลง Activity_Log ทุกครั้ง) ──
-   ★ FIX: เดิมถ้าไม่มี token จะเรียกฟังก์ชัน backend ตรงๆ (runner[fnName]) ข้าม apiGateway ทั้งหมด —
-   ไม่เช็ค role, ไม่ลง log — เป็นช่องโหว่จริงถ้าหน้าไหนโหลดมาโดยไม่มี token (เช่นเปิด URL ตรงๆ)
-   หน้า login ไม่ได้เรียกผ่าน callApi() นี้เลย (เรียก google.script.run ตรงๆ เฉพาะฟังก์ชัน auth ที่
-   ตั้งใจเปิดให้ก่อน login อยู่แล้ว — authLogin/authForgotPassword/authResetPassword/ฯลฯ) จึงตัด
-   ทางลัดนี้ออกได้โดยไม่กระทบการ login */
+/* ═══════════════════════════════════════════════════════════
+   P0 client data layer
+   Every authenticated page goes through p0Gateway. Unhandled calls
+   are delegated by p0Gateway to the legacy allow-listed apiGateway.
+   ═══════════════════════════════════════════════════════════ */
+function p0UpsertByKey_(arr,item,keyFn){
+  if(!Array.isArray(arr)||!item) return;
+  var key=keyFn(item),idx=-1;
+  for(var i=0;i<arr.length;i++){if(keyFn(arr[i])===key){idx=i;break;}}
+  if(idx>=0) arr[idx]=item; else arr.unshift(item);
+}
+function p0ApplySuccess_(fnName,args,res){
+  if(!res||res.success===false) return;
+
+  if(fnName==='getDashboardBootstrap'){
+    window.__p0DashMeta={poWaitingCount:num(res.poWaitingCount),dataWindowDays:num(res.dataWindowDays),truncated:!!res.truncated};
+  }
+
+  if(fnName==='saveProduct' && res.product){
+    if(Array.isArray(window.productsCache)) p0UpsertByKey_(window.productsCache,res.product,function(p){return p.productCode||p.id;});
+    window.__p0LastProductDelta={product:res.product};
+    window.__p0SkipProductLoad=true;
+  }
+  if(fnName==='deleteProduct' && (res.deletedId || (args&&args[0]))){
+    var deletedId=res.deletedId||args[0];
+    if(Array.isArray(window.productsCache)) window.productsCache=window.productsCache.filter(function(p){return (p.productCode||p.id)!==deletedId;});
+    window.__p0LastProductDelta={deletedId:deletedId};
+    window.__p0SkipProductLoad=true;
+  }
+  if((fnName==='uploadProductImage'||fnName==='deleteProductImage'||fnName==='uploadProductGalleryImage'||fnName==='deleteProductGalleryImage'||fnName==='setProductGalleryPrimary') && res.product){
+    if(Array.isArray(window.productsCache)) p0UpsertByKey_(window.productsCache,res.product,function(p){return p.productCode||p.id;});
+    window.__p0LastProductDelta={product:res.product};
+  }
+
+  if(fnName==='savePurchaseOrder' && res.purchaseOrder && Array.isArray(window.purchaseOrders)){
+    p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});
+    window.__p0SkipPoLoad=true;
+  }
+  if(fnName==='receiveGoods' && res.purchaseOrder && Array.isArray(window.purchaseOrders)){
+    var old=window.purchaseOrders.find(function(p){return p.poId===res.purchaseOrder.poId;});
+    if(old){
+      old.status=res.purchaseOrder.status; old.items=res.purchaseOrder.items; old.receipts=res.purchaseOrder.receipts;
+    }else p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});
+    window.__p0SkipPoLoad=true;
+  }
+
+  if(fnName==='saveTaxInvoice' && res.invoice && Array.isArray(window.invoicesCache)){
+    p0UpsertByKey_(window.invoicesCache,res.invoice,function(x){return x.id;});
+    window.__p0SkipTaxLoad=true;
+  }
+  if(fnName==='deleteTaxInvoice' && args&&args[0] && Array.isArray(window.invoicesCache)){
+    window.invoicesCache=window.invoicesCache.filter(function(x){return x.id!==args[0];});
+    window.__p0SkipTaxLoad=true;
+  }
+  if(fnName==='saveQuotation' && res.quotation && Array.isArray(window.quotationsCache)){
+    p0UpsertByKey_(window.quotationsCache,res.quotation,function(x){return x.id;});
+    window.__p0SkipQuoteLoad=true;
+  }
+}
+
 function callApi(fnName,args,onSuccess,onFailure){
   var token=(typeof AUTH_TOKEN!=='undefined')?AUTH_TOKEN:'';
   if(!token){
@@ -176,9 +207,139 @@ function callApi(fnName,args,onSuccess,onFailure){
         });
         return;
       }
+      try{p0ApplySuccess_(fnName,args||[],res);}catch(e){console.error('p0ApplySuccess_',e);}
       if(onSuccess) onSuccess(res);
     })
     .withFailureHandler(onFailure||function(err){ swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err))); })
-    .apiGateway(token,fnName,args||[],navigator.userAgent);
+    .p0Gateway(token,fnName,args||[],navigator.userAgent);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   P0 UI integration helpers
+   ═══════════════════════════════════════════════════════════ */
+function p0InstallReloadGuards_(){
+  if(typeof window.loadTable==='function' && document.getElementById('productBody') && !window.loadTable.__p0){
+    var productLoad=window.loadTable;
+    window.loadTable=function(){
+      if(window.__p0SkipProductLoad){
+        window.__p0SkipProductLoad=false;
+        if(typeof window.filterAndRenderTable==='function') window.filterAndRenderTable();
+        return;
+      }
+      return productLoad.apply(this,arguments);
+    };
+    window.loadTable.__p0=true;
+  }
+  if(typeof window.loadAll==='function' && document.getElementById('vendorGroupsContainer') && !window.loadAll.__p0){
+    var poLoad=window.loadAll;
+    window.loadAll=function(){
+      if(window.__p0SkipPoLoad){
+        window.__p0SkipPoLoad=false;
+        if(typeof window.renderCreateTab==='function') window.renderCreateTab();
+        if(typeof window.renderHistoryTab==='function') window.renderHistoryTab();
+        if(typeof window.updateStatCards==='function') window.updateStatCards();
+        return;
+      }
+      return poLoad.apply(this,arguments);
+    };
+    window.loadAll.__p0=true;
+  }
+  if(typeof window.loadAll==='function' && document.getElementById('taxBody') && !window.loadAll.__p0){
+    var taxLoad=window.loadAll;
+    window.loadAll=function(){
+      var cb=arguments.length>1?arguments[1]:null;
+      if(window.__p0SkipTaxLoad){
+        window.__p0SkipTaxLoad=false;
+        if(typeof window.renderRows==='function') window.renderRows();
+        if(typeof window.renderDashboard==='function') window.renderDashboard();
+        if(typeof cb==='function') cb();
+        return;
+      }
+      return taxLoad.apply(this,arguments);
+    };
+    window.loadAll.__p0=true;
+  }
+}
+
+function p0ProtectStockFields_(){
+  var inp=document.getElementById('inp_currentStock');
+  if(inp && !inp.dataset.p0Protected){
+    inp.dataset.p0Protected='1';
+    var oldOpen=window.openEditModal;
+    if(typeof oldOpen==='function' && document.getElementById('productForm')){
+      window.openEditModal=function(){
+        var r=oldOpen.apply(this,arguments);
+        var stock=document.getElementById('inp_currentStock');
+        if(stock){
+          stock.readOnly=true; stock.setAttribute('aria-readonly','true'); stock.title='สต๊อกแก้ผ่านรายการรับเข้า/ตัดสต๊อกเท่านั้น';
+          var grp=stock.closest('.form-group');
+          if(grp && !grp.querySelector('.p0-stock-hint')){
+            var h=document.createElement('div');h.className='field-hint p0-stock-hint';h.textContent='สต๊อกปัจจุบันเป็น Read-only เพื่อรักษาประวัติและความถูกต้อง ใช้รับสินค้า/ตัดสต๊อกในการปรับยอด';grp.appendChild(h);
+          }
+        }
+        return r;
+      };
+    }
+  }
+  var m=document.getElementById('mStock');
+  if(m){m.readOnly=true;m.setAttribute('aria-readonly','true');m.title='สต๊อกแก้ผ่าน Transaction เท่านั้น';}
+}
+
+function p0InstallDashboard_(){
+  if(typeof window.dashRenderKpi!=='function' || window.dashRenderKpi.__p0) return;
+  window.DASH_YEARS_BACK=1;
+  window.dashRenderKpi=function(period){
+    var rows=(window.DASH&&DASH.health&&DASH.health.rows)||[];
+    var totalValue=rows.reduce(function(s,r){return s+num(r.value);},0);
+    var out=rows.filter(function(r){return num(r.qty)<=0;}).length;
+    var low=rows.filter(function(r){return num(r.qty)>0 && num(r.qty)<=num(r.rop)*(1+(window.DASH_LOW_BUFFER||.2));}).length;
+    var cur=period&&period.cur?period.cur:{salesValue:0,rows:[]};
+    var sales=num(cur.salesValue),cogs=0;
+    (cur.rows||[]).forEach(function(m){if(m.type==='OUT'&&m.reason==='ขายหน้าร้าน') cogs+=num(m.qty)*num(m.costPrice);});
+    var profit=sales-cogs,meta=window.__p0DashMeta||{},po=num(meta.poWaitingCount);
+    var label=document.getElementById('dashPeriodLabel');if(label)label.innerText=period.periodLabel;
+    var grid=document.getElementById('dashKpiGrid');if(!grid)return;
+    function card(cls,lb,val,sub,onclick){return '<div class="dash-kpi p0-kpi '+cls+'"'+(onclick?' onclick="'+onclick+'" role="button" tabindex="0"':'')+'><div class="dash-kpi-lb">'+lb+'</div><div class="dash-kpi-val dash-mono">'+val+'</div><div class="dash-kpi-sub">'+sub+'</div></div>';}
+    grid.innerHTML=
+      card('p0-blue','มูลค่าสต๊อก','฿'+Math.round(totalValue).toLocaleString('th-TH'),DASH.products.length.toLocaleString('th-TH')+' SKU','')+
+      card('p0-green','ยอดขาย','฿'+Math.round(sales).toLocaleString('th-TH'),period.periodLabel,'')+
+      card('p0-amber','กำไรขั้นต้น','฿'+Math.round(profit).toLocaleString('th-TH'),sales?((profit/sales)*100).toFixed(1)+'% margin':'ไม่มีการขาย','')+
+      card('p0-red','สินค้าหมด',out.toLocaleString('th-TH')+' SKU','ต้องดำเนินการ','dashSetTab(\'out\')')+
+      card('p0-orange','ใกล้หมด',low.toLocaleString('th-TH')+' SKU','ควรตรวจสอบการสั่งซื้อ','dashSetTab(\'low\')')+
+      card('p0-purple','PO รอรับ',po.toLocaleString('th-TH')+' รายการ','Pending / Ordered / Partial','switchPage(\'orders\')');
+  };
+  window.dashRenderKpi.__p0=true;
+  var st=document.createElement('style');
+  st.textContent='.dash-kpi-grid{grid-template-columns:repeat(6,minmax(0,1fr))!important}.p0-kpi{min-height:126px!important;cursor:default;border-width:1px!important;box-shadow:none!important}.p0-kpi[role=button]{cursor:pointer}.p0-kpi[role=button]:hover{transform:translateY(-1px);box-shadow:0 5px 16px rgba(15,23,42,.08)!important}.p0-kpi .dash-kpi-val{font-size:22px!important;margin-top:8px}.p0-kpi .dash-kpi-sub{font-size:11.5px;margin-top:4px}.p0-blue{background:#f0f6ff!important;border-color:#cfe0ff!important}.p0-blue .dash-kpi-val{color:#0757c8!important}.p0-green{background:#f0fbf4!important;border-color:#ccefd8!important}.p0-green .dash-kpi-val{color:#15803d!important}.p0-amber{background:#fff9ed!important;border-color:#f8ddb0!important}.p0-amber .dash-kpi-val{color:#d97706!important}.p0-red{background:#fff2f2!important;border-color:#ffd0d0!important}.p0-red .dash-kpi-val{color:#dc2626!important}.p0-orange{background:#fff8ed!important;border-color:#fed7aa!important}.p0-orange .dash-kpi-val{color:#ea580c!important}.p0-purple{background:#f7f2ff!important;border-color:#e5d5ff!important}.p0-purple .dash-kpi-val{color:#7c3aed!important}@media(max-width:1280px){.dash-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}}@media(max-width:640px){.dash-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.p0-kpi{min-height:110px!important}.p0-kpi .dash-kpi-val{font-size:18px!important}}';
+  document.head.appendChild(st);
+}
+
+function p0ListenParentDeltas_(){
+  if(window.__p0DeltaListener) return;window.__p0DeltaListener=true;
+  window.addEventListener('message',function(e){
+    var d=e.data||{};
+    if(d.action==='PRODUCT_DELTA' && d.delta && window.DASH){
+      if(d.delta.product){
+        var p=d.delta.product,key=p.productCode||p.id,idx=-1;
+        for(var i=0;i<DASH.products.length;i++){if((DASH.products[i].productCode||DASH.products[i].id)===key){idx=i;break;}}
+        if(idx>=0)DASH.products[idx]=p;else DASH.products.unshift(p);
+      }
+      if(d.delta.deletedId) DASH.products=DASH.products.filter(function(p){return (p.productCode||p.id)!==d.delta.deletedId;});
+      window.allProducts=DASH.products;
+      if(DASH.loaded){dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();}
+    }else if(d.action==='PRODUCTS_STALE'){
+      if(window.DASH) DASH.lastLoad=0;
+    }
+  });
+}
+
+function p0InitShared_(){
+  p0InstallReloadGuards_();
+  p0ProtectStockFields_();
+  p0InstallDashboard_();
+  p0ListenParentDeltas_();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){setTimeout(p0InitShared_,0);});
+else setTimeout(p0InitShared_,0);
+window.addEventListener('load',function(){setTimeout(p0InitShared_,20);});
 </script>
