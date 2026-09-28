@@ -80,6 +80,29 @@ function productGallerySave_(productCode, images) {
   }
   if (primary) saveProductImageDoc_(productCode, primary.url, primary.fileId || '');
   else deleteProductImageDoc_(productCode);
+
+  // P0: Product_Images is the compatibility source used by Product/Dashboard.
+  // Invalidate both legacy and P0 product caches whenever primary/gallery changes.
+  try {
+    clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
+    if (typeof p0InvalidateProducts_ === 'function') p0InvalidateProducts_();
+  } catch (e) {
+    console.error('productGallerySave_ cache invalidation:', e);
+  }
+}
+
+function productGalleryResult_(productCode, images, message) {
+  var out = {
+    success:true,
+    message:message || 'สำเร็จ',
+    images:images || [],
+    imageUrl:(images && images.length) ? images[0].url : '',
+    maxImages:PRODUCT_GALLERY_MAX_IMAGES
+  };
+  try {
+    if (typeof p0GetProductMapped_ === 'function') out.product = p0GetProductMapped_(productCode);
+  } catch (ignore) {}
+  return out;
 }
 
 function getProductGallery(token, userAgent, productCode) {
@@ -117,7 +140,7 @@ function uploadProductGalleryImage(token, userAgent, productCode, base64Data) {
 
     images.push({ id:imageId, url:imageUrl, fileId:file.getId(), createdAt:now.toISOString(), legacy:false });
     productGallerySave_(productCode, images);
-    return { success:true, message:'เพิ่มรูปสินค้าแล้ว', images:images, imageUrl:images[0].url, maxImages:PRODUCT_GALLERY_MAX_IMAGES };
+    return productGalleryResult_(productCode, images, 'เพิ่มรูปสินค้าแล้ว');
   } catch (e) {
     return { success:false, message:e.message };
   }
@@ -140,7 +163,7 @@ function deleteProductGalleryImage(token, userAgent, productCode, imageId) {
       try { DriveApp.getFileById(target.fileId).setTrashed(true); } catch (ignore) {}
     }
     productGallerySave_(productCode, images);
-    return { success:true, message:'ลบรูปแล้ว', images:images, imageUrl:images.length ? images[0].url : '' };
+    return productGalleryResult_(productCode, images, 'ลบรูปแล้ว');
   } catch (e) {
     return { success:false, message:e.message };
   }
@@ -157,7 +180,7 @@ function setProductGalleryPrimary(token, userAgent, productCode, imageId) {
     if (foundIndex < 0) return { success:false, message:'ไม่พบรูปที่เลือก' };
     if (foundIndex > 0) images.unshift(images.splice(foundIndex,1)[0]);
     productGallerySave_(productCode, images);
-    return { success:true, message:'ตั้งเป็นรูปหลักแล้ว', images:images, imageUrl:images[0].url };
+    return productGalleryResult_(productCode, images, 'ตั้งเป็นรูปหลักแล้ว');
   } catch (e) {
     return { success:false, message:e.message };
   }
