@@ -9,6 +9,26 @@ function p0SafeClientRequestId_(v) {
   return String(v || '').replace(/[^A-Za-z0-9_-]/g,'').slice(0,64);
 }
 
+function p0HashText_(text) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text || ''));
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/,'').slice(0,24);
+}
+
+function p0ReceiveRequestId_(d) {
+  var provided = p0SafeClientRequestId_(d && d.clientRequestId);
+  if (provided) return provided;
+  var items = (Array.isArray(d && d.items) ? d.items : []).map(function(it){
+    return { productCode:String((it && it.productCode) || ''), qty:parseFloat((it && it.qtyReceivedNow) || 0) || 0 };
+  }).sort(function(a,b){ return a.productCode.localeCompare(b.productCode); });
+  return 'AUTO_' + p0HashText_([
+    String((d && d.poId) || ''),
+    String((d && d.invoiceNo) || '').trim().toUpperCase(),
+    String((d && d.receiptDate) || ''),
+    String((d && d.deliveryNoteNo) || '').trim().toUpperCase(),
+    JSON.stringify(items)
+  ].join('|'));
+}
+
 function p0ReceiveGoodsIdempotent_(d, callerUsername) {
   function fail(msg,title){return {success:false,title:title||'ข้อมูลไม่ครบ',message:msg};}
   if (!d.poId) return fail('ไม่พบเลขที่ใบสั่งซื้อ');
@@ -16,8 +36,7 @@ function p0ReceiveGoodsIdempotent_(d, callerUsername) {
   if (!String(d.receiptDate||'').trim()) return fail('กรุณาระบุวันที่รับสินค้า');
   if (!String(d.receiverName||'').trim()) return fail('กรุณากรอกชื่อผู้รับสินค้า');
 
-  var requestId = p0SafeClientRequestId_(d.clientRequestId);
-  if (!requestId) return fail('ไม่พบ Request ID กรุณาปิดหน้ารับสินค้าแล้วเปิดใหม่');
+  var requestId = p0ReceiveRequestId_(d);
   var receiptTxnId = 'RCV-' + String(d.poId) + '-' + requestId;
   var reqItems = Array.isArray(d.items) ? d.items : [];
   if (!reqItems.length) return fail('ไม่มีรายการสินค้าที่จะรับ');
