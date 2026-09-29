@@ -24,9 +24,10 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           s=Path('Master_Products.html').read_text(encoding='utf-8')
           for name in ['onProductImageSelected','uploadProductImageNow','deleteProductImageNow']:
-              assert s.count('function '+name+'(')==1, name
+              assert len(re.findall(r'function\s+'+name+r'\s*\(',s))==1, name
           assert 'productImageSlots' in s
           assert 'setPrimaryProductImageNow' in s
           print('Image handler uniqueness checks passed')
@@ -39,3 +40,5 @@ jobs:
           git add Master_Products.html
           git commit -m 'Fix duplicate product image handlers'
           git push origin HEAD:main
+
+# rerun after hardened duplicate detection
