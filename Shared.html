@@ -45,7 +45,8 @@ function openModal(id){
   var el=document.getElementById(id);
   if(!el) return;
   el.classList.add('active');
-  var first=el.querySelector('.form-control:not([disabled]),.input:not([disabled])');
+  if(window.SYYSelect) SYYSelect.refresh(el);
+  var first=el.querySelector('input:not([type="hidden"]):not([disabled]),textarea:not([disabled]),.syy-select-control:not([disabled])');
   if(first) setTimeout(function(){first.focus();},60);
 }
 function closeModal(id){
@@ -55,46 +56,64 @@ function closeModal(id){
 
 
 /* ── SYY Searchable Select ────────────────────────────────────────────────
-   Progressive enhancement for native <select>. Existing .value and change
-   handlers remain intact. Filtering is client-side and adds no Firestore read. */
+   Progressive enhancement for native <select>. Search is 100% client-side. */
 var SYYSelect=(function(){
-  var registry=new WeakMap();
+  var registry=new WeakMap(),active=null,RENDER_LIMIT=200;
   function norm(v){return String(v==null?'':v).toLocaleLowerCase('th-TH').normalize('NFKC').trim();}
+  function position(inst){
+    if(!inst||!inst.wrap.classList.contains('open'))return;
+    var r=inst.control.getBoundingClientRect(),p=inst.panel,margin=8;
+    var width=Math.max(r.width,220),maxWidth=window.innerWidth-margin*2;
+    width=Math.min(width,maxWidth);
+    var left=Math.min(Math.max(margin,r.left),window.innerWidth-width-margin);
+    var below=window.innerHeight-r.bottom-margin,above=r.top-margin;
+    p.style.left=Math.round(left)+'px';p.style.width=Math.round(width)+'px';p.style.right='auto';
+    if(below>=180||below>=above){p.style.top=Math.round(r.bottom+4)+'px';p.style.bottom='auto';p.style.maxHeight=Math.max(150,Math.min(360,below))+'px';}
+    else{p.style.top='auto';p.style.bottom=Math.round(window.innerHeight-r.top+4)+'px';p.style.maxHeight=Math.max(150,Math.min(360,above))+'px';}
+  }
+  function close(inst){inst=inst||active;if(!inst)return;inst.wrap.classList.remove('open');inst.control.setAttribute('aria-expanded','false');if(active===inst)active=null;}
   function enhance(sel){
     if(!sel||registry.has(sel)||sel.multiple||sel.dataset.syyNoSearch==='true')return;
     var wrap=document.createElement('div');wrap.className='syy-select';
-    var control=document.createElement('button');control.type='button';control.className='syy-select-control';
-    var label=document.createElement('span');label.className='syy-select-label';
-    var caret=document.createElement('span');caret.className='syy-select-caret';caret.textContent='⌄';
-    control.appendChild(label);control.appendChild(caret);
+    if(sel.closest('.form-group,.form-grid'))wrap.classList.add('syy-select-block');
+    if(sel.closest('.toolbar,.pagination-bar,.pill-row,.page-head')||sel.classList.contains('page-size-select')||sel.classList.contains('dash-picksel'))wrap.classList.add('syy-select-compact');
+    var control=document.createElement('button');control.type='button';control.className='syy-select-control';control.setAttribute('aria-haspopup','listbox');control.setAttribute('aria-expanded','false');
+    var label=document.createElement('span');label.className='syy-select-label';var caret=document.createElement('span');caret.className='syy-select-caret';caret.textContent='⌄';control.appendChild(label);control.appendChild(caret);
     var panel=document.createElement('div');panel.className='syy-select-panel';
     var search=document.createElement('input');search.type='search';search.className='syy-select-search';search.placeholder='ค้นหา...';search.autocomplete='off';
-    var list=document.createElement('div');list.className='syy-select-list';panel.appendChild(search);panel.appendChild(list);
+    var list=document.createElement('div');list.className='syy-select-list';list.setAttribute('role','listbox');
+    var meta=document.createElement('div');meta.className='syy-select-meta';panel.appendChild(search);panel.appendChild(list);panel.appendChild(meta);
     sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);wrap.appendChild(panel);sel.classList.add('syy-select-native');
+    var inst={sel:sel,wrap:wrap,control:control,label:label,panel:panel,search:search,list:list,meta:meta};
     function sync(){var o=sel.options[sel.selectedIndex];label.textContent=o?o.text:'เลือก...';control.disabled=sel.disabled;}
     function render(q){
-      var nq=norm(q),frag=document.createDocumentFragment(),shown=0;
-      Array.from(sel.options).forEach(function(o,i){
-        if(o.disabled&&!o.value)return;
-        if(nq&&norm(o.text).indexOf(nq)<0&&norm(o.value).indexOf(nq)<0)return;
-        var b=document.createElement('button');b.type='button';b.className='syy-select-option'+(o.selected?' selected':'');b.textContent=o.text;b.dataset.index=i;
-        b.onclick=function(){sel.selectedIndex=i;sel.dispatchEvent(new Event('change',{bubbles:true}));sync();close();};frag.appendChild(b);shown++;
-      });
-      list.innerHTML='';if(!shown){var e=document.createElement('div');e.className='syy-select-empty';e.textContent='ไม่พบข้อมูล';list.appendChild(e);}else list.appendChild(frag);
+      var nq=norm(q),matches=[];Array.from(sel.options).forEach(function(o,i){if(o.disabled&&!o.value)return;if(nq&&norm(o.text).indexOf(nq)<0&&norm(o.value).indexOf(nq)<0)return;matches.push({o:o,i:i});});
+      var frag=document.createDocumentFragment();matches.slice(0,RENDER_LIMIT).forEach(function(x){var b=document.createElement('button');b.type='button';b.className='syy-select-option'+(x.o.selected?' selected':'');b.textContent=x.o.text;b.setAttribute('role','option');b.setAttribute('aria-selected',x.o.selected?'true':'false');b.onclick=function(){sel.selectedIndex=x.i;sel.dispatchEvent(new Event('change',{bubbles:true}));sync();close(inst);};frag.appendChild(b);});
+      list.innerHTML='';if(!matches.length){var e=document.createElement('div');e.className='syy-select-empty';e.textContent='ไม่พบข้อมูล';list.appendChild(e);}else list.appendChild(frag);
+      meta.textContent=matches.length>RENDER_LIMIT?'แสดง '+RENDER_LIMIT+' จาก '+matches.length+' รายการ · พิมพ์เพิ่มเพื่อกรอง':'ทั้งหมด '+matches.length+' รายการ';
     }
-    function open(){if(control.disabled)return;document.querySelectorAll('.syy-select.open').forEach(function(x){if(x!==wrap)x.classList.remove('open');});wrap.classList.add('open');search.value='';render('');setTimeout(function(){search.focus();},0);}
-    function close(){wrap.classList.remove('open');}
-    control.onclick=function(){wrap.classList.contains('open')?close():open();};search.oninput=function(){render(search.value);};
-    function keynav(e){var opts=Array.from(list.querySelectorAll('.syy-select-option')),idx=opts.indexOf(document.activeElement);if(e.key==='ArrowDown'){e.preventDefault();(opts[Math.min(idx+1,opts.length-1)]||opts[0])?.focus();}if(e.key==='ArrowUp'){e.preventDefault();(opts[Math.max(idx-1,0)]||opts[opts.length-1])?.focus();}if(e.key==='Escape'){e.preventDefault();close();control.focus();}}
-    search.onkeydown=keynav;list.onkeydown=keynav;document.addEventListener('click',function(e){if(!wrap.contains(e.target))close();});
-    new MutationObserver(function(){sync();if(wrap.classList.contains('open'))render(search.value);}).observe(sel,{childList:true,subtree:true,attributes:true});
-    sel.addEventListener('change',sync);registry.set(sel,{sync:sync});sync();
+    function open(){if(control.disabled)return;if(active&&active!==inst)close(active);active=inst;sync();wrap.classList.add('open');control.setAttribute('aria-expanded','true');search.value='';render('');position(inst);setTimeout(function(){search.focus();},0);}
+    control.onclick=function(){wrap.classList.contains('open')?close(inst):open();};
+    control.onkeydown=function(e){if(e.key==='Enter'||e.key===' '||e.key==='ArrowDown'){e.preventDefault();open();}};
+    search.oninput=function(){render(search.value);position(inst);};
+    function keynav(e){var opts=Array.from(list.querySelectorAll('.syy-select-option')),idx=opts.indexOf(document.activeElement);if(e.key==='ArrowDown'){e.preventDefault();(opts[Math.min(idx+1,opts.length-1)]||opts[0])?.focus();}else if(e.key==='ArrowUp'){e.preventDefault();(opts[Math.max(idx-1,0)]||opts[opts.length-1])?.focus();}else if(e.key==='Escape'){e.preventDefault();close(inst);control.focus();}}
+    search.onkeydown=keynav;list.onkeydown=keynav;
+    new MutationObserver(function(){sync();if(wrap.classList.contains('open'))render(search.value);}).observe(sel,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
+    sel.addEventListener('change',sync);registry.set(sel,inst);sync();
   }
-  function init(root){(root||document).querySelectorAll('select').forEach(enhance);}
-  function refresh(root){init(root);(root||document).querySelectorAll('select').forEach(function(s){var x=registry.get(s);if(x)x.sync();});}
-  return {init:init,refresh:refresh,enhance:enhance};
+  function init(root){root=root||document;if(root.matches&&root.matches('select'))enhance(root);if(root.querySelectorAll)root.querySelectorAll('select').forEach(enhance);}
+  function refresh(root){init(root);if(root&&root.matches&&root.matches('select')){var one=registry.get(root);if(one){var o=root.options[root.selectedIndex];one.label.textContent=o?o.text:'เลือก...';}}if((root||document).querySelectorAll)(root||document).querySelectorAll('select').forEach(function(sel){var x=registry.get(sel);if(x){var o=sel.options[sel.selectedIndex];x.label.textContent=o?o.text:'เลือก...';x.control.disabled=sel.disabled;}});}
+  function documentClick(e){if(active&&!active.wrap.contains(e.target))close(active);}
+  function reposition(){if(active)position(active);}
+  return {init:init,refresh:refresh,enhance:enhance,documentClick:documentClick,reposition:reposition};
 })();
-document.addEventListener('DOMContentLoaded',function(){SYYSelect.init(document);new MutationObserver(function(m){if(m.some(function(x){return x.addedNodes&&x.addedNodes.length;}))SYYSelect.init(document);}).observe(document.documentElement,{childList:true,subtree:true});});
+window.SYYSelect=SYYSelect;
+document.addEventListener('click',SYYSelect.documentClick);
+window.addEventListener('resize',SYYSelect.reposition,{passive:true});window.addEventListener('scroll',SYYSelect.reposition,true);
+document.addEventListener('DOMContentLoaded',function(){
+  SYYSelect.init(document);
+  new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType===1)SYYSelect.init(n);});});}).observe(document.documentElement,{childList:true,subtree:true});
+});
 
 /* ── Skeleton / Empty state ── */
 function skeletonRows(cols,rows){

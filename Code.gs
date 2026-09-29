@@ -349,16 +349,94 @@ function setPrimaryProductImage(productCode, slot) {
 // ==========================================
 // 2b. ★ Cache Layer — ลด Firestore Reads (Firebase Spark Plan / Free Quota)
 // ==========================================
-var CACHE_TTL_SECONDS     = 21600;
-// ★ FIX (โควตา Firestore Reads): เพิ่ม Master_Users เข้า cache — เดิม findUserByUsername_/
-//   findUserByEmail_/getAllUsers ดึงทั้ง collection สดทุกครั้ง (ทุก login attempt 1 ครั้ง = 1 อ่าน
-//   ทั้งตาราง user) ไม่มี cache เลย ทั้งที่บัญชีผู้ใช้เปลี่ยนไม่บ่อย และ clearCollectionCache(Master_Users)
-//   ถูกเรียกอยู่แล้วทุกจุดที่แก้ไขบัญชี (ดู updateUserFields_/saveMasterData) จึง cache ได้อย่างปลอดภัย
-var CACHEABLE_COLLECTIONS = ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars", "Product_Images", "Master_Users"];
+var CACHE_TTL_SECONDS = 21600;
+var CACHEABLE_COLLECTIONS = [
+  "Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars",
+  "Master_Customers", "Master_Products", "Product_Images", "Master_Users"
+];
+var CACHE_CHUNK_MAX_BYTES = 80000;
 
-// ★ FIX (โควตา Firestore Reads): ใช้แทนการสแกนทั้ง collection เพื่อหาค่าที่ตรงกัน 1 ฟิลด์ (เช่น
-//   เช็คเลข Part_Number/Barcode/Tax_ID ซ้ำก่อนบันทึก) — เทียบค่าตรงตัว (case-sensitive) ไม่ต้องสร้าง
-//   Composite Index เพิ่ม (equality filter เดี่ยว ไม่รวม orderBy จึงใช้ single-field index อัตโนมัติได้)
+function cacheTtlForCollection_(collectionName) {
+  if (collectionName === "Master_Products") return 900;      // 15 นาที + invalidate ทุก write
+  if (collectionName === "Product_Images") return 1800;     // 30 นาที + invalidate ทุก write
+  if (collectionName === "Master_Customers") return 3600;   // 1 ชั่วโมง + invalidate ทุก write
+  return CACHE_TTL_SECONDS;
+}
+
+function collectionCacheBaseKey_(collectionName) {
+  return "docs_" + collectionName;
+}
+
+function splitCollectionCacheChunks_(docs) {
+  var chunks = [], current = [];
+  (docs || []).forEach(function(doc) {
+    var candidate = current.concat([doc]);
+    var json = JSON.stringify(candidate);
+    var bytes = Utilities.newBlob(json).getBytes().length;
+    if (current.length && bytes > CACHE_CHUNK_MAX_BYTES) {
+      chunks.push(JSON.stringify(current));
+      current = [doc];
+    } else {
+      current = candidate;
+    }
+  });
+  if (current.length || !(docs || []).length) chunks.push(JSON.stringify(current));
+  for (var i = 0; i < chunks.length; i++) {
+    if (Utilities.newBlob(chunks[i]).getBytes().length > 95000) return null;
+  }
+  return chunks;
+}
+
+function readCollectionCache_(collectionName) {
+  if (CACHEABLE_COLLECTIONS.indexOf(collectionName) === -1) return null;
+  try {
+    var cache = CacheService.getScriptCache();
+    var base = collectionCacheBaseKey_(collectionName);
+    var manifest = cache.get(base + "__manifest");
+    if (manifest) {
+      var count = parseInt(manifest, 10);
+      if (count > 0 && count < 500) {
+        var keys = [];
+        for (var i = 0; i < count; i++) keys.push(base + "__" + i);
+        var found = cache.getAll(keys), docs = [];
+        for (var j = 0; j < keys.length; j++) {
+          if (!found[keys[j]]) return null;
+          docs = docs.concat(JSON.parse(found[keys[j]]));
+        }
+        return docs;
+      }
+    }
+    // backward compatibility กับ cache key แบบเดิม
+    var legacy = cache.get(base);
+    return legacy ? JSON.parse(legacy) : null;
+  } catch (e) {
+    console.error("readCollectionCache_ error (ข้ามได้):", e);
+    return null;
+  }
+}
+
+function writeCollectionCache_(collectionName, docs) {
+  if (CACHEABLE_COLLECTIONS.indexOf(collectionName) === -1) return;
+  try {
+    var chunks = splitCollectionCacheChunks_(docs || []);
+    if (!chunks) return;
+    clearCollectionCache(collectionName);
+    var cache = CacheService.getScriptCache();
+    var base = collectionCacheBaseKey_(collectionName);
+    var ttl = cacheTtlForCollection_(collectionName);
+    var values = {};
+    chunks.forEach(function(chunk, i) { values[base + "__" + i] = chunk; });
+    cache.putAll(values, ttl);
+    cache.put(base + "__manifest", String(chunks.length), ttl);
+  } catch (e) {
+    console.error("writeCollectionCache_ error (ข้ามได้):", e);
+  }
+}
+
+function peekCollectionDocsCache_(collectionName) {
+  return readCollectionCache_(collectionName);
+}
+
 function queryByEqualityField_(collectionName, fieldPath, value) {
   var docs = [];
   try {
@@ -378,7 +456,7 @@ function queryByEqualityField_(collectionName, fieldPath, value) {
         if (row.document) docs.push({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} });
       });
     } else {
-      console.error("queryByEqualityField_ " + collectionName + "." + fieldPath + " HTTP " + res.getResponseCode() + ": " + res.getContentText());
+      console.error("queryByEqualityField_ " + collectionName + "." + fieldPath + " HTTP " + res.getResponseCode());
     }
   } catch (e) {
     console.error("queryByEqualityField_ error:", e);
@@ -386,25 +464,26 @@ function queryByEqualityField_(collectionName, fieldPath, value) {
   return docs;
 }
 
-function fetchAllPagesRaw(collectionName) {
-  var docs = [];
-  var pageToken = "";
-  var guard = 0;
+function fetchAllPagesRaw(collectionName, firstPageJson) {
+  var docs = [], pageToken = "", guard = 0, json = firstPageJson || null;
   try {
     do {
-      var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-              + "/databases/(default)/documents/" + collectionName + "?pageSize=300"
-              + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
-      var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
-      if (res.getResponseCode() !== 200) {
-        console.error("fetchAllPagesRaw " + collectionName + " HTTP " + res.getResponseCode() + ": " + res.getContentText());
-        return { ok: false, docs: [] };
+      if (!json) {
+        var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+                + "/databases/(default)/documents/" + collectionName + "?pageSize=300"
+                + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
+        var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+        if (res.getResponseCode() !== 200) {
+          console.error("fetchAllPagesRaw " + collectionName + " HTTP " + res.getResponseCode());
+          return { ok: false, docs: [] };
+        }
+        json = JSON.parse(res.getContentText());
       }
-      var json = JSON.parse(res.getContentText());
       (json.documents || []).forEach(function(doc) {
         docs.push({ id: doc.name.split('/').pop(), fields: doc.fields || {} });
       });
       pageToken = json.nextPageToken || "";
+      json = null;
       guard++;
     } while (pageToken && guard < 50);
   } catch (e) {
@@ -415,54 +494,29 @@ function fetchAllPagesRaw(collectionName) {
 }
 
 function fetchCollectionsParallel(collectionNames) {
-  var result   = {};
-  var toFetch  = [];
-  var requests = [];
-
+  var result = {}, toFetch = [], requests = [];
   collectionNames.forEach(function(name) {
-    if (CACHEABLE_COLLECTIONS.indexOf(name) > -1) {
-      try {
-        var cached = CacheService.getScriptCache().get("docs_" + name);
-        if (cached) { result[name] = JSON.parse(cached); return; }
-      } catch (e) { /* ข้ามได้ ดึงสดแทน */ }
-    }
+    var cached = readCollectionCache_(name);
+    if (cached !== null) { result[name] = cached; return; }
     toFetch.push(name);
     requests.push({
-      url                : "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                           + "/databases/(default)/documents/" + name + "?pageSize=300",
-      method             : "get",
-      headers            : getAuthHeader(),
-      muteHttpExceptions : true
+      url: "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+         + "/databases/(default)/documents/" + name + "?pageSize=300",
+      method: "get", headers: getAuthHeader(), muteHttpExceptions: true
     });
   });
-
   if (!requests.length) return result;
-
   try {
     var responses = UrlFetchApp.fetchAll(requests);
     responses.forEach(function(res, i) {
       var name = toFetch[i];
-      if (res.getResponseCode() !== 200) {
-        console.error("fetchCollectionsParallel " + name + " HTTP " + res.getResponseCode());
-        result[name] = [];
-        return;
-      }
-      var json = JSON.parse(res.getContentText());
-      var docs = (json.documents || []).map(function(doc) {
-        return { id: doc.name.split('/').pop(), fields: doc.fields || {} };
-      });
-
-      if (json.nextPageToken) {
-        var full = fetchAllPagesRaw(name);
-        if (full.ok) docs = full.docs;
-      }
-
+      if (res.getResponseCode() !== 200) { result[name] = []; return; }
+      var first = JSON.parse(res.getContentText());
+      // ใช้ first page เดิมต่อทันที ไม่อ่าน 300 docs หน้าแรกซ้ำเมื่อมี pagination
+      var fetched = fetchAllPagesRaw(name, first);
+      var docs = fetched.ok ? fetched.docs : [];
       result[name] = docs;
-      if (CACHEABLE_COLLECTIONS.indexOf(name) > -1) {
-        try {
-          CacheService.getScriptCache().put("docs_" + name, JSON.stringify(docs), CACHE_TTL_SECONDS);
-        } catch (e) { /* ข้ามได้ */ }
-      }
+      if (fetched.ok) writeCollectionCache_(name, docs);
     });
   } catch (e) {
     console.error("fetchCollectionsParallel error:", e);
@@ -472,35 +526,23 @@ function fetchCollectionsParallel(collectionNames) {
 }
 
 function fetchCollectionDocsCached(collectionName) {
-  var useCache = CACHEABLE_COLLECTIONS.indexOf(collectionName) > -1;
-  var cacheKey = "docs_" + collectionName;
-
-  if (useCache) {
-    try {
-      var cached = CacheService.getScriptCache().get(cacheKey);
-      if (cached) return JSON.parse(cached);
-    } catch (e) {
-      console.error("cache read error (ข้ามได้ ดึงสดแทน):", e);
-    }
-  }
-
+  var cached = readCollectionCache_(collectionName);
+  if (cached !== null) return cached;
   var fetched = fetchAllPagesRaw(collectionName);
-  var docs    = fetched.docs;
-
-  if (useCache && fetched.ok) {
-    try {
-      CacheService.getScriptCache().put(cacheKey, JSON.stringify(docs), CACHE_TTL_SECONDS);
-    } catch (e) {
-      console.error("cache write error (ข้ามได้ ไม่กระทบการทำงาน):", e);
-    }
-  }
-  return docs;
+  if (fetched.ok) writeCollectionCache_(collectionName, fetched.docs);
+  return fetched.docs;
 }
 
 function clearCollectionCache(collectionName) {
   if (CACHEABLE_COLLECTIONS.indexOf(collectionName) === -1) return;
   try {
-    CacheService.getScriptCache().remove("docs_" + collectionName);
+    var cache = CacheService.getScriptCache();
+    var base = collectionCacheBaseKey_(collectionName);
+    var manifest = cache.get(base + "__manifest");
+    var keys = [base, base + "__manifest"];
+    var count = parseInt(manifest, 10) || 0;
+    for (var i = 0; i < count && i < 500; i++) keys.push(base + "__" + i);
+    cache.removeAll(keys);
   } catch (e) {
     console.error("clearCollectionCache error:", e);
   }
@@ -618,6 +660,32 @@ function getNextAutoId(collectionName, prefix, forceFresh) {
   } catch (e) {
     console.error("getNextAutoId error:", e);
     return prefix + "0001";
+  }
+}
+
+
+function autoIdSequenceKey_(collectionName, prefix) {
+  return "AUTO_ID_SEQ__" + String(collectionName).replace(/[^A-Za-z0-9_]/g, "_")
+       + "__" + String(prefix).replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function allocateNextAutoId_(collectionName, prefix, forceReseed) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var key = autoIdSequenceKey_(collectionName, prefix);
+    var current = forceReseed ? NaN : parseInt(props.getProperty(key), 10);
+    if (isNaN(current)) {
+      var seededNext = getNextAutoId(collectionName, prefix, true);
+      var seededDigits = String(seededNext).substring(String(prefix).length);
+      current = /^\d+$/.test(seededDigits) ? Math.max(0, parseInt(seededDigits, 10) - 1) : 0;
+    }
+    current++;
+    props.setProperty(key, String(current));
+    return prefix + String(current).padStart(4, '0');
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
   }
 }
 
@@ -752,7 +820,7 @@ function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicat
     var payload = { fields: mapToFirestoreFields(dataObject) };
 
     if (!docId) {
-      var newId  = getNextAutoId(collectionName, prefix, true);
+      var newId  = allocateNextAutoId_(collectionName, prefix, false);
       var lastErr = "";
 
       for (var attempt = 0; attempt < 10; attempt++) {
@@ -772,7 +840,7 @@ function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicat
           return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: newId };
         }
         if (code === 409) {
-          newId = bumpAutoId(newId, prefix);
+          newId = allocateNextAutoId_(collectionName, prefix, attempt === 0);
           continue;
         }
         lastErr = createRes.getContentText();
@@ -862,55 +930,55 @@ function getAllProducts() {
     var zoneMap   = buildZoneMapFromDocs(masters["Master_Zones"]);
     var carMap    = buildCarMapFromDocs(masters["Master_Cars"]);
     var imageMap  = getProductImageUrlMap_();
+    var productDocs = fetchCollectionDocsCached("Master_Products");
 
-    var fetched = fetchAllPagesRaw("Master_Products");
-    if (!fetched.ok) {
-      console.error("getAllProducts: ดึงข้อมูลสินค้าไม่สำเร็จ");
-      return products;
-    }
+    productDocs.forEach(function(doc) {
+      var id = doc.id, f = doc.fields || {};
+      var brandId  = parseFirestoreValue(f.Brand_ID)         || "";
+      var catId    = parseFirestoreValue(f.Category_ID)      || "";
+      var vendorId = parseFirestoreValue(f.Default_Vendor_ID)|| "";
+      var zoneId   = parseFirestoreValue(f.Zone_ID)          || "";
+      var carIds = parseFirestoreValue(f.Car_IDs);
+      if (!carIds || (Array.isArray(carIds) && carIds.length === 0)) {
+        var legacyCarId = parseFirestoreValue(f.Car_ID);
+        carIds = legacyCarId ? [legacyCarId] : [];
+      } else if (!Array.isArray(carIds)) carIds = [carIds];
+      var carModelNames = carIds.map(function(cid) { return carMap[cid] || cid; }).filter(Boolean);
 
-    fetched.docs.forEach(function(doc) {
-        var id = doc.id;
-        var f  = doc.fields || {};
+      var imageState = imageMap[id] || {};
+      if (typeof imageState === "string") {
+        imageState = { primary: imageState, urls: imageState ? [imageState] : [], primaryIndex: 0 };
+      }
+      var imageUrls = Array.isArray(imageState.urls) ? imageState.urls.slice(0, 3) : [];
+      var primaryIndex = parseInt(imageState.primaryIndex, 10) || 0;
 
-        var brandId  = parseFirestoreValue(f.Brand_ID)          || "";
-        var catId    = parseFirestoreValue(f.Category_ID)        || "";
-        var vendorId = parseFirestoreValue(f.Default_Vendor_ID)  || "";
-        var zoneId   = parseFirestoreValue(f.Zone_ID)            || "";
-
-        var carIds = parseFirestoreValue(f.Car_IDs);
-        if (!carIds || (Array.isArray(carIds) && carIds.length === 0)) {
-          var legacyCarId = parseFirestoreValue(f.Car_ID);
-          carIds = legacyCarId ? [legacyCarId] : [];
-        } else if (!Array.isArray(carIds)) {
-          carIds = [carIds];
-        }
-        var carModelNames = carIds.map(function(cid) { return carMap[cid] || cid; }).filter(Boolean);
-
-        products.push({
-          productCode  : id,
-          productName  : parseFirestoreValue(f.Product_Name)   || "",
-          partType     : parseFirestoreValue(f.Part_Type)      || "",
-          partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
-          barcode      : String(parseFirestoreValue(f.Barcode) || ""),
-          barcodeGenerated : parseFirestoreValue(f.Barcode_Generated) === "true",
-          imageUrl     : imageMap[id] || "",
-          brandId      : brandId,
-          brandName    : brandMap[brandId]   || brandId,
-          categoryId   : catId,
-          categoryName : catMap[catId]       || catId,
-          vendorId     : vendorId,
-          vendorName   : vendorMap[vendorId] || vendorId,
-          zoneId       : zoneId,
-          zoneName     : zoneId === "PENDING" ? "รอดำเนินการ" : (zoneMap[zoneId] || zoneId),
-          carIds       : carIds,
-          carModel     : carModelNames.join(', '),
-          costPrice    : parseFloat(parseFirestoreValue(f.Cost_Price)    || 0),
-          sellingPrice : parseFloat(parseFirestoreValue(f.Selling_Price) || 0),
-          currentStock : parseFloat(parseFirestoreValue(f.Current_Stock) || 0),
-          minStock     : parseFloat(parseFirestoreValue(f.Min_Stock)     || 0),
-          status       : parseFirestoreValue(f.Status) || "Active"
-        });
+      products.push({
+        id           : id, // alias สำหรับ UI เก่าที่อ้าง p.id
+        productCode  : id,
+        productName  : parseFirestoreValue(f.Product_Name) || "",
+        partType     : parseFirestoreValue(f.Part_Type)    || "",
+        partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
+        barcode      : String(parseFirestoreValue(f.Barcode) || ""),
+        barcodeGenerated : parseFirestoreValue(f.Barcode_Generated) === "true",
+        imageUrl     : imageState.primary || imageUrls[primaryIndex] || imageUrls[0] || "",
+        imageUrls    : imageUrls,
+        primaryImageIndex: primaryIndex,
+        brandId      : brandId,
+        brandName    : brandMap[brandId] || brandId,
+        categoryId   : catId,
+        categoryName : catMap[catId] || catId,
+        vendorId     : vendorId,
+        vendorName   : vendorMap[vendorId] || vendorId,
+        zoneId       : zoneId,
+        zoneName     : zoneId === "PENDING" ? "รอดำเนินการ" : (zoneMap[zoneId] || zoneId),
+        carIds       : carIds,
+        carModel     : carModelNames.join(', '),
+        costPrice    : parseFloat(parseFirestoreValue(f.Cost_Price) || 0),
+        sellingPrice : parseFloat(parseFirestoreValue(f.Selling_Price) || 0),
+        currentStock : parseFloat(parseFirestoreValue(f.Current_Stock) || 0),
+        minStock     : parseFloat(parseFirestoreValue(f.Min_Stock) || 0),
+        status       : parseFirestoreValue(f.Status) || "Active"
+      });
     });
   } catch (e) {
     console.error("getAllProducts error:", e);
@@ -957,6 +1025,7 @@ function getProductById(productCode) {
       var zoneMap   = buildZoneMapFromDocs(masters["Master_Zones"]);
       var carMap    = buildCarMapFromDocs(masters["Master_Cars"]);
       var carModelNames = carIds.map(function(cid) { return carMap[cid] || cid; }).filter(Boolean);
+      var imgState = getProductImageDocData_(productCode);
 
       return {
         productCode  : productCode,
@@ -965,7 +1034,9 @@ function getProductById(productCode) {
         partNumber   : String(parseFirestoreValue(f.Part_Number) || ""),
         barcode      : String(parseFirestoreValue(f.Barcode) || ""),
         barcodeGenerated : parseFirestoreValue(f.Barcode_Generated) === "true",
-        imageUrl     : getProductImageUrlSingle_(productCode),
+        imageUrl     : imgState.urls[imgState.primaryIndex] || imgState.urls[0] || "",
+        imageUrls    : imgState.urls.slice(0, 3),
+        primaryImageIndex: imgState.primaryIndex,
         brandId      : brandId,
         brandName    : brandMap[brandId]   || brandId,
         categoryId   : catId,
@@ -1108,6 +1179,23 @@ function saveProduct(d) {
   //   quality guard เท่านั้น ไม่ใช่ข้อจำกัดด้านความปลอดภัย)
   var existingFields = docId ? getProductRawFields_(docId) : null;
 
+  var cleanProductName = String(dataObject.Product_Name || "").trim();
+  if (cleanProductName) {
+    var dupName = queryByEqualityField_("Master_Products", "Product_Name", cleanProductName)
+      .some(function(doc) { return doc.id !== docId; });
+    if (!dupName) {
+      var cachedProductDocs = peekCollectionDocsCache_("Master_Products");
+      if (cachedProductDocs) {
+        var lowerName = cleanProductName.toLowerCase();
+        dupName = cachedProductDocs.some(function(doc) {
+          if (doc.id === docId) return false;
+          return String(parseFirestoreValue((doc.fields || {}).Product_Name) || "").trim().toLowerCase() === lowerName;
+        });
+      }
+    }
+    if (dupName) return { success:false, title:"ข้อมูลซ้ำ!", message:'ชื่อสินค้า "' + cleanProductName + '" มีอยู่ในระบบแล้ว' };
+  }
+
   if (dataObject.Part_Number) {
     var dupPn = queryByEqualityField_("Master_Products", "Part_Number", dataObject.Part_Number)
       .some(function(doc) { return doc.id !== docId; });
@@ -1137,7 +1225,7 @@ function saveProduct(d) {
     }
   }
 
-  return saveMasterData("Master_Products", "P", docId, dataObject, d.productName);
+  return saveMasterData("Master_Products", "P", docId, dataObject, null);
 }
 
 function getProductRawFields_(docId) {
@@ -1199,6 +1287,7 @@ function generateProductBarcode(productCode) {
     if (res.getResponseCode() !== 200) {
       return { success: false, message: "บันทึกบาร์โค้ดไม่สำเร็จ: " + res.getContentText() };
     }
+    clearCollectionCache("Master_Products");
 
     return { success: true, message: "สร้างบาร์โค้ดสำเร็จ", barcode: barcode, generated: true };
   } catch (e) {
@@ -1222,47 +1311,28 @@ function hashCode_(str) {
 }
 
 function checkPartNumberDuplicate(partNumber, excludeDocId) {
-  var compareVal = String(partNumber || "").trim().toLowerCase();
-  if (!compareVal) return null;
-
-  var fetched = fetchAllPagesRaw("Master_Products");
-  if (!fetched.ok) {
-    console.error("checkPartNumberDuplicate: ดึงข้อมูลสินค้าไม่สำเร็จ ข้ามการตรวจสอบซ้ำ");
-    return null;
+  var value = String(partNumber || "").trim();
+  if (!value) return null;
+  var duplicate = queryByEqualityField_("Master_Products", "Part_Number", value)
+    .some(function(doc) { return doc.id !== excludeDocId; });
+  if (!duplicate) {
+    var cached = peekCollectionDocsCache_("Master_Products");
+    if (cached) {
+      var lower = value.toLowerCase();
+      duplicate = cached.some(function(doc) {
+        return doc.id !== excludeDocId && String(parseFirestoreValue((doc.fields || {}).Part_Number) || "").trim().toLowerCase() === lower;
+      });
+    }
   }
-
-  var isDuplicate = fetched.docs.some(function(doc) {
-    if (doc.id === excludeDocId) return false;
-    var existingVal = String(parseFirestoreValue((doc.fields || {}).Part_Number) || "").trim().toLowerCase();
-    return existingVal && existingVal === compareVal;
-  });
-
-  if (isDuplicate) {
-    return { success: false, title: "ข้อมูลซ้ำ!", message: 'รหัสจากผู้ผลิต (Part Number) "' + partNumber + '" มีอยู่ในระบบแล้ว' };
-  }
-  return null;
+  return duplicate ? { success:false, title:"ข้อมูลซ้ำ!", message:'รหัสจากผู้ผลิต (Part Number) "' + value + '" มีอยู่ในระบบแล้ว' } : null;
 }
 
 function checkBarcodeDuplicate(barcode, excludeDocId) {
-  var compareVal = String(barcode || "").trim().toLowerCase();
-  if (!compareVal) return null;
-
-  var fetched = fetchAllPagesRaw("Master_Products");
-  if (!fetched.ok) {
-    console.error("checkBarcodeDuplicate: ดึงข้อมูลสินค้าไม่สำเร็จ ข้ามการตรวจสอบซ้ำ");
-    return null;
-  }
-
-  var isDuplicate = fetched.docs.some(function(doc) {
-    if (doc.id === excludeDocId) return false;
-    var existingVal = String(parseFirestoreValue((doc.fields || {}).Barcode) || "").trim().toLowerCase();
-    return existingVal && existingVal === compareVal;
-  });
-
-  if (isDuplicate) {
-    return { success: false, title: "ข้อมูลซ้ำ!", message: 'บาร์โค้ด "' + barcode + '" มีอยู่ในระบบแล้ว' };
-  }
-  return null;
+  var value = String(barcode || "").trim();
+  if (!value) return null;
+  var duplicate = queryByEqualityField_("Master_Products", "Barcode", value)
+    .some(function(doc) { return doc.id !== excludeDocId; });
+  return duplicate ? { success:false, title:"ข้อมูลซ้ำ!", message:'บาร์โค้ด "' + value + '" มีอยู่ในระบบแล้ว' } : null;
 }
 
 function deleteProduct(docId) {
@@ -2857,7 +2927,7 @@ function incrementProductStockBatch(items) {
       muteHttpExceptions: true
     });
 
-    if (res.getResponseCode() === 200) return true;
+    if (res.getResponseCode() === 200) { clearCollectionCache("Master_Products"); return true; }
     console.error("incrementProductStockBatch HTTP " + res.getResponseCode() + ": " + res.getContentText());
     return false;
   } catch (e) {
@@ -2868,113 +2938,123 @@ function incrementProductStockBatch(items) {
 
 function receiveGoods(d, callerUsername) {
   function fail(msg) { return { success: false, title: "ข้อมูลไม่ครบ", message: msg }; }
-
   try {
-    if (!d.poId)                                return fail("ไม่พบเลขที่ใบสั่งซื้อ");
-    if (!String(d.invoiceNo    || "").trim())   return fail("กรุณากรอกเลขที่ Invoice");
-    if (!String(d.receiptDate  || "").trim())   return fail("กรุณาระบุวันที่รับสินค้า");
-    if (!String(d.receiverName || "").trim())   return fail("กรุณากรอกชื่อผู้รับสินค้า");
-
+    d = d || {};
+    if (!d.poId) return fail("ไม่พบเลขที่ใบสั่งซื้อ");
+    if (!String(d.invoiceNo || "").trim()) return fail("กรุณากรอกเลขที่ Invoice");
+    if (!String(d.receiptDate || "").trim()) return fail("กรุณาระบุวันที่รับสินค้า");
+    if (!String(d.receiverName || "").trim()) return fail("กรุณากรอกชื่อผู้รับสินค้า");
     var reqItems = Array.isArray(d.items) ? d.items : [];
     if (!reqItems.length) return fail("ไม่มีรายการสินค้าที่จะรับ");
 
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/Purchase_Orders/" + d.poId;
-    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
-    if (res.getResponseCode() !== 200) return fail("ไม่พบใบสั่งซื้อนี้");
+    var user = callerUsername || getCurrentUsername_();
+    var nowIso = new Date().toISOString();
+    var docNo = "SR" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyMMdd-HHmmss")
+              + "-" + Utilities.getUuid().replace(/-/g, "").slice(0, 4).toUpperCase();
+    var poUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+              + "/databases/(default)/documents/Purchase_Orders/" + d.poId;
+    var MAX_ATTEMPTS = 3;
 
-    var f = JSON.parse(res.getContentText()).fields || {};
-    var currentStatus = parseFirestoreValue(f.Status) || "Pending";
-    if (currentStatus === "Received")  return fail("ใบสั่งซื้อนี้ได้รับสินค้าครบแล้ว ไม่สามารถบันทึกรับซ้ำได้");
-    if (currentStatus === "Cancelled") return fail("ใบสั่งซื้อนี้ถูกยกเลิกแล้ว ไม่สามารถรับสินค้าได้");
+    for (var attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      var res = UrlFetchApp.fetch(poUrl, { method:"get", headers:getAuthHeader(), muteHttpExceptions:true });
+      if (res.getResponseCode() !== 200) return fail("ไม่พบใบสั่งซื้อนี้");
+      var poDoc = JSON.parse(res.getContentText());
+      var f = poDoc.fields || {};
+      var currentStatus = parseFirestoreValue(f.Status) || "Pending";
+      if (currentStatus === "Received") return fail("ใบสั่งซื้อนี้ได้รับสินค้าครบแล้ว ไม่สามารถบันทึกรับซ้ำได้");
+      if (currentStatus === "Cancelled") return fail("ใบสั่งซื้อนี้ถูกยกเลิกแล้ว ไม่สามารถรับสินค้าได้");
 
-    var poItems = [];
-    try { poItems = JSON.parse(parseFirestoreValue(f.Items_JSON) || "[]"); } catch (e) { poItems = []; }
-
-    var receiveMap = {};
-    reqItems.forEach(function(it) { receiveMap[it.productCode] = parseFloat(it.qtyReceivedNow || 0); });
-
-    var allComplete = true;
-    var receiptLineItems = [];
-    var stockAdditions   = [];
-
-    poItems = poItems.map(function(it) {
-      var alreadyReceived = parseFloat(it.receivedQty || 0);
-      var ordered          = parseFloat(it.qty || 0);
-      var remaining         = Math.max(ordered - alreadyReceived, 0);
-      var receiveNow         = receiveMap.hasOwnProperty(it.productCode) ? receiveMap[it.productCode] : 0;
-
-      if (receiveNow < 0) receiveNow = 0;
-      if (receiveNow > remaining) receiveNow = remaining;
-
-      var newReceived = alreadyReceived + receiveNow;
-      if (newReceived < ordered) allComplete = false;
-
-      if (receiveNow > 0) {
-        receiptLineItems.push({ productCode: it.productCode, productName: it.productName, qtyReceivedNow: receiveNow });
-        stockAdditions.push({ productCode: it.productCode, productName: it.productName, qty: receiveNow });
+      var poItems = [];
+      try { poItems = JSON.parse(parseFirestoreValue(f.Items_JSON) || "[]"); } catch (e) { poItems = []; }
+      var receiveMap = {};
+      reqItems.forEach(function(it) { receiveMap[it.productCode] = parseFloat(it.qtyReceivedNow || 0); });
+      var allComplete = true, receiptLineItems = [], stockAdditions = [];
+      poItems = poItems.map(function(it) {
+        var already = parseFloat(it.receivedQty || 0), ordered = parseFloat(it.qty || 0);
+        var remaining = Math.max(ordered - already, 0);
+        var receiveNow = receiveMap.hasOwnProperty(it.productCode) ? receiveMap[it.productCode] : 0;
+        if (receiveNow < 0) receiveNow = 0;
+        if (receiveNow > remaining) receiveNow = remaining;
+        var newReceived = already + receiveNow;
+        if (newReceived < ordered) allComplete = false;
+        if (receiveNow > 0) {
+          receiptLineItems.push({ productCode:it.productCode, productName:it.productName, qtyReceivedNow:receiveNow });
+          stockAdditions.push({ productCode:it.productCode, productName:it.productName, qty:receiveNow });
+        }
+        it.receivedQty = newReceived;
+        return it;
+      });
+      if (!receiptLineItems.length) return fail("กรุณาระบุจำนวนที่รับอย่างน้อย 1 รายการ");
+      if (!allComplete && !String(d.deliveryNoteNo || "").trim()) {
+        return fail("กรุณากรอกเลขที่ใบส่งของชั่วคราว เนื่องจากได้รับสินค้าไม่ครบตามจำนวนที่สั่งซื้อ");
       }
 
-      it.receivedQty = newReceived;
-      return it;
-    });
-
-    if (!receiptLineItems.length) return fail("กรุณาระบุจำนวนที่รับอย่างน้อย 1 รายการ");
-
-    if (!allComplete && !String(d.deliveryNoteNo || "").trim()) {
-      return fail("กรุณากรอกเลขที่ใบส่งของชั่วคราว เนื่องจากได้รับสินค้าไม่ครบตามจำนวนที่สั่งซื้อ");
-    }
-
-    // ★ ใช้ logStockIn_ (เขียน Stock_Movements ด้วย) แทน incrementProductStockBatch เดิม
-    //   เพื่อให้ฝั่งรับของมีประวัติเข้า-ออกเหมือนฝั่งตัดสต๊อก
-    if (!logStockIn_(stockAdditions, "รับของตาม PO", d.poId, callerUsername)) {
-      return { success: false, title: "ล้มเหลว", message: "อัปเดตสต็อกสินค้าไม่สำเร็จ กรุณาลองอีกครั้ง (ยังไม่มีการบันทึกการรับสินค้า)" };
-    }
-
-    var receipts = [];
-    try { receipts = JSON.parse(parseFirestoreValue(f.Receipts_JSON) || "[]"); } catch (e) { receipts = []; }
-    receipts.push({
-      date           : d.receiptDate,
-      invoiceNo      : d.invoiceNo,
-      receiverName   : d.receiverName,
-      deliveryNoteNo : allComplete ? "" : String(d.deliveryNoteNo || ""),
-      isFinal        : allComplete,
-      items          : receiptLineItems
-    });
-
-    var newStatus = allComplete ? "Received" : "PartiallyReceived";
-    var payload = {
-      fields: {
-        Items_JSON    : { stringValue: JSON.stringify(poItems) },
-        Receipts_JSON : { stringValue: JSON.stringify(receipts) },
-        Status        : { stringValue: newStatus }
+      var stockMap = getProductStockMap_(stockAdditions.map(function(x) { return x.productCode; }));
+      for (var si = 0; si < stockAdditions.length; si++) {
+        if (!stockMap[stockAdditions[si].productCode]) return fail("ไม่พบสินค้า " + stockAdditions[si].productCode + " ใน Master Product");
       }
-    };
-    var patchUrl = url
-      + "?updateMask.fieldPaths=Items_JSON"
-      + "&updateMask.fieldPaths=Receipts_JSON"
-      + "&updateMask.fieldPaths=Status";
-    var patchRes = UrlFetchApp.fetch(patchUrl, {
-      method             : "patch",
-      headers            : getAuthHeader(),
-      payload            : JSON.stringify(payload),
-      muteHttpExceptions : true
-    });
 
-    if (patchRes.getResponseCode() !== 200) {
-      return { success: false, title: "ล้มเหลว", message: patchRes.getContentText() };
+      var receipts = [];
+      try { receipts = JSON.parse(parseFirestoreValue(f.Receipts_JSON) || "[]"); } catch (e2) { receipts = []; }
+      receipts.push({
+        date:d.receiptDate, invoiceNo:d.invoiceNo, receiverName:d.receiverName,
+        deliveryNoteNo:allComplete ? "" : String(d.deliveryNoteNo || ""),
+        isFinal:allComplete, items:receiptLineItems
+      });
+      var newStatus = allComplete ? "Received" : "PartiallyReceived";
+      var writes = [];
+      stockAdditions.forEach(function(l, i) {
+        var info = stockMap[l.productCode], qty = parseFloat(l.qty || 0);
+        var stockWrite = {
+          transform: {
+            document: fsDocPath_("Master_Products", l.productCode),
+            fieldTransforms: [{ fieldPath:"Current_Stock", increment:{ doubleValue:qty } }]
+          }
+        };
+        if (info.updateTime) stockWrite.currentDocument = { updateTime:info.updateTime };
+        writes.push(stockWrite);
+        writes.push({ update:{
+          name:fsDocPath_(STOCK_MOVEMENT_COLLECTION, docNo + "-" + (i + 1)),
+          fields:{
+            Doc_No:{stringValue:docNo}, Type:{stringValue:"IN"},
+            Product_Code:{stringValue:l.productCode}, Product_Name:{stringValue:String(l.productName || info.name)},
+            Qty:{doubleValue:qty}, Stock_Before:{doubleValue:info.stock}, Stock_After:{doubleValue:info.stock + qty},
+            Reason:{stringValue:"รับของตาม PO"}, Ref_No:{stringValue:String(d.poId)},
+            User:{stringValue:user}, Timestamp:{stringValue:nowIso}
+          }
+        }});
+      });
+      var poWrite = {
+        update: {
+          name: fsDocPath_("Purchase_Orders", d.poId),
+          fields: {
+            Items_JSON:{stringValue:JSON.stringify(poItems)},
+            Receipts_JSON:{stringValue:JSON.stringify(receipts)},
+            Status:{stringValue:newStatus}
+          }
+        },
+        updateMask:{ fieldPaths:["Items_JSON", "Receipts_JSON", "Status"] }
+      };
+      if (poDoc.updateTime) poWrite.currentDocument = { updateTime:poDoc.updateTime };
+      writes.push(poWrite);
+
+      var commit = fsCommit_(writes);
+      if (commit.ok) {
+        clearCollectionCache("Master_Products");
+        return {
+          success:true, title:"สำเร็จ",
+          message:allComplete ? "บันทึกรับสินค้าครบถ้วน และอัปเดตสต็อกเรียบร้อย" : "บันทึกรับสินค้าบางส่วน และอัปเดตสต็อกเรียบร้อย",
+          status:newStatus
+        };
+      }
+      if (!isPreconditionFailure_(commit.message) || attempt === MAX_ATTEMPTS) {
+        return { success:false, title:"ล้มเหลว", message:"บันทึกรับสินค้าไม่สำเร็จ: " + commit.message };
+      }
+      Utilities.sleep(120 * attempt);
     }
-
-    return {
-      success : true,
-      title   : "สำเร็จ",
-      message : allComplete
-                  ? "บันทึกรับสินค้าครบถ้วน และอัปเดตสต็อกเรียบร้อย"
-                  : "บันทึกรับสินค้าบางส่วน และอัปเดตสต็อกเรียบร้อย",
-      status  : newStatus
-    };
+    return { success:false, title:"ล้มเหลว", message:"ข้อมูลมีการเปลี่ยนแปลงพร้อมกัน กรุณาลองใหม่" };
   } catch (e) {
-    return { success: false, title: "ข้อผิดพลาด", message: e.message };
+    return { success:false, title:"ข้อผิดพลาด", message:e.message };
   }
 }
 
@@ -3434,6 +3514,7 @@ var API_REGISTRY = {
   issueStock               : "staff",
   getStockMovements        : "viewer",
   getDashboardBootstrap    : "viewer",
+  getDashboardDelta        : "viewer",
 
   // ── ใบกำกับภาษี / ใบเสนอราคา — สร้าง/แก้ไขให้ viewer ทำได้ (ข้อยกเว้นเฉพาะ เซลส์ต้องออกเอกสารได้เอง)
   //   แต่การ "ลบ" เอกสารต้อง admin เหมือน delete ตัวอื่นทุกตัวในระบบ — เดิมให้ viewer ลบได้ด้วย
@@ -3512,6 +3593,7 @@ var API_FUNCTIONS = {
   issueStock                : issueStock,
   getStockMovements         : getStockMovements,
   getDashboardBootstrap     : getDashboardBootstrap,
+  getDashboardDelta         : getDashboardDelta,
   saveTaxInvoice            : saveTaxInvoice,
   deleteTaxInvoice          : deleteTaxInvoice,
   saveQuotation             : saveQuotation,
@@ -4586,6 +4668,7 @@ function issueStock(d, callerUsername) {
       Utilities.sleep(150 * attempt);
     }
 
+    clearCollectionCache("Master_Products");
     return {
       success : true,
       title   : "สำเร็จ",
@@ -4645,7 +4728,9 @@ function logStockIn_(additions, reason, refNo, callerUsername) {
     });
   });
 
-  return fsCommit_(writes).ok;
+  var committed = fsCommit_(writes).ok;
+  if (committed) clearCollectionCache("Master_Products");
+  return committed;
 }
 
 /**
@@ -4736,22 +4821,112 @@ function fetchAllStockMovements_() {
   return out;
 }
 
-/**
- * ★ ข้อมูลตั้งต้นของ Dashboard สต๊อก (หน้า index) — เรียกครั้งเดียวตอนโหลดหน้า/กดรีเฟรช
- * รวม: สินค้าทั้งหมด + ประวัติเข้า-ออกทั้งหมด + แผนที่ "เลขที่ PO -> ชื่อผู้จัดจำหน่าย"
- * (ไว้โยงใบรับเข้าสต๊อก ซึ่ง Ref_No ของ Stock_Movements ประเภท IN คือเลขที่ PO)
- */
-function getDashboardBootstrap() {
-  var poVendorMap = {};
-  try {
-    getPurchaseOrders().forEach(function (po) { poVendorMap[po.poId] = po.vendorName; });
-  } catch (e) {
-    console.error("getDashboardBootstrap: โหลดผู้จัดจำหน่ายของ PO ไม่สำเร็จ:", e);
-  }
+var DASHBOARD_YEARS_BACK = 4;
+
+function dashboardRangeStart_() {
+  var now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear() - DASHBOARD_YEARS_BACK, 0, 1, 0, 0, 0)).toISOString();
+}
+
+function mapDashboardMovementRow_(row) {
+  if (!row || !row.document) return null;
+  var f = row.document.fields || {}, ts = parseFirestoreValue(f.Timestamp);
+  if (!ts) return null;
   return {
-    products     : getAllProducts(),
-    movements    : fetchAllStockMovements_(),
-    poVendorMap  : poVendorMap
+    id          : row.document.name.split('/').pop(),
+    docNo       : parseFirestoreValue(f.Doc_No) || "",
+    type        : parseFirestoreValue(f.Type) || "OUT",
+    productCode : parseFirestoreValue(f.Product_Code) || "",
+    productName : parseFirestoreValue(f.Product_Name) || "",
+    qty         : parseFloat(parseFirestoreValue(f.Qty)) || 0,
+    stockAfter  : parseFloat(parseFirestoreValue(f.Stock_After)) || 0,
+    unitPrice   : parseFloat(parseFirestoreValue(f.Unit_Price)) || 0,
+    costPrice   : parseFloat(parseFirestoreValue(f.Cost_Price)) || 0,
+    reason      : parseFirestoreValue(f.Reason) || "",
+    refNo       : parseFirestoreValue(f.Ref_No) || "",
+    note        : parseFirestoreValue(f.Note) || "",
+    user        : parseFirestoreValue(f.User) || "",
+    timestamp   : ts
+  };
+}
+
+function queryDashboardMovementsRange_(fromIso, toIso, exclusiveStart) {
+  var out = [];
+  try {
+    var filters = [];
+    if (fromIso) filters.push({ fieldFilter:{ field:{fieldPath:"Timestamp"}, op:exclusiveStart ? "GREATER_THAN" : "GREATER_THAN_OR_EQUAL", value:{stringValue:fromIso} } });
+    if (toIso) filters.push({ fieldFilter:{ field:{fieldPath:"Timestamp"}, op:"LESS_THAN_OR_EQUAL", value:{stringValue:toIso} } });
+    var q = {
+      from:[{collectionId:STOCK_MOVEMENT_COLLECTION}],
+      orderBy:[{field:{fieldPath:"Timestamp"}, direction:"DESCENDING"}]
+    };
+    if (filters.length === 1) q.where = filters[0];
+    else if (filters.length > 1) q.where = { compositeFilter:{op:"AND", filters:filters} };
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+    var res = UrlFetchApp.fetch(url, {method:"post", headers:getAuthHeader(), payload:JSON.stringify({structuredQuery:q}), muteHttpExceptions:true});
+    if (res.getResponseCode() !== 200) {
+      console.error("queryDashboardMovementsRange_ HTTP " + res.getResponseCode() + ": " + res.getContentText());
+      return out;
+    }
+    (JSON.parse(res.getContentText()) || []).forEach(function(row) {
+      var m = mapDashboardMovementRow_(row); if (m) out.push(m);
+    });
+  } catch (e) { console.error("queryDashboardMovementsRange_ error:", e); }
+  return out;
+}
+
+function buildPoVendorMapForMovements_(movements) {
+  var refs = [], seen = {};
+  (movements || []).forEach(function(m) {
+    if (m.type !== "IN" || !m.refNo || seen[m.refNo]) return;
+    seen[m.refNo] = true; refs.push(String(m.refNo));
+  });
+  if (!refs.length) return {};
+  var vendorMap = buildVendorMap(), out = {};
+  var endpoint = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:batchGet";
+  for (var i = 0; i < refs.length; i += 100) {
+    var batch = refs.slice(i, i + 100);
+    var res = UrlFetchApp.fetch(endpoint, {
+      method:"post", headers:getAuthHeader(), muteHttpExceptions:true,
+      payload:JSON.stringify({documents:batch.map(function(id){ return fsDocPath_("Purchase_Orders", id); })})
+    });
+    if (res.getResponseCode() !== 200) continue;
+    (JSON.parse(res.getContentText()) || []).forEach(function(row) {
+      if (!row.found) return;
+      var id = row.found.name.split('/').pop(), f = row.found.fields || {};
+      var vendorId = parseFirestoreValue(f.Vendor_ID) || "", v = vendorMap[vendorId] || {};
+      out[id] = v.Vendor_name || vendorId;
+    });
+  }
+  return out;
+}
+
+function getDashboardBootstrap() {
+  var serverTime = new Date().toISOString();
+  var rangeStart = dashboardRangeStart_();
+  var movements = queryDashboardMovementsRange_(rangeStart, serverTime, false);
+  return {
+    products:getAllProducts(), movements:movements,
+    poVendorMap:buildPoVendorMapForMovements_(movements),
+    bounded:true, rangeStart:rangeStart, serverTime:serverTime
+  };
+}
+
+function getDashboardDelta(sinceIso) {
+  var since = String(sinceIso || "").trim();
+  if (!since || isNaN(new Date(since).getTime())) return { success:false, fullRefresh:true, message:"sync watermark ไม่ถูกต้อง" };
+  var serverTime = new Date().toISOString();
+  var movements = queryDashboardMovementsRange_(since, serverTime, true);
+  var codes = [], seen = {};
+  movements.forEach(function(m) { if (m.productCode && !seen[m.productCode]) { seen[m.productCode]=true; codes.push(m.productCode); } });
+  var stocks = getProductStockMap_(codes), productStocks = [];
+  Object.keys(stocks).forEach(function(code) {
+    var x = stocks[code];
+    productStocks.push({productCode:code,currentStock:x.stock,minStock:x.minStock,costPrice:x.costPrice,sellingPrice:x.sellingPrice});
+  });
+  return {
+    success:true, movements:movements, productStocks:productStocks,
+    poVendorMap:buildPoVendorMapForMovements_(movements), serverTime:serverTime
   };
 }
 

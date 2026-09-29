@@ -569,7 +569,7 @@
     var d = e.data || {};
     if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
     else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }
-    else if(d.action==='REFRESH_STOCK_FULL'){ dashLoad(); }
+    else if(d.action==='REFRESH_STOCK_FULL'){ dashRefreshDelta(); }
     else if(d.action==='OPEN_STOCK_ISSUE'){
       switchPage('stockissue');
       var payload = { items:d.items, refNo:d.refNo, note:d.note, quoteId:d.quoteId };
@@ -742,7 +742,7 @@
 
   /* ═══════════════ Dashboard สต๊อก (real data, client-side aggregation) ═══════════════ */
   var DASH = {
-    loaded:false, loading:false, lastLoad:0, products:[], movements:[], poVendorMap:{},
+    loaded:false, loading:false, lastLoad:0, lastSync:'', products:[], movements:[], poVendorMap:{},
     byDay:{}, byMonth:{}, byYear:{}, byProductMonth:{}, lastOut:{}, lastSale:{}, qty6mo:{}, health:null,
     gran:'m', year:(new Date()).getFullYear(), month:(new Date()).getMonth(), day:(new Date()).getDate(),
     tab:'low', deadRule:90, search:'', fCat:'', fBrand:'', fPart:'',
@@ -766,6 +766,7 @@
       DASH.products = data.products||[];
       DASH.movements = (data.movements||[]).map(function(m){ m.ts=new Date(m.timestamp); return m; });
       DASH.poVendorMap = data.poVendorMap||{};
+      DASH.lastSync = data.serverTime || (DASH.movements.length ? DASH.movements[0].timestamp : new Date().toISOString());
       allProducts = DASH.products; // ใช้ร่วมกับ openView/openEdit/editModal เดิม
       DASH.loaded = true; DASH.lastLoad = Date.now();
       document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
@@ -792,6 +793,28 @@
       if(DASH.loaded){ dashBuildAggregates(); dashRenderAll(); }
       dashUpdateSidebarBadges();
     }, function(err){ console.error('refreshDashboardProductsOnly error:', JSON.stringify(err)); });
+  }
+
+
+  function dashRefreshDelta(){
+    if(DASH.loading) return;
+    if(!DASH.loaded || !DASH.lastSync){ dashLoad(); return; }
+    DASH.loading=true;
+    callApi('getDashboardDelta',[DASH.lastSync],function(data){
+      DASH.loading=false;data=data||{};
+      if(data.fullRefresh||data.success===false){dashLoad();return;}
+      var seen={};
+      DASH.movements.forEach(function(m){seen[m.id||[m.docNo,m.productCode,m.type,m.timestamp].join('|')]=true;});
+      (data.movements||[]).forEach(function(m){
+        var key=m.id||[m.docNo,m.productCode,m.type,m.timestamp].join('|');if(seen[key])return;seen[key]=true;m.ts=new Date(m.timestamp);DASH.movements.push(m);
+      });
+      var byCode={};DASH.products.forEach(function(p){byCode[p.productCode]=p;});
+      (data.productStocks||[]).forEach(function(x){var p=byCode[x.productCode];if(!p)return;p.currentStock=num(x.currentStock);p.minStock=num(x.minStock);p.costPrice=num(x.costPrice);p.sellingPrice=num(x.sellingPrice);});
+      Object.keys(data.poVendorMap||{}).forEach(function(k){DASH.poVendorMap[k]=data.poVendorMap[k];});
+      DASH.lastSync=data.serverTime||DASH.lastSync;DASH.lastLoad=Date.now();allProducts=DASH.products;
+      document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
+      dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();
+    },function(err){DASH.loading=false;console.error('dashRefreshDelta error:',JSON.stringify(err));dashLoad();});
   }
 
   function dashUpdateSidebarBadges(){

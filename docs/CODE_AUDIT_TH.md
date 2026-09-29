@@ -66,3 +66,20 @@ Mobile navigation สร้างจากเงื่อนไข role ชุ�
 - Product Images รองรับสูงสุด 3 รูป พร้อม Primary Image และ backward compatibility ผ่าน `Image_Url`/`Drive_File_Id`
 - รูปสินค้าใช้ `object-fit: contain` เพื่อแสดงภาพครบโดยไม่ crop และ Master Product คลิกรูปเพื่อเปิดภาพใหญ่ได้
 - client resize เป็น JPEG สูงสุด 1600px และ server ตรวจ JPEG signature/ขนาดก่อนบันทึก
+
+
+## Phase 4 — UI Bug Fix + Read/Write Optimization
+
+- แก้ Product Gallery contract: `getAllProducts()` ส่ง `imageUrl` เป็น string จริง พร้อม `imageUrls` และ `primaryImageIndex`; หน้า Edit โหลดรูป 1–3 ครบและ cache ฝั่ง client รองรับทั้ง `id`/`productCode`.
+- `Master_Products` และ `Master_Customers` เข้าสู่ cache layer แบบ chunked; collection ใหญ่ไม่ผูกกับ CacheService key เดียว และทุก write สำคัญมี explicit invalidation.
+- `fetchCollectionsParallel()` ใช้ first page ที่อ่านมาแล้วต่อ pagination จึงไม่อ่าน 300 records หน้าแรกซ้ำอีกครั้ง.
+- การตรวจ Product Name / Part Number / Barcode ใช้ targeted equality query; การสร้าง Barcode ไม่ scan Master Products ทั้ง collection.
+- Auto ID ใช้ Script Properties + Script Lock หลัง seed ครั้งแรก; ไม่ scan collection เพื่อหาเลขสูงสุดทุกครั้งที่สร้าง record ใหม่. Firestore create ยังเป็นด่าน uniqueness และจะ reseed เมื่อเกิด collision.
+- Dashboard bootstrap อ่าน Stock Movements เฉพาะช่วงปีปัจจุบันย้อนหลัง 4 ปีตาม UI; PO vendor map batchGet เฉพาะ PO ที่อ้างจาก movements แทนการอ่านรายการ PO สูงสุด 1,000 เอกสารทุกครั้ง.
+- หลังตัด/รับสต๊อก Parent shell ใช้ `getDashboardDelta()` เพื่ออ่านเฉพาะ movement ใหม่และสินค้าที่ได้รับผลกระทบ แทน bootstrap 5 ปีเต็มซ้ำ.
+- `receiveGoods()` รวม stock increment + Stock Movement + PO receipt/status ใน Firestore commit เดียวพร้อม update-time precondition ป้องกันกรณี stock ถูกเพิ่มแล้วแต่ PO update ล้มเหลว.
+- Searchable Select ใช้ global click listener เพียงชุดเดียว, observer เฉพาะ node ที่เพิ่ม, render สูงสุด 200 options ต่อรอบ, popup fixed ไม่ถูก modal scroll ตัด และ sync label เมื่อ code กำหนด `.value` โดยตรง.
+
+### Remaining scale ceiling
+
+Dashboard ยังต้องอ่าน raw movements ใน reporting horizon ตอน initial bootstrap. หากปริมาณจริงขึ้นถึงหลายแสน/ล้าน movements ภายใน 5 ปี ขั้นถัดไปควรใช้ daily/monthly aggregate documents และ backfill ที่ควบคุมได้; Phase นี้ยังไม่เปลี่ยน schema หรือ migrate ข้อมูลย้อนหลัง.
