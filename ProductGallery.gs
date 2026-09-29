@@ -88,8 +88,11 @@ function productGallerySave_(productCode, images) {
   else deleteProductImageDoc_(productCode);
 
   try {
-    clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
-    if (typeof p0InvalidateProducts_ === 'function') p0InvalidateProducts_();
+    if (typeof p0InvalidateGalleryData_ === 'function') p0InvalidateGalleryData_();
+    else {
+      clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
+      if (typeof p0CacheRemove_ === 'function' && typeof P0_PRODUCT_CACHE_KEY !== 'undefined') p0CacheRemove_(P0_PRODUCT_CACHE_KEY);
+    }
   } catch (e) {
     console.error('productGallerySave_ cache invalidation:', e);
   }
