@@ -118,15 +118,15 @@ function getProductImageFolder_() {
   return folder;
 }
 
-function saveProductImageDoc_(productCode, imageUrl, driveFileId) {
+function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex) {
+  imageUrls = Array.isArray(imageUrls) ? imageUrls.slice(0, 3) : (imageUrl ? [imageUrl] : []);
+  driveFileIds = Array.isArray(driveFileIds) ? driveFileIds.slice(0, 3) : (driveFileId ? [driveFileId] : []);
+  primaryIndex = Math.max(0, Math.min(parseInt(primaryIndex, 10) || 0, Math.max(0, imageUrls.length - 1)));
+  imageUrl = imageUrls[primaryIndex] || imageUrls[0] || "";
+  driveFileId = driveFileIds[primaryIndex] || driveFileIds[0] || "";
   var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
           + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
-  UrlFetchApp.fetch(url, {
-    method             : "patch",
-    headers            : getAuthHeader(),
-    payload            : JSON.stringify({ fields: mapToFirestoreFields({ Image_Url: imageUrl, Drive_File_Id: driveFileId }) }),
-    muteHttpExceptions : true
-  });
+  UrlFetchApp.fetch(url, {method:"patch",headers:getAuthHeader(),payload:JSON.stringify({fields:mapToFirestoreFields({Image_Url:imageUrl,Drive_File_Id:driveFileId,Image_Urls:imageUrls,Drive_File_Ids:driveFileIds,Primary_Index:primaryIndex})}),muteHttpExceptions:true});
   clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
 }
 
@@ -145,12 +145,12 @@ function getProductImageUrlMap_() {
   try {
     var docs = fetchCollectionDocsCached(PRODUCT_IMAGES_COLLECTION);
     docs.forEach(function (doc) {
-      var url = parseFirestoreValue((doc.fields || {}).Image_Url);
-      if (url) map[doc.id] = url;
+      var f=doc.fields||{}, urls=parseFirestoreValue(f.Image_Urls);
+      if(!Array.isArray(urls)||!urls.length){var legacy=parseFirestoreValue(f.Image_Url);urls=legacy?[legacy]:[];}
+      var pi=parseInt(parseFirestoreValue(f.Primary_Index),10)||0;pi=Math.max(0,Math.min(pi,Math.max(0,urls.length-1)));
+      if(urls.length)map[doc.id]={primary:urls[pi]||urls[0],urls:urls.slice(0,3),primaryIndex:pi};
     });
-  } catch (e) {
-    console.error("getProductImageUrlMap_ error:", e);
-  }
+  } catch(e){console.error("getProductImageUrlMap_ error:",e);}
   return map;
 }
 
@@ -172,51 +172,29 @@ function getProductImageUrlSingle_(productCode) {
 /**
  * ★ อัปโหลดรูปสินค้า (client ย่อขนาด+แปลงเป็น JPEG เป็น base64 มาให้แล้ว) — เก็บไฟล์จริงใน Google Drive
  */
-function uploadProductImage(productCode, base64Data) {
+function getProductImageDocData_(productCode) {
   try {
-    productCode = String(productCode || "").trim();
-    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า — กรุณาบันทึกสินค้าก่อน" };
-    if (!base64Data) return { success: false, message: "ไม่พบข้อมูลรูปภาพ" };
-
-    var bytes = Utilities.base64Decode(base64Data);
-    if (bytes.length > 5 * 1024 * 1024) {
-      return { success: false, message: "ไฟล์รูปใหญ่เกินไป (เกิน 5MB หลังย่อขนาดแล้ว)" };
-    }
-
-    var fileName = productCode + ".jpg";
-    var folder   = getProductImageFolder_();
-
-    // ลบไฟล์เก่าชื่อเดียวกันทิ้งก่อนเสมอ (ถ้ามี) กันไฟล์ซ้ำค้างอยู่ในโฟลเดอร์ทุกครั้งที่อัปโหลดทับ
-    var oldFiles = folder.getFilesByName(fileName);
-    while (oldFiles.hasNext()) { oldFiles.next().setTrashed(true); }
-
-    var blob = Utilities.newBlob(bytes, "image/jpeg", fileName);
-    var file = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-    var imageUrl = "https://lh3.googleusercontent.com/d/" + file.getId();
-    saveProductImageDoc_(productCode, imageUrl, file.getId());
-
-    return { success: true, message: "อัปโหลดรูปสำเร็จ", imageUrl: imageUrl };
-  } catch (e) {
-    return { success: false, message: e.message };
-  }
+    var url="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents/"+PRODUCT_IMAGES_COLLECTION+"/"+encodeURIComponent(productCode);
+    var res=UrlFetchApp.fetch(url,{method:"get",headers:getAuthHeader(),muteHttpExceptions:true});if(res.getResponseCode()!==200)return {urls:[],ids:[],primaryIndex:0};
+    var f=(JSON.parse(res.getContentText()).fields||{}),urls=parseFirestoreValue(f.Image_Urls),ids=parseFirestoreValue(f.Drive_File_Ids);
+    if(!Array.isArray(urls)||!urls.length){var u=parseFirestoreValue(f.Image_Url);urls=u?[u]:[];}if(!Array.isArray(ids)||!ids.length){var i=parseFirestoreValue(f.Drive_File_Id);ids=i?[i]:[];}
+    return {urls:urls.slice(0,3),ids:ids.slice(0,3),primaryIndex:parseInt(parseFirestoreValue(f.Primary_Index),10)||0};
+  }catch(e){return {urls:[],ids:[],primaryIndex:0};}
 }
-
-function deleteProductImage(productCode) {
+function uploadProductImage(productCode,base64Data,slot){
   try {
-    productCode = String(productCode || "").trim();
-    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
-
-    var folder = getProductImageFolder_();
-    var files  = folder.getFilesByName(productCode + ".jpg");
-    while (files.hasNext()) { files.next().setTrashed(true); }
-
-    deleteProductImageDoc_(productCode);
-    return { success: true, message: "ลบรูปเรียบร้อย" };
-  } catch (e) {
-    return { success: false, message: e.message };
-  }
+    productCode=String(productCode||"").trim();slot=Math.max(0,Math.min(parseInt(slot,10)||0,2));if(!productCode)return {success:false,message:"ไม่พบรหัสสินค้า"};if(!base64Data)return {success:false,message:"ไม่พบข้อมูลรูปภาพ"};
+    var bytes=Utilities.base64Decode(base64Data);if(bytes.length>5*1024*1024)return {success:false,message:"ไฟล์รูปใหญ่เกินไป"};if(!(bytes.length>3&&(bytes[0]&255)===255&&(bytes[1]&255)===216&&(bytes[2]&255)===255))return {success:false,message:"รูปหลังประมวลผลไม่ใช่ JPEG ที่ถูกต้อง"};
+    var cur=getProductImageDocData_(productCode),folder=getProductImageFolder_();if(cur.ids[slot]){try{DriveApp.getFileById(cur.ids[slot]).setTrashed(true);}catch(e){}}
+    var file=folder.createFile(Utilities.newBlob(bytes,"image/jpeg",productCode+"_"+(slot+1)+".jpg"));file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);var imageUrl="https://lh3.googleusercontent.com/d/"+file.getId();cur.urls[slot]=imageUrl;cur.ids[slot]=file.getId();
+    while(cur.urls.length&&!cur.urls[cur.urls.length-1])cur.urls.pop();while(cur.ids.length&&!cur.ids[cur.ids.length-1])cur.ids.pop();if(cur.primaryIndex>=cur.urls.length)cur.primaryIndex=0;saveProductImageDoc_(productCode,"","",cur.urls,cur.ids,cur.primaryIndex);return {success:true,imageUrl:imageUrl,imageUrls:cur.urls,primaryIndex:cur.primaryIndex,slot:slot};
+  }catch(e){return {success:false,message:e.message};}
+}
+function deleteProductImage(productCode,slot){
+  try {productCode=String(productCode||"").trim();if(!productCode)return {success:false,message:"ไม่พบรหัสสินค้า"};var cur=getProductImageDocData_(productCode);if(slot===undefined||slot===null||slot===''){cur.ids.forEach(function(id){try{DriveApp.getFileById(id).setTrashed(true);}catch(e){}});deleteProductImageDoc_(productCode);return {success:true,imageUrls:[]};}slot=Math.max(0,Math.min(parseInt(slot,10)||0,2));if(cur.ids[slot]){try{DriveApp.getFileById(cur.ids[slot]).setTrashed(true);}catch(e){}}cur.urls.splice(slot,1);cur.ids.splice(slot,1);if(!cur.urls.length){deleteProductImageDoc_(productCode);return {success:true,imageUrls:[]};}if(cur.primaryIndex===slot)cur.primaryIndex=0;else if(cur.primaryIndex>slot)cur.primaryIndex--;saveProductImageDoc_(productCode,"","",cur.urls,cur.ids,cur.primaryIndex);return {success:true,imageUrls:cur.urls,primaryIndex:cur.primaryIndex};}catch(e){return {success:false,message:e.message};}
+}
+function setPrimaryProductImage(productCode,slot){
+  try{var cur=getProductImageDocData_(String(productCode||"").trim());slot=Math.max(0,Math.min(parseInt(slot,10)||0,2));if(!cur.urls[slot])return {success:false,message:"ไม่พบรูป"};cur.primaryIndex=slot;saveProductImageDoc_(productCode,"","",cur.urls,cur.ids,slot);return {success:true,imageUrl:cur.urls[slot],imageUrls:cur.urls,primaryIndex:slot};}catch(e){return {success:false,message:e.message};}
 }
 
 // ==========================================
@@ -3295,6 +3273,7 @@ var API_REGISTRY = {
   saveProduct              : "staff",
   uploadProductImage       : "staff",
   deleteProductImage       : "staff",
+  setPrimaryProductImage   : "staff",
   generateProductBarcode   : "staff",
   // ★ FIX: saveMasterData ไม่เคยอยู่ใน registry นี้เลย — apiGateway ปฏิเสธทุกครั้งที่เรียก
   //   (Master_Brands.html และ Master_Categories.html เรียกฟังก์ชันนี้ตรงๆ ไม่ผ่าน saveBrand/saveCategory)
@@ -3375,6 +3354,7 @@ var API_FUNCTIONS = {
   saveProduct               : saveProduct,
   uploadProductImage        : uploadProductImage,
   deleteProductImage        : deleteProductImage,
+  setPrimaryProductImage    : setPrimaryProductImage,
   generateProductBarcode    : generateProductBarcode,
   saveMasterData            : saveMasterData,
   savePurchaseOrder         : savePurchaseOrder,
@@ -3428,6 +3408,7 @@ var ACTIVITY_ACTIONS = {
   saveProduct                 : { action: "save",   label: "บันทึกสินค้า" },
   uploadProductImage          : { action: "update", label: "อัปโหลดรูปสินค้า" },
   deleteProductImage          : { action: "delete", label: "ลบรูปสินค้า" },
+  setPrimaryProductImage      : { action: "update", label: "ตั้งรูปสินค้าหลัก" },
   generateProductBarcode      : { action: "update", label: "สร้างบาร์โค้ดสินค้า" },
   savePurchaseOrder           : { action: "save",   label: "บันทึกใบสั่งซื้อ" },
   saveTaxInvoice               : { action: "save",   label: "บันทึกใบกำกับภาษี" },

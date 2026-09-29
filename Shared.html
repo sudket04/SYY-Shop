@@ -53,6 +53,49 @@ function closeModal(id){
   if(el) el.classList.remove('active');
 }
 
+
+/* ── SYY Searchable Select ────────────────────────────────────────────────
+   Progressive enhancement for native <select>. Existing .value and change
+   handlers remain intact. Filtering is client-side and adds no Firestore read. */
+var SYYSelect=(function(){
+  var registry=new WeakMap();
+  function norm(v){return String(v==null?'':v).toLocaleLowerCase('th-TH').normalize('NFKC').trim();}
+  function enhance(sel){
+    if(!sel||registry.has(sel)||sel.multiple||sel.dataset.syyNoSearch==='true')return;
+    var wrap=document.createElement('div');wrap.className='syy-select';
+    var control=document.createElement('button');control.type='button';control.className='syy-select-control';
+    var label=document.createElement('span');label.className='syy-select-label';
+    var caret=document.createElement('span');caret.className='syy-select-caret';caret.textContent='⌄';
+    control.appendChild(label);control.appendChild(caret);
+    var panel=document.createElement('div');panel.className='syy-select-panel';
+    var search=document.createElement('input');search.type='search';search.className='syy-select-search';search.placeholder='ค้นหา...';search.autocomplete='off';
+    var list=document.createElement('div');list.className='syy-select-list';panel.appendChild(search);panel.appendChild(list);
+    sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);wrap.appendChild(panel);sel.classList.add('syy-select-native');
+    function sync(){var o=sel.options[sel.selectedIndex];label.textContent=o?o.text:'เลือก...';control.disabled=sel.disabled;}
+    function render(q){
+      var nq=norm(q),frag=document.createDocumentFragment(),shown=0;
+      Array.from(sel.options).forEach(function(o,i){
+        if(o.disabled&&!o.value)return;
+        if(nq&&norm(o.text).indexOf(nq)<0&&norm(o.value).indexOf(nq)<0)return;
+        var b=document.createElement('button');b.type='button';b.className='syy-select-option'+(o.selected?' selected':'');b.textContent=o.text;b.dataset.index=i;
+        b.onclick=function(){sel.selectedIndex=i;sel.dispatchEvent(new Event('change',{bubbles:true}));sync();close();};frag.appendChild(b);shown++;
+      });
+      list.innerHTML='';if(!shown){var e=document.createElement('div');e.className='syy-select-empty';e.textContent='ไม่พบข้อมูล';list.appendChild(e);}else list.appendChild(frag);
+    }
+    function open(){if(control.disabled)return;document.querySelectorAll('.syy-select.open').forEach(function(x){if(x!==wrap)x.classList.remove('open');});wrap.classList.add('open');search.value='';render('');setTimeout(function(){search.focus();},0);}
+    function close(){wrap.classList.remove('open');}
+    control.onclick=function(){wrap.classList.contains('open')?close():open();};search.oninput=function(){render(search.value);};
+    function keynav(e){var opts=Array.from(list.querySelectorAll('.syy-select-option')),idx=opts.indexOf(document.activeElement);if(e.key==='ArrowDown'){e.preventDefault();(opts[Math.min(idx+1,opts.length-1)]||opts[0])?.focus();}if(e.key==='ArrowUp'){e.preventDefault();(opts[Math.max(idx-1,0)]||opts[opts.length-1])?.focus();}if(e.key==='Escape'){e.preventDefault();close();control.focus();}}
+    search.onkeydown=keynav;list.onkeydown=keynav;document.addEventListener('click',function(e){if(!wrap.contains(e.target))close();});
+    new MutationObserver(function(){sync();if(wrap.classList.contains('open'))render(search.value);}).observe(sel,{childList:true,subtree:true,attributes:true});
+    sel.addEventListener('change',sync);registry.set(sel,{sync:sync});sync();
+  }
+  function init(root){(root||document).querySelectorAll('select').forEach(enhance);}
+  function refresh(root){init(root);(root||document).querySelectorAll('select').forEach(function(s){var x=registry.get(s);if(x)x.sync();});}
+  return {init:init,refresh:refresh,enhance:enhance};
+})();
+document.addEventListener('DOMContentLoaded',function(){SYYSelect.init(document);new MutationObserver(function(m){if(m.some(function(x){return x.addedNodes&&x.addedNodes.length;}))SYYSelect.init(document);}).observe(document.documentElement,{childList:true,subtree:true});});
+
 /* ── Skeleton / Empty state ── */
 function skeletonRows(cols,rows){
   var out='';

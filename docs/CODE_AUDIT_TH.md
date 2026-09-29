@@ -57,3 +57,12 @@ Mobile navigation สร้างจากเงื่อนไข role ชุ�
 - Global search, Excel-style filter และ sort ยังใช้ข้อมูลทุก field แม้ field ถูกซ่อน
 - Export CSV ส่งออกทุก field ที่ใช้งาน ไม่ขึ้นกับ visible columns และป้องกัน spreadsheet formula injection เบื้องต้น
 - การเปลี่ยน view, preset, page size และ export ทำจาก cache ฝั่ง client: Firestore reads เพิ่ม 0, writes เพิ่ม 0 และไม่มีการเพิ่ม `Ui_Preferences` หรือแก้ schema
+
+
+## Phase 3 — Searchable Dropdown และ Product Gallery
+
+- native select ทุกหน้าถูก progressive-enhance เป็น searchable select จาก `Shared.html`; ค่าเดิมและ change handler เดิมยังเป็น source of truth
+- การค้นหา dropdown ทำฝั่ง client จึงไม่เพิ่ม Firestore read ต่อ keystroke
+- Product Images รองรับสูงสุด 3 รูป พร้อม Primary Image และ backward compatibility ผ่าน `Image_Url`/`Drive_File_Id`
+- รูปสินค้าใช้ `object-fit: contain` เพื่อแสดงภาพครบโดยไม่ crop และ Master Product คลิกรูปเพื่อเปิดภาพใหญ่ได้
+- client resize เป็น JPEG สูงสุด 1600px และ server ตรวจ JPEG signature/ขนาดก่อนบันทึก

@@ -216,29 +216,13 @@
             </div>
           </div>
 
-          <div class="section-label">รูปสินค้า</div>
-          <div class="form-grid">
-            <div class="form-group full">
-              <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
-                <div id="imgPreviewBox" style="width:110px;height:110px;border:1px dashed #cbd5e1;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--bg);flex-shrink:0">
-                  <span style="font-size:28px;color:var(--faint)">📦</span>
-                </div>
-                <div style="flex:1;min-width:180px">
-                  <input type="file" id="inp_imageFile" accept="image/*" style="display:none" onchange="onProductImageSelected(this)">
-                  <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button type="button" class="btn btn-ghost" id="btnPickImage" onclick="document.getElementById('inp_imageFile').click()">🖼️ เลือกรูป</button>
-                    <button type="button" class="btn btn-ghost" id="btnDeleteImage" style="display:none" onclick="deleteProductImageNow()">🗑️ ลบรูป</button>
-                  </div>
-                  <div id="imgUploadProgress" style="display:none;margin-top:8px">
-                    <div class="img-upload-progress-track"><div class="img-upload-progress-bar"></div></div>
-                    <div style="font-size:11px;color:var(--faint);margin-top:4px">กำลังอัปโหลดรูปภาพ...</div>
-                  </div>
-                  <div class="field-hint" id="imageHint">บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้ (ต้องมีรหัสสินค้าก่อน)</div>
-                </div>
-              </div>
-            </div>
+          <div class="section-label">รูปสินค้า (สูงสุด 3 รูป)</div>
+          <div class="form-group full">
+            <div id="productImageSlots" style="display:grid;grid-template-columns:repeat(3,minmax(90px,1fr));gap:10px"></div>
+            <input type="file" id="inp_imageFile" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onProductImageSelected(this)">
+            <div id="imgUploadProgress" style="display:none;margin-top:8px"><div class="img-upload-progress-track"><div class="img-upload-progress-bar"></div></div><div style="font-size:11px;color:var(--faint);margin-top:4px">กำลังประมวลผลและอัปโหลดรูป...</div></div>
+            <div class="field-hint" id="imageHint">บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้ · JPG/PNG/WebP · ต้นฉบับไม่เกิน 5MB</div>
           </div>
-
           <div class="section-label">สถานะ</div>
           <div class="form-grid">
             <div class="form-group full">
@@ -781,7 +765,7 @@
 
       var codeKey = item.id || item.productCode;
       var imgCell = item.imageUrl
-        ? '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" style="width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--line)" onerror="prodImgFallback(this)">'
+        ? '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" style="width:36px;height:36px;object-fit:contain;background:#fff;border-radius:6px;border:1px solid var(--line)" onerror="prodImgFallback(this)">'
         : '<span style="font-size:16px;color:var(--faint)">📦</span>';
 
       var barcodeBadge = !item.barcode
@@ -873,7 +857,7 @@
     selectedCarIds = [];
     renderCarChips();
     renderCarDropdownList('');
-    updateImageSectionForEdit(null, '');
+    updateImageSectionForEdit(null, '', [], 0);
     updateBarcodeGenButton();
 
     document.getElementById('modalTitle').innerText   = '🛒 เพิ่มข้อมูลสินค้า';
@@ -927,7 +911,7 @@
 
     document.getElementById('modalAlert').style.display = 'none';
     document.getElementById('carDropdownList').classList.remove('show');
-    updateImageSectionForEdit(null, '');
+    updateImageSectionForEdit(null, '', [], 0);
 
     var btn = document.getElementById('modalBtnSave');
     btn.disabled = false; btn.innerText = '💾 บันทึก';
@@ -982,7 +966,7 @@
             document.getElementById('modalDocId').value = res.id;
             document.getElementById('modalTitle').innerText = '✏️ แก้ไขข้อมูลสินค้า (' + res.id + ')';
             document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
-            updateImageSectionForEdit(res.id, '');
+            updateImageSectionForEdit(res.id, '', [], 0);
             updateBarcodeGenButton();
             alertEl.innerText += ' — ตอนนี้เพิ่มรูปสินค้า/สร้างบาร์โค้ดได้แล้ว';
           } else {
@@ -1002,36 +986,19 @@
   }
 
   // ==========================================
-  // รูปสินค้า — ย่อขนาด+แปลงเป็น JPEG ฝั่ง browser ก่อนส่งขึ้น Firebase Storage
-  //   (ต้องมีรหัสสินค้าก่อน จึงอัปโหลดได้ — path คงที่ product-images/{รหัส}.jpg บน server)
+  // รูปสินค้า — สูงสุด 3 รูป, แสดงเต็มภาพโดยไม่ crop
   // ==========================================
-  var PROD_IMG_MAX_DIM = 900, PROD_IMG_QUALITY = 0.82;
-
-  function updateImageSectionForEdit(docId, imageUrl) {
-    document.getElementById('btnPickImage').disabled = !docId;
-    document.getElementById('imageHint').innerText = docId
-      ? 'ไฟล์ JPG/PNG ไม่เกิน 5MB — ระบบจะย่อขนาดให้อัตโนมัติก่อนอัปโหลด'
-      : 'บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้ (ต้องมีรหัสสินค้าก่อน)';
-    if (docId && imageUrl) showImagePreview(imageUrl);
-    else resetImagePreview();
-  }
-
-  function resetImagePreview() {
-    document.getElementById('imgPreviewBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
-    document.getElementById('btnDeleteImage').style.display = 'none';
-    document.getElementById('inp_imageFile').value = '';
-  }
-
-  function showImagePreview(url) {
-    document.getElementById('imgPreviewBox').innerHTML =
-      '<img src="' + esc(url) + '" style="width:100%;height:100%;object-fit:cover" onerror="prodModalImgFallback()">';
-    document.getElementById('btnDeleteImage').style.display = '';
-  }
-
-  function prodModalImgFallback() {
-    document.getElementById('imgPreviewBox').innerHTML = '<span style="font-size:28px;color:var(--faint)">📦</span>';
-    document.getElementById('btnDeleteImage').style.display = 'none';
-  }
+  var PROD_IMG_MAX_DIM=1600,PROD_IMG_QUALITY=0.82;
+  var productImageUrls=[],productPrimaryImageIndex=0,pendingImageSlot=0;
+  function updateImageSectionForEdit(docId,imageUrl,imageUrls,primaryIndex){productImageUrls=Array.isArray(imageUrls)&&imageUrls.length?imageUrls.slice(0,3):(imageUrl?[imageUrl]:[]);productPrimaryImageIndex=Math.max(0,Math.min(parseInt(primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));document.getElementById('imageHint').innerText=docId?'เพิ่มได้สูงสุด 3 รูป · คลิกรูปเพื่อขยาย · รูปหลักใช้ในตารางและหน้าค้นหา':'บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้';renderProductImageSlots(docId);}
+  function renderProductImageSlots(docId){var box=document.getElementById('productImageSlots');if(!box)return;box.innerHTML=[0,1,2].map(function(i){var url=productImageUrls[i]||'',main=url&&i===productPrimaryImageIndex;return '<div style="border:1px solid var(--line);border-radius:10px;padding:7px;background:#fff"><div class="product-image-frame" style="height:120px">'+(url?'<img class="product-image-clickable" src="'+esc(url)+'" onclick="openProductImageLightbox('+i+')">':'<button type="button" class="btn btn-ghost" style="width:100%;height:100%;border:0" '+(!docId?'disabled':'')+' onclick="pickProductImage('+i+')">+ รูป '+(i+1)+'</button>')+'</div>'+(url?'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px"><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="pickProductImage('+i+')">เปลี่ยน</button><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="deleteProductImageNow('+i+')">ลบ</button>'+(main?'<span class="badge badge-ok">รูปหลัก</span>':'<button type="button" class="btn btn-soft" style="padding:4px 7px;min-height:28px" onclick="setPrimaryProductImageNow('+i+')">ตั้งรูปหลัก</button>')+'</div>':'')+'</div>';}).join('');}
+  function pickProductImage(slot){if(!editingDocId){swyWarning('บันทึกสินค้าก่อน');return;}pendingImageSlot=slot;var i=document.getElementById('inp_imageFile');i.value='';i.click();}
+  function onProductImageSelected(input){var file=input.files&&input.files[0];if(!file)return;if(!editingDocId){swyWarning('บันทึกสินค้าก่อน');input.value='';return;}if(!/^image\/(jpeg|png|webp)$/i.test(file.type)){swyWarning('ไฟล์ไม่ถูกต้อง','รองรับ JPG, PNG และ WebP เท่านั้น');input.value='';return;}if(file.size>5*1024*1024){swyWarning('ไฟล์ใหญ่เกินไป','ไฟล์ต้นฉบับต้องไม่เกิน 5MB');input.value='';return;}var reader=new FileReader();reader.onload=function(e){var img=new Image();img.onload=function(){var w=img.naturalWidth,h=img.naturalHeight;if(w<100||h<100){swyWarning('รูปมีความละเอียดต่ำ','กรุณาใช้รูปอย่างน้อย 100×100 พิกเซล');return;}if(w>PROD_IMG_MAX_DIM||h>PROD_IMG_MAX_DIM){if(w>=h){h=Math.round(h*PROD_IMG_MAX_DIM/w);w=PROD_IMG_MAX_DIM;}else{w=Math.round(w*PROD_IMG_MAX_DIM/h);h=PROD_IMG_MAX_DIM;}}var c=document.createElement('canvas');c.width=w;c.height=h;var ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.drawImage(img,0,0,w,h);uploadProductImageNow(c.toDataURL('image/jpeg',PROD_IMG_QUALITY).split(',')[1],pendingImageSlot);};img.onerror=function(){swyError('เปิดรูปไม่สำเร็จ');};img.src=e.target.result;};reader.readAsDataURL(file);}
+  function uploadProductImageNow(base64,slot){var progress=document.getElementById('imgUploadProgress');progress.style.display='block';callApi('uploadProductImage',[editingDocId,base64,slot],function(res){progress.style.display='none';if(res&&res.success){productImageUrls=res.imageUrls||productImageUrls;productPrimaryImageIndex=res.primaryIndex||0;syncProductImageCache(res.imageUrl);renderProductImageSlots(editingDocId);toast('อัปโหลดรูปสำเร็จ');filterAndRenderTable();}else swyError('อัปโหลดไม่สำเร็จ',(res&&res.message)||'');},function(err){progress.style.display='none';swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));});}
+  function syncProductImageCache(primary){var c=productsCache.find(function(p){return p.id===editingDocId;});if(c){c.imageUrls=productImageUrls.slice();c.primaryImageIndex=productPrimaryImageIndex;c.imageUrl=primary||productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';}}
+  function deleteProductImageNow(slot){if(!editingDocId)return;swyConfirm({icon:'warning',title:'ลบรูปสินค้า?',confirmText:'ลบรูป',danger:true}).then(function(ok){if(!ok)return;callApi('deleteProductImage',[editingDocId,slot],function(res){if(res&&res.success){productImageUrls=res.imageUrls||[];productPrimaryImageIndex=res.primaryIndex||0;syncProductImageCache();renderProductImageSlots(editingDocId);filterAndRenderTable();toast('ลบรูปเรียบร้อย');}else swyError('ลบไม่สำเร็จ',(res&&res.message)||'');});});}
+  function setPrimaryProductImageNow(slot){if(!editingDocId)return;callApi('setPrimaryProductImage',[editingDocId,slot],function(res){if(res&&res.success){productPrimaryImageIndex=res.primaryIndex||0;productImageUrls=res.imageUrls||productImageUrls;syncProductImageCache(res.imageUrl);renderProductImageSlots(editingDocId);filterAndRenderTable();toast('ตั้งรูปหลักแล้ว');}else swyError('ตั้งรูปหลักไม่สำเร็จ',(res&&res.message)||'');});}
+  function openProductImageLightbox(index){if(!productImageUrls[index])return;var html='<div style="display:flex;align-items:center;justify-content:center;min-height:50vh"><img src="'+esc(productImageUrls[index])+'" style="max-width:90vw;max-height:72vh;object-fit:contain"></div><div style="margin-top:8px">รูป '+(index+1)+' / '+productImageUrls.length+'</div>';Swal.fire({html:html,width:'min(960px,96vw)',showConfirmButton:false,showCloseButton:true,allowOutsideClick:true,allowEscapeKey:true});}
 
   // ==========================================
   // สร้างบาร์โค้ดจากฟอร์มแก้ไขสินค้าโดยตรง (ย้ายมาจากหน้าดูรายละเอียดเดิม)
