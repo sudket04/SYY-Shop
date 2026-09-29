@@ -3,10 +3,16 @@
 // Keep high-frequency stock operations from evicting unrelated caches.
 // ============================================================
 
+function p0ProductImagesCollectionName_() {
+  return (typeof PRODUCT_IMAGES_COLLECTION !== 'undefined' && PRODUCT_IMAGES_COLLECTION)
+    ? PRODUCT_IMAGES_COLLECTION
+    : 'Product_Images';
+}
+
 function p0InvalidateProductDataOnly_(includeImageLookup) {
   try { p0CacheRemove_(P0_PRODUCT_CACHE_KEY); } catch (e) { console.error('p0 product cache invalidation:', e); }
   if (includeImageLookup) {
-    try { clearCollectionCache(PRODUCT_IMAGES_COLLECTION || 'Product_Images'); } catch (e2) { console.error('p0 image cache invalidation:', e2); }
+    try { clearCollectionCache(p0ProductImagesCollectionName_()); } catch (e2) { console.error('p0 image cache invalidation:', e2); }
   }
 }
 
