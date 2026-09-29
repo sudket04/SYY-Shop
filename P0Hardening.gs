@@ -3,12 +3,67 @@
 // Intercepts only gaps not already covered by P0Core.gs.
 // ============================================================
 
+function p0AuditWrite_(username, action, label, docId, success) {
+  try {
+    var now = new Date();
+    var id = 'P0LOG-' + Utilities.formatDate(now,'Asia/Bangkok','yyyyMMdd-HHmmss') + '-' + Utilities.getUuid().replace(/-/g,'').slice(0,8);
+    var url = 'https://firestore.googleapis.com/v1/projects/' + PROJECT_ID +
+      '/databases/(default)/documents/' + ACTIVITY_LOG_COLLECTION + '?documentId=' + encodeURIComponent(id);
+    UrlFetchApp.fetch(url, {
+      method:'post', headers:getAuthHeader(), muteHttpExceptions:true,
+      payload:JSON.stringify({ fields:mapToFirestoreFields({
+        Username:String(username||''), Action:String(action||''), Label:String(label||''),
+        DocId:String(docId||''), Success:success ? 'true' : 'false', Timestamp:now.toISOString()
+      }) })
+    });
+  } catch (e) { console.error('p0AuditWrite_:', e); }
+}
+
+function p0DeletePrimaryImageSecure_(token,userAgent,productCode) {
+  var auth=productGalleryAuth_(token,userAgent,true);
+  if(!auth.ok)return {success:false,message:auth.message};
+  var images=productGalleryRead_(String(productCode||'').trim());
+  if(!images.length)return productGalleryResult_(productCode,[],'ไม่มีรูปสินค้า');
+  return deleteProductGalleryImage(token,userAgent,productCode,images[0].id);
+}
+
 function p0GatewayV2(token, fnName, args, userAgent) {
   try {
     var session = getSession_(token, userAgent);
     if (!session) return { __authError:true, success:false, message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' };
     var a = Array.isArray(args) ? args : [];
     var result;
+
+    // Gallery/image operations route to the self-authorizing gallery layer.
+    // This avoids P0Core's compatibility mapper from scanning all Product_Images
+    // after every single image change.
+    if (fnName === 'getProductGallery') {
+      return getProductGallery(token,userAgent,a[0]);
+    }
+    if (fnName === 'uploadProductGalleryImage' || fnName === 'uploadProductImage') {
+      if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
+      result = uploadProductGalleryImage(token,userAgent,a[0],a[1]);
+      p0AuditWrite_(session.username,'uploadProductImage','อัปโหลดรูปสินค้า',a[0],!!(result&&result.success));
+      return result;
+    }
+    if (fnName === 'deleteProductGalleryImage') {
+      if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
+      result = deleteProductGalleryImage(token,userAgent,a[0],a[1]);
+      p0AuditWrite_(session.username,'deleteProductImage','ลบรูปสินค้า',a[0],!!(result&&result.success));
+      return result;
+    }
+    if (fnName === 'deleteProductImage') {
+      if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
+      result = p0DeletePrimaryImageSecure_(token,userAgent,a[0]);
+      p0AuditWrite_(session.username,'deleteProductImage','ลบรูปหลักสินค้า',a[0],!!(result&&result.success));
+      return result;
+    }
+    if (fnName === 'setProductGalleryPrimary') {
+      if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
+      result = setProductGalleryPrimary(token,userAgent,a[0],a[1]);
+      p0AuditWrite_(session.username,'setProductGalleryPrimary','เปลี่ยนรูปหลักสินค้า',a[0],!!(result&&result.success));
+      return result;
+    }
 
     if (fnName === 'receiveGoods') {
       if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
@@ -18,11 +73,15 @@ function p0GatewayV2(token, fnName, args, userAgent) {
     }
     if (fnName === 'adjustProductStock') {
       if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
-      return p0AdjustProductStock_(a[0] || {}, session.username);
+      result = p0AdjustProductStock_(a[0] || {}, session.username);
+      p0AuditWrite_(session.username,'adjustProductStock','ปรับยอดสต๊อก',(a[0]||{}).productCode,!!(result&&result.success));
+      return result;
     }
     if (fnName === 'createUserAccount') {
       if (!p0RoleAllowed_(session.role,'admin')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
-      return p0CreateUserAccount_(a[0],a[1],a[2]);
+      result = p0CreateUserAccount_(a[0],a[1],a[2]);
+      p0AuditWrite_(session.username,'createUserAccount','สร้างบัญชีผู้ใช้',(result&&result.id)||'',!!(result&&result.success));
+      return result;
     }
     return p0Gateway(token,fnName,a,userAgent);
   } catch (e) {
