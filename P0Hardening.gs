@@ -5,6 +5,16 @@
 
 var P0_TXN_REQUEST_COLLECTION = 'P0_Transaction_Requests';
 var P0_ATOMIC_MAX_PRODUCT_LINES = 249; // 2 writes/product + up to 2 control writes <= Firestore 500 writes
+var P0_SAFE_CACHE_CHUNK_CHARS = 18000; // conservative for Thai/UTF-8 + JSON escaping under CacheService 100KB/key
+
+function p0TuneRuntime_() {
+  // P0Core originally chunks by JavaScript character count. CacheService limits are byte based;
+  // Thai and emoji can use multiple UTF-8 bytes, so 45k chars can silently exceed one cache key.
+  if (typeof P0_CACHE_CHUNK_CHARS !== 'undefined') {
+    var current = parseInt(P0_CACHE_CHUNK_CHARS,10) || P0_SAFE_CACHE_CHUNK_CHARS;
+    P0_CACHE_CHUNK_CHARS = Math.min(current,P0_SAFE_CACHE_CHUNK_CHARS);
+  }
+}
 
 function p0AuditWrite_(username, action, label, docId, success) {
   try {
@@ -41,6 +51,7 @@ function p0DigestShort_(raw, length) {
 
 function p0GatewayV2(token, fnName, args, userAgent) {
   try {
+    p0TuneRuntime_();
     var session = getSession_(token, userAgent);
     if (!session) return { __authError:true, success:false, message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่' };
     var a = Array.isArray(args) ? args : [];
