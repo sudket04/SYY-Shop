@@ -368,22 +368,22 @@ function collectionCacheBaseKey_(collectionName) {
 }
 
 function splitCollectionCacheChunks_(docs) {
-  var chunks = [], current = [];
-  (docs || []).forEach(function(doc) {
-    var candidate = current.concat([doc]);
-    var json = JSON.stringify(candidate);
-    var bytes = Utilities.newBlob(json).getBytes().length;
-    if (current.length && bytes > CACHE_CHUNK_MAX_BYTES) {
-      chunks.push(JSON.stringify(current));
-      current = [doc];
-    } else {
-      current = candidate;
+  docs = docs || [];
+  if (!docs.length) return ["[]"];
+  var chunks = [], parts = [], bytes = 2; // [ ]
+  for (var i = 0; i < docs.length; i++) {
+    var piece = JSON.stringify(docs[i]);
+    var pieceBytes = Utilities.newBlob(piece).getBytes().length;
+    if (pieceBytes + 2 > 95000) return null; // single document too large for CacheService
+    var separatorBytes = parts.length ? 1 : 0;
+    if (parts.length && bytes + separatorBytes + pieceBytes > CACHE_CHUNK_MAX_BYTES) {
+      chunks.push("[" + parts.join(",") + "]");
+      parts = []; bytes = 2; separatorBytes = 0;
     }
-  });
-  if (current.length || !(docs || []).length) chunks.push(JSON.stringify(current));
-  for (var i = 0; i < chunks.length; i++) {
-    if (Utilities.newBlob(chunks[i]).getBytes().length > 95000) return null;
+    parts.push(piece);
+    bytes += separatorBytes + pieceBytes;
   }
+  if (parts.length) chunks.push("[" + parts.join(",") + "]");
   return chunks;
 }
 
@@ -2967,7 +2967,10 @@ function receiveGoods(d, callerUsername) {
       var poItems = [];
       try { poItems = JSON.parse(parseFirestoreValue(f.Items_JSON) || "[]"); } catch (e) { poItems = []; }
       var receiveMap = {};
-      reqItems.forEach(function(it) { receiveMap[it.productCode] = parseFloat(it.qtyReceivedNow || 0); });
+      reqItems.forEach(function(it) {
+        var code = String(it.productCode || "");
+        receiveMap[code] = (receiveMap[code] || 0) + (parseFloat(it.qtyReceivedNow || 0) || 0);
+      });
       var allComplete = true, receiptLineItems = [], stockAdditions = [];
       poItems = poItems.map(function(it) {
         var already = parseFloat(it.receivedQty || 0), ordered = parseFloat(it.qty || 0);
@@ -2996,9 +2999,16 @@ function receiveGoods(d, callerUsername) {
 
       var receipts = [];
       try { receipts = JSON.parse(parseFirestoreValue(f.Receipts_JSON) || "[]"); } catch (e2) { receipts = []; }
+      var effectiveDeliveryNote = allComplete ? "" : String(d.deliveryNoteNo || "").trim();
+      var receiptExists = receipts.some(function(r) {
+        return String(r.invoiceNo || "").trim() === String(d.invoiceNo || "").trim()
+          && String(r.date || "") === String(d.receiptDate || "")
+          && String(r.deliveryNoteNo || "").trim() === effectiveDeliveryNote;
+      });
+      if (receiptExists) return fail("รายการรับสินค้านี้ถูกบันทึกแล้ว กรุณาตรวจสอบประวัติการรับสินค้า");
       receipts.push({
         date:d.receiptDate, invoiceNo:d.invoiceNo, receiverName:d.receiverName,
-        deliveryNoteNo:allComplete ? "" : String(d.deliveryNoteNo || ""),
+        deliveryNoteNo:effectiveDeliveryNote,
         isFinal:allComplete, items:receiptLineItems
       });
       var newStatus = allComplete ? "Received" : "PartiallyReceived";
@@ -4916,7 +4926,7 @@ function getDashboardDelta(sinceIso) {
   var since = String(sinceIso || "").trim();
   if (!since || isNaN(new Date(since).getTime())) return { success:false, fullRefresh:true, message:"sync watermark ไม่ถูกต้อง" };
   var serverTime = new Date().toISOString();
-  var movements = queryDashboardMovementsRange_(since, serverTime, true);
+  var movements = queryDashboardMovementsRange_(since, serverTime, false);
   var codes = [], seen = {};
   movements.forEach(function(m) { if (m.productCode && !seen[m.productCode]) { seen[m.productCode]=true; codes.push(m.productCode); } });
   var stocks = getProductStockMap_(codes), productStocks = [];

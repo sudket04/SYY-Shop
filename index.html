@@ -742,7 +742,7 @@
 
   /* ═══════════════ Dashboard สต๊อก (real data, client-side aggregation) ═══════════════ */
   var DASH = {
-    loaded:false, loading:false, lastLoad:0, lastSync:'', products:[], movements:[], poVendorMap:{},
+    loaded:false, loading:false, pendingDelta:false, lastLoad:0, lastSync:'', products:[], movements:[], poVendorMap:{},
     byDay:{}, byMonth:{}, byYear:{}, byProductMonth:{}, lastOut:{}, lastSale:{}, qty6mo:{}, health:null,
     gran:'m', year:(new Date()).getFullYear(), month:(new Date()).getMonth(), day:(new Date()).getDate(),
     tab:'low', deadRule:90, search:'', fCat:'', fBrand:'', fPart:'',
@@ -773,6 +773,7 @@
       dashBuildAggregates();
       dashUpdateSidebarBadges();
       dashRenderAll();
+      if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
     }, function(err){
       btnDone(btn);
       DASH.loading=false;
@@ -797,9 +798,9 @@
 
 
   function dashRefreshDelta(){
-    if(DASH.loading) return;
+    if(DASH.loading){DASH.pendingDelta=true;return;}
     if(!DASH.loaded || !DASH.lastSync){ dashLoad(); return; }
-    DASH.loading=true;
+    DASH.loading=true;DASH.pendingDelta=false;
     callApi('getDashboardDelta',[DASH.lastSync],function(data){
       DASH.loading=false;data=data||{};
       if(data.fullRefresh||data.success===false){dashLoad();return;}
@@ -808,12 +809,14 @@
       (data.movements||[]).forEach(function(m){
         var key=m.id||[m.docNo,m.productCode,m.type,m.timestamp].join('|');if(seen[key])return;seen[key]=true;m.ts=new Date(m.timestamp);DASH.movements.push(m);
       });
+      DASH.movements.sort(function(a,b){return b.ts-a.ts;});
       var byCode={};DASH.products.forEach(function(p){byCode[p.productCode]=p;});
       (data.productStocks||[]).forEach(function(x){var p=byCode[x.productCode];if(!p)return;p.currentStock=num(x.currentStock);p.minStock=num(x.minStock);p.costPrice=num(x.costPrice);p.sellingPrice=num(x.sellingPrice);});
       Object.keys(data.poVendorMap||{}).forEach(function(k){DASH.poVendorMap[k]=data.poVendorMap[k];});
       DASH.lastSync=data.serverTime||DASH.lastSync;DASH.lastLoad=Date.now();allProducts=DASH.products;
       document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
       dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();
+      if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
     },function(err){DASH.loading=false;console.error('dashRefreshDelta error:',JSON.stringify(err));dashLoad();});
   }
 
