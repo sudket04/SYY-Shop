@@ -1,7 +1,8 @@
 // ============================================================
 // SYY Shop P0 Fast Path
-// Critical write endpoints that return a single affected product without
+// Critical write helpers that return a single affected product without
 // re-reading the whole Product_Images collection.
+// Public UI traffic continues through p0GatewayV2 only.
 // ============================================================
 
 function p0FastProduct_(productCode) {
@@ -54,25 +55,4 @@ function p0AdjustProductStockFast_(d,callerUsername){
     Utilities.sleep(100*attempt);
   }
   return p0Fail_('ปรับยอดไม่สำเร็จ กรุณาลองใหม่');
-}
-
-function p0GatewayFast(token, fnName, args, userAgent) {
-  try {
-    var session=getSession_(token,userAgent);
-    if(!session)return {__authError:true,success:false,message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่'};
-    var a=Array.isArray(args)?args:[],result;
-    if(fnName==='saveProduct'){
-      if(!p0RoleAllowed_(session.role,'staff'))return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
-      result=p0SaveProductFast_(a[0]||{});
-      if(ACTIVITY_ACTIONS&&ACTIVITY_ACTIONS.saveProduct)logActivity_(session.username,'saveProduct',a,result);
-      return result;
-    }
-    if(fnName==='adjustProductStock'){
-      if(!p0RoleAllowed_(session.role,'staff'))return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
-      result=p0AdjustProductStockFast_(a[0]||{},session.username);
-      p0AuditWrite_(session.username,'adjustProductStock','ปรับยอดสต๊อก',(a[0]||{}).productCode,!!(result&&result.success));
-      return result;
-    }
-    return p0GatewayV2(token,fnName,a,userAgent);
-  }catch(e){console.error('p0GatewayFast ['+fnName+']:',e);return p0Fail_(friendlyErrorMessage_(e),'ข้อผิดพลาด');}
 }
