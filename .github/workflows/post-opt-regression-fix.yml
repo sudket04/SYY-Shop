@@ -1,0 +1,53 @@
+name: Post optimization regression fixes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/post-opt-regression-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply post review fixes
+        run: python3 tools/post_opt_fix.py
+
+      - name: Verify
+        run: |
+          cp Code.gs /tmp/syy-code.js
+          node --check /tmp/syy-code.js
+          python3 - <<'PY'
+          from pathlib import Path
+          code=Path('Code.gs').read_text(encoding='utf-8')
+          idx=Path('index.html').read_text(encoding='utf-8')
+          styles=Path('Styles.html').read_text(encoding='utf-8')
+          assert 'piece = JSON.stringify(docs[i])' in code
+          assert 'queryDashboardMovementsRange_(since, serverTime, false)' in code
+          assert 'receiptExists' in code
+          assert 'receiveMap[code] = (receiveMap[code] || 0)' in code
+          assert 'pendingDelta:false' in idx
+          assert 'DASH.movements.sort(function(a,b){return b.ts-a.ts;})' in idx
+          assert idx.count('if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}') >= 2
+          count='.count{font-size:12.5px;color:var(--muted);font-weight:600;white-space:nowrap}'
+          assert styles.count(count)==1
+          print('Post-review invariants passed')
+          PY
+          git diff --check
+
+      - name: Commit to main
+        run: |
+          git config user.name 'OpenAI Codex'
+          git config user.email 'codex@openai.com'
+          git add Code.gs index.html Styles.html
+          git commit -m 'Harden dashboard delta and cache efficiency'
+          git push origin HEAD:main
