@@ -1,0 +1,41 @@
+name: Fix duplicate product image handlers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-duplicate-image-handlers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Apply cleanup
+        run: python3 tools/fix_duplicate_image_handlers.py
+      - name: Verify
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('Master_Products.html').read_text(encoding='utf-8')
+          for name in ['onProductImageSelected','uploadProductImageNow','deleteProductImageNow']:
+              assert s.count('function '+name+'(')==1, name
+          assert 'productImageSlots' in s
+          assert 'setPrimaryProductImageNow' in s
+          print('Image handler uniqueness checks passed')
+          PY
+          git diff --check
+      - name: Commit to main
+        run: |
+          git config user.name 'OpenAI Codex'
+          git config user.email 'codex@openai.com'
+          git add Master_Products.html
+          git commit -m 'Fix duplicate product image handlers'
+          git push origin HEAD:main
