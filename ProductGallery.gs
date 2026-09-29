@@ -81,8 +81,6 @@ function productGallerySave_(productCode, images) {
   if (primary) saveProductImageDoc_(productCode, primary.url, primary.fileId || '');
   else deleteProductImageDoc_(productCode);
 
-  // P0: Product_Images is the compatibility source used by Product/Dashboard.
-  // Invalidate both legacy and P0 product caches whenever primary/gallery changes.
   try {
     clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
     if (typeof p0InvalidateProducts_ === 'function') p0InvalidateProducts_();
@@ -99,9 +97,9 @@ function productGalleryResult_(productCode, images, message) {
     imageUrl:(images && images.length) ? images[0].url : '',
     maxImages:PRODUCT_GALLERY_MAX_IMAGES
   };
-  try {
-    if (typeof p0GetProductMapped_ === 'function') out.product = p0GetProductMapped_(productCode);
-  } catch (ignore) {}
+  // P0 efficiency: map only this product. getProductById() point-reads Product + primary
+  // image and uses cached masters, instead of scanning Product_Images for every gallery change.
+  try { out.product = getProductById(productCode); } catch (ignore) {}
   return out;
 }
 
