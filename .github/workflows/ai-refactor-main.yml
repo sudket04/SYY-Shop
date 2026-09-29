@@ -1,0 +1,377 @@
+name: One-time SYY Shop UX refactor
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ai-refactor-main.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply searchable selects and 3-image gallery refactor
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def must_replace(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'Patch anchor not found: {label}')
+              return text.replace(old, new, 1)
+
+          # -----------------------------------------------------------------
+          # Shared.html — dependency-free searchable native-select enhancer
+          # -----------------------------------------------------------------
+          p = Path('Shared.html')
+          s = p.read_text(encoding='utf-8')
+          anchor = "function closeModal(id){\n  var el=document.getElementById(id);\n  if(el) el.classList.remove('active');\n}\n"
+          shared = r'''
+
+/* ── SYY Searchable Select ────────────────────────────────────────────────
+   Progressive enhancement for native <select>. Keeps the original select as
+   the source of truth, so existing .value reads and change handlers continue
+   to work. Search is 100% client-side: typing never creates Firestore reads. */
+var SYYSelect=(function(){
+  var registry=new WeakMap();
+  function norm(v){return String(v==null?'':v).toLocaleLowerCase('th-TH').normalize('NFKC').trim();}
+  function enhance(sel){
+    if(!sel || registry.has(sel) || sel.multiple || sel.dataset.syyNoSearch==='true') return;
+    var wrap=document.createElement('div'); wrap.className='syy-select';
+    var control=document.createElement('button'); control.type='button'; control.className='syy-select-control';
+    var label=document.createElement('span'); label.className='syy-select-label';
+    var caret=document.createElement('span'); caret.className='syy-select-caret'; caret.textContent='⌄';
+    control.appendChild(label); control.appendChild(caret);
+    var panel=document.createElement('div'); panel.className='syy-select-panel';
+    var search=document.createElement('input'); search.type='search'; search.className='syy-select-search'; search.placeholder='ค้นหา...'; search.autocomplete='off';
+    var list=document.createElement('div'); list.className='syy-select-list';
+    panel.appendChild(search); panel.appendChild(list);
+    sel.parentNode.insertBefore(wrap,sel); wrap.appendChild(sel); wrap.appendChild(control); wrap.appendChild(panel);
+    sel.classList.add('syy-select-native');
+    function sync(){
+      var o=sel.options[sel.selectedIndex]; label.textContent=o?o.text:'เลือก...'; control.disabled=sel.disabled;
+    }
+    function render(q){
+      var nq=norm(q), frag=document.createDocumentFragment(), shown=0;
+      Array.from(sel.options).forEach(function(o,i){
+        if(o.disabled && !o.value) return;
+        if(nq && norm(o.text).indexOf(nq)<0 && norm(o.value).indexOf(nq)<0) return;
+        var b=document.createElement('button'); b.type='button'; b.className='syy-select-option'+(o.selected?' selected':'');
+        b.textContent=o.text; b.dataset.index=i; b.setAttribute('role','option'); b.setAttribute('aria-selected',o.selected?'true':'false');
+        b.onclick=function(){ sel.selectedIndex=i; sel.dispatchEvent(new Event('change',{bubbles:true})); sync(); close(); };
+        frag.appendChild(b); shown++;
+      });
+      list.innerHTML='';
+      if(!shown){var e=document.createElement('div');e.className='syy-select-empty';e.textContent='ไม่พบข้อมูล';list.appendChild(e);} else list.appendChild(frag);
+    }
+    function open(){ if(control.disabled)return; document.querySelectorAll('.syy-select.open').forEach(function(x){if(x!==wrap)x.classList.remove('open');}); wrap.classList.add('open'); render(''); search.value=''; setTimeout(function(){search.focus();},0); }
+    function close(){wrap.classList.remove('open');}
+    control.onclick=function(){wrap.classList.contains('open')?close():open();};
+    search.oninput=function(){render(search.value);};
+    search.onkeydown=function(e){
+      var opts=Array.from(list.querySelectorAll('.syy-select-option')), active=document.activeElement, idx=opts.indexOf(active);
+      if(e.key==='ArrowDown'){e.preventDefault();(opts[Math.min(idx+1,opts.length-1)]||opts[0])?.focus();}
+      if(e.key==='ArrowUp'){e.preventDefault();(opts[Math.max(idx-1,0)]||opts[opts.length-1])?.focus();}
+      if(e.key==='Escape'){e.preventDefault();close();control.focus();}
+    };
+    list.onkeydown=function(e){
+      var opts=Array.from(list.querySelectorAll('.syy-select-option')), idx=opts.indexOf(document.activeElement);
+      if(e.key==='ArrowDown'){e.preventDefault();(opts[Math.min(idx+1,opts.length-1)]||opts[0])?.focus();}
+      if(e.key==='ArrowUp'){e.preventDefault();(opts[Math.max(idx-1,0)]||opts[opts.length-1])?.focus();}
+      if(e.key==='Escape'){e.preventDefault();close();control.focus();}
+    };
+    document.addEventListener('click',function(e){if(!wrap.contains(e.target))close();});
+    new MutationObserver(function(){sync();if(wrap.classList.contains('open'))render(search.value);}).observe(sel,{childList:true,subtree:true,attributes:true});
+    sel.addEventListener('change',sync); registry.set(sel,{sync:sync,render:render}); sync();
+  }
+  function init(root){(root||document).querySelectorAll('select').forEach(enhance);}
+  function refresh(root){init(root);(root||document).querySelectorAll('select').forEach(function(s){var x=registry.get(s);if(x)x.sync();});}
+  return {init:init,refresh:refresh,enhance:enhance};
+})();
+
+document.addEventListener('DOMContentLoaded',function(){
+  SYYSelect.init(document);
+  new MutationObserver(function(m){
+    var need=false; m.forEach(function(x){if(x.addedNodes&&x.addedNodes.length)need=true;});
+    if(need) SYYSelect.init(document);
+  }).observe(document.documentElement,{childList:true,subtree:true});
+});
+'''
+          s = must_replace(s, anchor, anchor + shared, 'Shared closeModal')
+          p.write_text(s, encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # Styles.html — searchable select + consistent contain-based images
+          # -----------------------------------------------------------------
+          p = Path('Styles.html')
+          s = p.read_text(encoding='utf-8')
+          anchor = ".select{cursor:pointer;width:auto}\n"
+          css = r'''
+
+/* ── Searchable select (progressive enhancement) ── */
+.syy-select{position:relative;width:100%;min-width:0}
+.syy-select-native{position:absolute!important;opacity:0!important;pointer-events:none!important;width:1px!important;height:1px!important;margin:0!important;padding:0!important}
+.syy-select-control{width:100%;min-height:var(--hit);border:1px solid #cbd5e1;border-radius:var(--r-sm);background:#fff;color:var(--ink);padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;cursor:pointer;font:inherit}
+.syy-select-control:focus,.syy-select.open .syy-select-control{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,80,136,.12)}
+.syy-select-control:disabled{background:var(--line-soft);color:var(--muted);cursor:not-allowed}
+.syy-select-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.syy-select-caret{color:var(--faint);flex:none}
+.syy-select-panel{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:2500;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:var(--shadow-lg);overflow:hidden;min-width:220px}
+.syy-select.open .syy-select-panel{display:block}
+.syy-select-search{width:calc(100% - 16px);margin:8px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:7px;outline:none;font:inherit}
+.syy-select-search:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(0,80,136,.10)}
+.syy-select-list{max-height:260px;overflow:auto;overscroll-behavior:contain;border-top:1px solid var(--line-soft)}
+.syy-select-option{display:block;width:100%;border:0;background:#fff;text-align:left;padding:8px 11px;color:var(--text);cursor:pointer;font:inherit}
+.syy-select-option:hover,.syy-select-option:focus{outline:none;background:var(--primary-soft);color:var(--primary)}
+.syy-select-option.selected{font-weight:600;background:#f8fbfe}
+.syy-select-empty{padding:13px;text-align:center;color:var(--faint);font-size:12px}
+
+/* ── Product images: never crop source image ── */
+.product-image-frame{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.product-image-frame img,.product-image-contain{width:100%;height:100%;object-fit:contain!important;object-position:center;background:#fff}
+.product-image-clickable{cursor:zoom-in}
+'''
+          s = must_replace(s, anchor, anchor + css, 'Styles select anchor')
+          p.write_text(s, encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # Code.gs — evolve Product_Images from 1 image to max 3, while
+          # preserving Image_Url / Drive_File_Id as primary compatibility.
+          # -----------------------------------------------------------------
+          p = Path('Code.gs')
+          s = p.read_text(encoding='utf-8')
+
+          old = '''function saveProductImageDoc_(productCode, imageUrl, driveFileId) {\n  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID\n          + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);\n  UrlFetchApp.fetch(url, {\n    method             : "patch",\n    headers            : getAuthHeader(),\n    payload            : JSON.stringify({ fields: mapToFirestoreFields({ Image_Url: imageUrl, Drive_File_Id: driveFileId }) }),\n    muteHttpExceptions : true\n  });\n  clearCollectionCache(PRODUCT_IMAGES_COLLECTION);\n}\n'''
+          new = '''function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex) {\n  imageUrls = Array.isArray(imageUrls) ? imageUrls.slice(0, 3) : (imageUrl ? [imageUrl] : []);\n  driveFileIds = Array.isArray(driveFileIds) ? driveFileIds.slice(0, 3) : (driveFileId ? [driveFileId] : []);\n  primaryIndex = Math.max(0, Math.min(parseInt(primaryIndex, 10) || 0, Math.max(0, imageUrls.length - 1)));\n  imageUrl = imageUrls[primaryIndex] || imageUrls[0] || "";\n  driveFileId = driveFileIds[primaryIndex] || driveFileIds[0] || "";\n  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID\n          + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);\n  UrlFetchApp.fetch(url, {\n    method             : "patch",\n    headers            : getAuthHeader(),\n    payload            : JSON.stringify({ fields: mapToFirestoreFields({\n      Image_Url: imageUrl, Drive_File_Id: driveFileId,\n      Image_Urls: imageUrls, Drive_File_Ids: driveFileIds, Primary_Index: primaryIndex\n    }) }),\n    muteHttpExceptions : true\n  });\n  clearCollectionCache(PRODUCT_IMAGES_COLLECTION);\n}\n'''
+          s = must_replace(s, old, new, 'saveProductImageDoc_')
+
+          old = '''function getProductImageUrlMap_() {\n  var map = {};\n  try {\n    var docs = fetchCollectionDocsCached(PRODUCT_IMAGES_COLLECTION);\n    docs.forEach(function (doc) {\n      var url = parseFirestoreValue((doc.fields || {}).Image_Url);\n      if (url) map[doc.id] = url;\n    });\n  } catch (e) {\n    console.error("getProductImageUrlMap_ error:", e);\n  }\n  return map;\n}\n'''
+          new = '''function getProductImageUrlMap_() {\n  var map = {};\n  try {\n    var docs = fetchCollectionDocsCached(PRODUCT_IMAGES_COLLECTION);\n    docs.forEach(function (doc) {\n      var f = doc.fields || {};\n      var urls = parseFirestoreValue(f.Image_Urls);\n      if (!Array.isArray(urls) || !urls.length) {\n        var legacyUrl = parseFirestoreValue(f.Image_Url);\n        urls = legacyUrl ? [legacyUrl] : [];\n      }\n      var primaryIndex = parseInt(parseFirestoreValue(f.Primary_Index), 10) || 0;\n      primaryIndex = Math.max(0, Math.min(primaryIndex, Math.max(0, urls.length - 1)));\n      if (urls.length) map[doc.id] = { primary: urls[primaryIndex] || urls[0], urls: urls.slice(0, 3), primaryIndex: primaryIndex };\n    });\n  } catch (e) {\n    console.error("getProductImageUrlMap_ error:", e);\n  }\n  return map;\n}\n'''
+          s = must_replace(s, old, new, 'getProductImageUrlMap_')
+
+          old_upload = re.search(r'function uploadProductImage\(productCode, base64Data\) \{.*?\n\}\n\nfunction deleteProductImage\(productCode\) \{.*?\n\}\n', s, re.S)
+          if not old_upload:
+              raise SystemExit('Patch anchor not found: upload/delete image functions')
+          new_upload = r'''function getProductImageDocData_(productCode) {
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
+    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return { urls: [], ids: [], primaryIndex: 0 };
+    var f = (JSON.parse(res.getContentText()).fields || {});
+    var urls = parseFirestoreValue(f.Image_Urls), ids = parseFirestoreValue(f.Drive_File_Ids);
+    if (!Array.isArray(urls) || !urls.length) { var u=parseFirestoreValue(f.Image_Url); urls=u?[u]:[]; }
+    if (!Array.isArray(ids) || !ids.length) { var i=parseFirestoreValue(f.Drive_File_Id); ids=i?[i]:[]; }
+    return { urls: urls.slice(0,3), ids: ids.slice(0,3), primaryIndex: parseInt(parseFirestoreValue(f.Primary_Index),10)||0 };
+  } catch(e) { return { urls: [], ids: [], primaryIndex: 0 }; }
+}
+
+/** Upload one product image into slot 0..2. Existing clients that omit slot use slot 0. */
+function uploadProductImage(productCode, base64Data, slot) {
+  try {
+    productCode = String(productCode || "").trim();
+    slot = Math.max(0, Math.min(parseInt(slot,10) || 0, 2));
+    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า — กรุณาบันทึกสินค้าก่อน" };
+    if (!base64Data) return { success: false, message: "ไม่พบข้อมูลรูปภาพ" };
+    var bytes = Utilities.base64Decode(base64Data);
+    if (bytes.length > 5 * 1024 * 1024) return { success:false, message:"ไฟล์รูปใหญ่เกินไป (เกิน 5MB หลังย่อขนาดแล้ว)" };
+    if (!(bytes.length > 3 && (bytes[0] & 255) === 0xFF && (bytes[1] & 255) === 0xD8 && (bytes[2] & 255) === 0xFF)) {
+      return { success:false, message:"รูปหลังประมวลผลไม่ใช่ JPEG ที่ถูกต้อง" };
+    }
+    var cur=getProductImageDocData_(productCode), folder=getProductImageFolder_();
+    if(cur.ids[slot]) { try { DriveApp.getFileById(cur.ids[slot]).setTrashed(true); } catch(e){} }
+    var fileName=productCode+'_'+(slot+1)+'.jpg';
+    var blob=Utilities.newBlob(bytes,'image/jpeg',fileName), file=folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    var imageUrl='https://lh3.googleusercontent.com/d/'+file.getId();
+    cur.urls[slot]=imageUrl; cur.ids[slot]=file.getId();
+    while(cur.urls.length && !cur.urls[cur.urls.length-1])cur.urls.pop();
+    while(cur.ids.length && !cur.ids[cur.ids.length-1])cur.ids.pop();
+    if(cur.primaryIndex>=cur.urls.length)cur.primaryIndex=0;
+    saveProductImageDoc_(productCode,'','',cur.urls,cur.ids,cur.primaryIndex);
+    return {success:true,message:'อัปโหลดรูปสำเร็จ',imageUrl:imageUrl,imageUrls:cur.urls,primaryIndex:cur.primaryIndex,slot:slot};
+  } catch(e) { return {success:false,message:e.message}; }
+}
+
+function deleteProductImage(productCode, slot) {
+  try {
+    productCode=String(productCode||'').trim();
+    if(!productCode)return {success:false,message:'ไม่พบรหัสสินค้า'};
+    var cur=getProductImageDocData_(productCode);
+    if(slot===undefined || slot===null || slot==='') {
+      cur.ids.forEach(function(id){try{DriveApp.getFileById(id).setTrashed(true);}catch(e){}});
+      deleteProductImageDoc_(productCode);
+      return {success:true,message:'ลบรูปเรียบร้อย',imageUrls:[]};
+    }
+    slot=Math.max(0,Math.min(parseInt(slot,10)||0,2));
+    if(cur.ids[slot]){try{DriveApp.getFileById(cur.ids[slot]).setTrashed(true);}catch(e){}}
+    cur.urls.splice(slot,1); cur.ids.splice(slot,1);
+    if(!cur.urls.length){deleteProductImageDoc_(productCode);return {success:true,message:'ลบรูปเรียบร้อย',imageUrls:[]};}
+    if(cur.primaryIndex===slot)cur.primaryIndex=0; else if(cur.primaryIndex>slot)cur.primaryIndex--;
+    saveProductImageDoc_(productCode,'','',cur.urls,cur.ids,cur.primaryIndex);
+    return {success:true,message:'ลบรูปเรียบร้อย',imageUrls:cur.urls,primaryIndex:cur.primaryIndex};
+  } catch(e){return {success:false,message:e.message};}
+}
+
+function setPrimaryProductImage(productCode, slot) {
+  try {
+    var cur=getProductImageDocData_(String(productCode||'').trim());
+    slot=Math.max(0,Math.min(parseInt(slot,10)||0,2));
+    if(!cur.urls[slot])return {success:false,message:'ไม่พบรูปในตำแหน่งที่เลือก'};
+    cur.primaryIndex=slot; saveProductImageDoc_(productCode,'','',cur.urls,cur.ids,slot);
+    return {success:true,imageUrl:cur.urls[slot],imageUrls:cur.urls,primaryIndex:slot};
+  } catch(e){return {success:false,message:e.message};}
+}
+'''
+          s = s[:old_upload.start()] + new_upload + s[old_upload.end():]
+
+          # Registry additions for primary image action
+          s = must_replace(s, '  deleteProductImage       : "staff",\n', '  deleteProductImage       : "staff",\n  setPrimaryProductImage   : "staff",\n', 'permission registry')
+          s = must_replace(s, '  deleteProductImage        : deleteProductImage,\n', '  deleteProductImage        : deleteProductImage,\n  setPrimaryProductImage    : setPrimaryProductImage,\n', 'function registry')
+          s = must_replace(s, '  deleteProductImage          : { action: "delete", label: "ลบรูปสินค้า" },\n', '  deleteProductImage          : { action: "delete", label: "ลบรูปสินค้า" },\n  setPrimaryProductImage      : { action: "update", label: "ตั้งรูปสินค้าหลัก" },\n', 'activity registry')
+
+          # Product mapping: current map value may be string; evolve to object safely.
+          s = s.replace('imageUrl     : imageUrlMap[doc.id] || "",', 'imageUrl     : (imageUrlMap[doc.id] && (imageUrlMap[doc.id].primary || imageUrlMap[doc.id])) || "",\n          imageUrls    : (imageUrlMap[doc.id] && imageUrlMap[doc.id].urls) || ((imageUrlMap[doc.id] && imageUrlMap[doc.id].primary) ? [imageUrlMap[doc.id].primary] : []),\n          primaryImageIndex: (imageUrlMap[doc.id] && imageUrlMap[doc.id].primaryIndex) || 0,')
+          p.write_text(s,encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # Master_Products.html — 3 image slots, contain, lightbox
+          # -----------------------------------------------------------------
+          p=Path('Master_Products.html'); s=p.read_text(encoding='utf-8')
+          # Replace single-image form block using stable section boundaries.
+          m=re.search(r'          <div class="section-label">รูปสินค้า</div>.*?(?=\n          <div class="section-label">สถานะ)',s,re.S)
+          if not m:
+              # fallback: stop before footer/modal alert if status section is elsewhere
+              m=re.search(r'          <div class="section-label">รูปสินค้า</div>.*?(?=\n        </div>\n        <div class="modal-footer">)',s,re.S)
+          if not m: raise SystemExit('Patch anchor not found: product image section')
+          section=r'''          <div class="section-label">รูปสินค้า (สูงสุด 3 รูป)</div>
+          <div class="form-group full">
+            <div id="productImageSlots" style="display:grid;grid-template-columns:repeat(3,minmax(90px,1fr));gap:10px"></div>
+            <input type="file" id="inp_imageFile" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="onProductImageSelected(this)">
+            <div id="imgUploadProgress" style="display:none;margin-top:8px">
+              <div class="img-upload-progress-track"><div class="img-upload-progress-bar"></div></div>
+              <div style="font-size:11px;color:var(--faint);margin-top:4px">กำลังประมวลผลและอัปโหลดรูป...</div>
+            </div>
+            <div class="field-hint" id="imageHint">บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้ · JPG/PNG/WebP · ต้นฉบับไม่เกิน 5MB</div>
+          </div>'''
+          s=s[:m.start()]+section+s[m.end():]
+
+          # CSS: ensure product table thumbnail does not crop.
+          s=s.replace('object-fit:cover;border-radius:6px;border:1px solid var(--line)', 'object-fit:contain;background:#fff;border-radius:6px;border:1px solid var(--line)')
+
+          # Replace image JS section up to barcode section.
+          m=re.search(r'  // ==========================================\n  // รูปสินค้า.*?(?=  // ==========================================\n  // สร้างบาร์โค้ด)',s,re.S)
+          if not m: raise SystemExit('Patch anchor not found: image JS section')
+          image_js=r'''  // ==========================================
+  // รูปสินค้า — สูงสุด 3 รูป, ย่อ+แปลง JPEG ฝั่ง browser ก่อนอัปโหลด
+  // ==========================================
+  var PROD_IMG_MAX_DIM=1600, PROD_IMG_QUALITY=0.82;
+  var productImageUrls=[], productPrimaryImageIndex=0, pendingImageSlot=0;
+
+  function updateImageSectionForEdit(docId,imageUrl,imageUrls,primaryIndex){
+    productImageUrls=Array.isArray(imageUrls)&&imageUrls.length?imageUrls.slice(0,3):(imageUrl?[imageUrl]:[]);
+    productPrimaryImageIndex=Math.max(0,Math.min(parseInt(primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));
+    document.getElementById('imageHint').innerText=docId?'เพิ่มได้สูงสุด 3 รูป · คลิกรูปเพื่อขยาย · รูปหลักใช้ในตารางและหน้าค้นหา':'บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้';
+    renderProductImageSlots(docId);
+  }
+  function renderProductImageSlots(docId){
+    var box=document.getElementById('productImageSlots'); if(!box)return;
+    box.innerHTML=[0,1,2].map(function(i){
+      var url=productImageUrls[i]||'', main=url&&i===productPrimaryImageIndex;
+      return '<div class="product-image-slot" style="border:1px solid var(--line);border-radius:10px;padding:7px;background:#fff">'+
+        '<div class="product-image-frame" style="height:120px">'+(url?'<img class="product-image-clickable" src="'+esc(url)+'" onclick="openProductImageLightbox('+i+')" onerror="this.style.display=\'none\'">':'<button type="button" class="btn btn-ghost" style="width:100%;height:100%;border:0" '+(!docId?'disabled':'')+' onclick="pickProductImage('+i+')">+ รูป '+(i+1)+'</button>')+'</div>'+
+        (url?'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px"><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="pickProductImage('+i+')">เปลี่ยน</button><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="deleteProductImageNow('+i+')">ลบ</button>'+(main?'<span class="badge badge-ok">รูปหลัก</span>':'<button type="button" class="btn btn-soft" style="padding:4px 7px;min-height:28px" onclick="setPrimaryProductImageNow('+i+')">ตั้งรูปหลัก</button>')+'</div>':'')+
+      '</div>';
+    }).join('');
+  }
+  function pickProductImage(slot){if(!editingDocId){swyWarning('บันทึกสินค้าก่อน');return;}pendingImageSlot=slot;var i=document.getElementById('inp_imageFile');i.value='';i.click();}
+  function onProductImageSelected(input){
+    var file=input.files&&input.files[0]; if(!file)return;
+    if(!editingDocId){swyWarning('บันทึกสินค้าก่อน');input.value='';return;}
+    if(!/^image\/(jpeg|png|webp)$/i.test(file.type)){swyWarning('ไฟล์ไม่ถูกต้อง','รองรับ JPG, PNG และ WebP เท่านั้น');input.value='';return;}
+    if(file.size>5*1024*1024){swyWarning('ไฟล์ใหญ่เกินไป','ไฟล์ต้นฉบับต้องไม่เกิน 5MB');input.value='';return;}
+    var reader=new FileReader(); reader.onload=function(e){var img=new Image();img.onload=function(){
+      var w=img.naturalWidth,h=img.naturalHeight;if(w<100||h<100){swyWarning('รูปมีความละเอียดต่ำ','กรุณาใช้รูปอย่างน้อย 100×100 พิกเซล');return;}
+      if(w>PROD_IMG_MAX_DIM||h>PROD_IMG_MAX_DIM){if(w>=h){h=Math.round(h*PROD_IMG_MAX_DIM/w);w=PROD_IMG_MAX_DIM;}else{w=Math.round(w*PROD_IMG_MAX_DIM/h);h=PROD_IMG_MAX_DIM;}}
+      var c=document.createElement('canvas');c.width=w;c.height=h;var ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.drawImage(img,0,0,w,h);
+      uploadProductImageNow(c.toDataURL('image/jpeg',PROD_IMG_QUALITY).split(',')[1],pendingImageSlot);
+    };img.onerror=function(){swyError('เปิดรูปไม่สำเร็จ');};img.src=e.target.result;};reader.readAsDataURL(file);
+  }
+  function uploadProductImageNow(base64,slot){
+    var progress=document.getElementById('imgUploadProgress');progress.style.display='block';
+    callApi('uploadProductImage',[editingDocId,base64,slot],function(res){progress.style.display='none';if(res&&res.success){productImageUrls=res.imageUrls||productImageUrls;productPrimaryImageIndex=res.primaryIndex||0;renderProductImageSlots(editingDocId);var c=productsCache.find(function(p){return p.id===editingDocId;});if(c){c.imageUrls=productImageUrls.slice();c.primaryImageIndex=productPrimaryImageIndex;c.imageUrl=productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';}toast('อัปโหลดรูปสำเร็จ');filterAndRenderTable();}else swyError('อัปโหลดไม่สำเร็จ',(res&&res.message)||'');},function(err){progress.style.display='none';swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));});
+  }
+  function deleteProductImageNow(slot){if(!editingDocId)return;swyConfirm({icon:'warning',title:'ลบรูปสินค้า?',confirmText:'ลบรูป',danger:true}).then(function(ok){if(!ok)return;callApi('deleteProductImage',[editingDocId,slot],function(res){if(res&&res.success){productImageUrls=res.imageUrls||[];productPrimaryImageIndex=res.primaryIndex||0;renderProductImageSlots(editingDocId);var c=productsCache.find(function(p){return p.id===editingDocId;});if(c){c.imageUrls=productImageUrls.slice();c.primaryImageIndex=productPrimaryImageIndex;c.imageUrl=productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';}filterAndRenderTable();toast('ลบรูปเรียบร้อย');}else swyError('ลบไม่สำเร็จ',(res&&res.message)||'');});});}
+  function setPrimaryProductImageNow(slot){if(!editingDocId)return;callApi('setPrimaryProductImage',[editingDocId,slot],function(res){if(res&&res.success){productPrimaryImageIndex=res.primaryIndex||0;productImageUrls=res.imageUrls||productImageUrls;renderProductImageSlots(editingDocId);var c=productsCache.find(function(p){return p.id===editingDocId;});if(c){c.primaryImageIndex=productPrimaryImageIndex;c.imageUrl=res.imageUrl||productImageUrls[productPrimaryImageIndex]||'';}filterAndRenderTable();toast('ตั้งรูปหลักแล้ว');}else swyError('ตั้งรูปหลักไม่สำเร็จ',(res&&res.message)||'');});}
+  function openProductImageLightbox(index){
+    if(!productImageUrls[index])return;var html='<div style="display:flex;align-items:center;justify-content:center;min-height:50vh"><img src="'+esc(productImageUrls[index])+'" style="max-width:90vw;max-height:72vh;object-fit:contain"></div><div style="margin-top:8px">รูป '+(index+1)+' / '+productImageUrls.length+'</div>';
+    Swal.fire({html:html,width:'min(960px,96vw)',showConfirmButton:false,showCloseButton:true,allowOutsideClick:true,allowEscapeKey:true});
+  }
+
+'''
+          s=s[:m.start()]+image_js+s[m.end():]
+
+          # Update callers with gallery fields when available.
+          s=s.replace("updateImageSectionForEdit(null, '');", "updateImageSectionForEdit(null, '', [], 0);")
+          s=s.replace("updateImageSectionForEdit(res.id, '');", "updateImageSectionForEdit(res.id, '', [], 0);")
+          s=re.sub(r"updateImageSectionForEdit\(editingDocId,\s*item\.imageUrl\s*\|\|\s*''\s*\);", "updateImageSectionForEdit(editingDocId, item.imageUrl || '', item.imageUrls || [], item.primaryImageIndex || 0);", s)
+          p.write_text(s,encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # Replace obvious product image object-fit:cover on other pages.
+          # -----------------------------------------------------------------
+          for name in ['StockIssue.html','Quotation.html','Purchase_Orders.html','Master_Tax_Invoice.html']:
+              p=Path(name)
+              if not p.exists(): continue
+              x=p.read_text(encoding='utf-8')
+              x=x.replace('object-fit:cover','object-fit:contain').replace('object-fit: cover','object-fit: contain')
+              p.write_text(x,encoding='utf-8')
+
+          # Documentation audit note
+          p=Path('docs/CODE_AUDIT_TH.md')
+          if p.exists():
+              x=p.read_text(encoding='utf-8')
+              x += '''\n\n## Phase 3 — Searchable Dropdown และ Product Gallery\n\n- native select ทุกหน้าถูก progressive-enhance เป็น searchable select จาก `Shared.html`; ค่าเดิมและ change handler เดิมยังเป็น source of truth\n- การค้นหาใน dropdown ทำฝั่ง client เท่านั้น จึงไม่เพิ่ม Firestore read ต่อ keystroke\n- Product Images รองรับสูงสุด 3 รูปต่อสินค้า พร้อม Primary Image และ backward compatibility ผ่าน `Image_Url`/`Drive_File_Id`\n- รูปสินค้าใช้ `object-fit: contain` เพื่อแสดงภาพต้นฉบับครบโดยไม่ crop และ Master Product คลิกรูปเพื่อเปิดภาพขนาดใหญ่ได้\n- client resize รูปเป็น JPEG สูงสุด 1600px และ server ตรวจ JPEG signature/ขนาดก่อนบันทึก\n'''
+              p.write_text(x,encoding='utf-8')
+
+      - name: Static verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('Code.gs').read_text(encoding='utf-8')
+          p=Path('Master_Products.html').read_text(encoding='utf-8')
+          sh=Path('Shared.html').read_text(encoding='utf-8')
+          assert 'setPrimaryProductImage' in s
+          assert 'Image_Urls' in s and 'Drive_File_Ids' in s
+          assert 'productImageSlots' in p and 'PROD_IMG_MAX_DIM=1600' in p
+          assert 'SYYSelect' in sh
+          assert 'object-fit:contain' in p
+          print('Static assertions passed')
+          PY
+          git diff --check
+
+      - name: Commit directly to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'OpenAI Codex'
+          git config user.email 'codex@openai.com'
+          git add Code.gs Shared.html Styles.html Master_Products.html StockIssue.html Quotation.html Purchase_Orders.html Master_Tax_Invoice.html docs/CODE_AUDIT_TH.md
+          if git diff --cached --quiet; then
+            echo 'No changes produced'
+            exit 0
+          fi
+          git commit -m 'Improve searchable dropdowns and product image gallery'
+          git push origin HEAD:main
