@@ -19,6 +19,9 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Normalize helper marker
+        run: python3 tools/fix_opt_marker.py
+
       - name: Apply optimization patches
         run: python3 tools/optimize_ui_reads.py
 
@@ -44,7 +47,7 @@ jobs:
           assert 'updateImageSectionForEdit(editingDocId, item.imageUrl, item.imageUrls, item.primaryImageIndex)' in prod
           assert '(p.id||p.productCode)===editingDocId' in prod
           assert 'RENDER_LIMIT=200' in shared
-          assert 'document.addEventListener(\'click\',SYYSelect.documentClick)' in shared
+          assert "document.addEventListener('click',SYYSelect.documentClick)" in shared
           assert '.syy-select-panel{display:none;position:fixed' in styles
           assert 'dashRefreshDelta' in idx and "REFRESH_STOCK_FULL'){ dashRefreshDelta();" in idx
           assert 'DashboardEnhancement' not in ui
@@ -62,7 +65,7 @@ jobs:
           git config user.name 'OpenAI Codex'
           git config user.email 'codex@openai.com'
           git add -A
-          git reset tools/optimize_ui_reads.py .github/workflows/optimize-ui-reads.yml
+          git reset tools/optimize_ui_reads.py tools/fix_opt_marker.py .github/workflows/optimize-ui-reads.yml
           if git diff --cached --quiet; then
             echo 'No source changes produced'
             exit 0
