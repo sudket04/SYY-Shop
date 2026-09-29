@@ -10,28 +10,64 @@ function p0FastProduct_(productCode) {
   catch (e) { console.error('p0FastProduct_:', e); return null; }
 }
 
+function p0FiniteNonNegative_(value, fieldLabel) {
+  var n = Number(value == null || value === '' ? 0 : value);
+  if (!isFinite(n) || n < 0) throw new Error((fieldLabel || 'ตัวเลข') + ' ต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป');
+  return n;
+}
+
 function p0SaveProductFast_(d) {
   d=d||{};
-  var docId=d.productCode||d.docId||null, existing=docId?p0GetDoc_('Master_Products',docId):null;
+  var docId=d.productCode||d.docId||null;
+  var existing=docId?p0GetDoc_('Master_Products',docId):null;
+  if(docId&&!existing)return p0Fail_('ไม่พบสินค้าที่ต้องการแก้ไข','ไม่พบข้อมูล');
+
   var name=String(d.productName||'').trim();
   if(!name)return p0Fail_('กรุณากรอกชื่อสินค้า','ข้อมูลไม่ครบ');
   var pn=String(d.partNumber||'').trim(), bc=String(d.barcode||'').trim();
   if(pn&&p0QueryEqual_('Master_Products','Part_Number',pn,10).some(function(x){return x.id!==docId;}))return p0Fail_('รหัสจากผู้ผลิต (Part Number) "'+pn+'" มีอยู่ในระบบแล้ว','ข้อมูลซ้ำ!');
   if(bc&&p0QueryEqual_('Master_Products','Barcode',bc,10).some(function(x){return x.id!==docId;}))return p0Fail_('บาร์โค้ด "'+bc+'" มีอยู่ในระบบแล้ว','ข้อมูลซ้ำ!');
 
+  var costPrice,sellingPrice,minStock,openingStock;
+  try {
+    costPrice=p0FiniteNonNegative_(d.costPrice,'ราคาทุน');
+    sellingPrice=p0FiniteNonNegative_(d.sellingPrice,'ราคาขาย');
+    minStock=p0FiniteNonNegative_(d.minStock,'Minimum Stock');
+    openingStock=p0FiniteNonNegative_(d.currentStock,'สต๊อกเริ่มต้น');
+  } catch(e) { return p0Fail_(e.message,'ข้อมูลไม่ถูกต้อง'); }
+
   var carIds=Array.isArray(d.carIds)?d.carIds.filter(Boolean):[];
-  var oldFields=existing?existing.fields:{}, oldBarcode=String(parseFirestoreValue(oldFields.Barcode)||'').trim();
+  var oldFields=existing?existing.fields:{};
+  var oldBarcode=String(parseFirestoreValue(oldFields.Barcode)||'').trim();
   var oldGenerated=parseFirestoreValue(oldFields.Barcode_Generated)==='true';
-  // Existing stock is immutable in Product Master. Stock changes must go through transaction endpoints.
-  var currentStock=existing?parseFloat(parseFirestoreValue(oldFields.Current_Stock)||0):Math.max(0,parseFloat(d.currentStock||0));
   var obj={
-    Product_Name:name,Part_Type:String(d.partType||'').trim()||'PENDING',Part_Number:pn,Barcode:bc,
-    Brand_ID:String(d.brandId||''),Category_ID:String(d.categoryId||''),Default_Vendor_ID:String(d.vendorId||''),Zone_ID:String(d.zoneId||'').trim()||'PENDING',
-    Car_IDs:carIds,Cost_Price:parseFloat(d.costPrice||0),Selling_Price:parseFloat(d.sellingPrice||0),Current_Stock:currentStock,
-    Min_Stock:parseFloat(d.minStock||0),Status:String(d.status||'Active'),Barcode_Generated:(oldGenerated&&oldBarcode&&oldBarcode===bc)?'true':'false'
+    Product_Name:name,
+    Part_Type:String(d.partType||'').trim()||'PENDING',
+    Part_Number:pn,
+    Barcode:bc,
+    Brand_ID:String(d.brandId||''),
+    Category_ID:String(d.categoryId||''),
+    Default_Vendor_ID:String(d.vendorId||''),
+    Zone_ID:String(d.zoneId||'').trim()||'PENDING',
+    Car_IDs:carIds,
+    Cost_Price:costPrice,
+    Selling_Price:sellingPrice,
+    Min_Stock:minStock,
+    Status:String(d.status||'Active'),
+    Barcode_Generated:(oldGenerated&&oldBarcode&&oldBarcode===bc)?'true':'false'
   };
+
+  // CRITICAL: never include Current_Stock in an edit PATCH. A sale/receipt can update
+  // stock after this form was opened; writing the stale value here would roll back that
+  // transaction. Only a newly-created product receives the opening value from this form.
+  if(!existing)obj.Current_Stock=openingStock;
+
   var r=p0SaveMasterData_('Master_Products','P',docId,obj,null);
-  if(r.success){p0InvalidateProducts_();r.product=p0FastProduct_(r.id);r.stockProtected=!!existing;}
+  if(r.success){
+    p0InvalidateProducts_();
+    r.product=p0FastProduct_(r.id);
+    r.stockProtected=!!existing;
+  }
   return r;
 }
 
