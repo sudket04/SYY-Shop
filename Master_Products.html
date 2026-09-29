@@ -1051,11 +1051,19 @@
   function viewImgFallback() {
     document.getElementById('viewImgBox').innerHTML = '<span style="font-size:36px;color:var(--faint)">📦</span>';
   }
+  var viewProductImageUrls=[];
+  function openViewProductImageLightbox(index){
+    if(!viewProductImageUrls.length)return;
+    index=Math.max(0,Math.min(parseInt(index,10)||0,viewProductImageUrls.length-1));
+    var html='<div style="display:flex;align-items:center;justify-content:center;min-height:50vh"><img src="'+esc(viewProductImageUrls[index])+'" style="max-width:90vw;max-height:72vh;object-fit:contain"></div><div style="margin-top:8px">รูป '+(index+1)+' / '+viewProductImageUrls.length+'</div>';
+    Swal.fire({html:html,width:'min(960px,96vw)',showConfirmButton:false,showCloseButton:true,allowOutsideClick:true,allowEscapeKey:true});
+  }
 
   function openViewModal(docId) {
     var item = productsCache.find(function (c) { return (c.id === docId || c.productCode === docId); });
     if (!item) { toast('ไม่พบข้อมูลสินค้า', 'err'); return; }
     viewingDocId = item.id || docId;
+    viewProductImageUrls = Array.isArray(item.imageUrls) && item.imageUrls.length ? item.imageUrls.slice(0,3) : (item.imageUrl ? [item.imageUrl] : []);
 
     document.getElementById('viewProductName').innerText = item.productName || '(ไม่มีชื่อ)';
     document.getElementById('viewProductSub').innerHTML =
@@ -1085,8 +1093,9 @@
     }).join('');
 
     var imgBox = document.getElementById('viewImgBox');
+    var viewPrimaryIndex = Math.max(0, viewProductImageUrls.indexOf(item.imageUrl));
     imgBox.innerHTML = item.imageUrl
-      ? '<img src="' + esc(item.imageUrl) + '" style="width:100%;height:100%;object-fit:cover" onerror="viewImgFallback()">'
+      ? '<img src="' + esc(item.imageUrl) + '" class="product-image-clickable" style="width:100%;height:100%;object-fit:contain;background:#fff" onclick="openViewProductImageLightbox(' + viewPrimaryIndex + ')" onerror="viewImgFallback()">'
       : '<span style="font-size:36px;color:var(--faint)">📦</span>';
 
     renderViewBarcodeSection(item);
