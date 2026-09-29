@@ -41,9 +41,20 @@ function p0GatewayV2(token, fnName, args, userAgent) {
       return result;
     }
 
+    if (fnName === 'issueStock') {
+      if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
+      // Negative stock is never trusted from the client. Inventory corrections use the audited
+      // adjustProductStock flow instead of bypassing availability checks.
+      var issuePayload = {};
+      var src = a[0] || {};
+      Object.keys(src).forEach(function(k){ issuePayload[k] = src[k]; });
+      issuePayload.allowNegative = false;
+      result = p0IssueStock_(issuePayload, session.username);
+      if (ACTIVITY_ACTIONS && ACTIVITY_ACTIONS.issueStock) logActivity_(session.username,'issueStock',[issuePayload,session.username],result);
+      return result;
+    }
+
     // Gallery/image operations route to the self-authorizing gallery layer.
-    // This avoids P0Core's compatibility mapper from scanning all Product_Images
-    // after every single image change.
     if (fnName === 'getProductGallery') return getProductGallery(token,userAgent,a[0]);
     if (fnName === 'uploadProductGalleryImage' || fnName === 'uploadProductImage') {
       if (!p0RoleAllowed_(session.role,'staff')) return p0Fail_('สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้');
@@ -147,7 +158,6 @@ function p0ReceiveGoodsIdempotent_(d,callerUsername) {
   return p0Fail_('บันทึกรับสินค้าไม่สำเร็จ กรุณาลองอีกครั้ง');
 }
 
-// Kept as compatibility entry point. UI routes to p0AdjustProductStockFast_ above.
 function p0AdjustProductStock_(d,callerUsername){return p0AdjustProductStockFast_(d,callerUsername);}
 
 function p0CreateUserAccount_(email,fullName,role){
