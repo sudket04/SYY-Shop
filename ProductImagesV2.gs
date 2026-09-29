@@ -3,7 +3,7 @@
  * - Up to 3 product images
  * - Keeps legacy Image_Url / Drive_File_Id as the primary image for backward compatibility
  * - Stores gallery metadata in Images_JSON inside Product_Images/{productCode}
- * - All mutations go through apiGatewayV2 with the same session/role model as apiGateway
+ * - Mutations are private workers; browser access goes through apiGatewayV2
  */
 var PRODUCT_IMAGE_V2_MAX = 3;
 var PRODUCT_IMAGE_V2_CACHE_SECONDS = 300;
@@ -124,7 +124,7 @@ function saveProductImagesV2_(productCode, images, primaryIndex) {
   }) : {});
 }
 
-function getProductImagesV2(productCode) {
+function getProductImagesV2_(productCode) {
   var state = readProductImagesV2_(productCode, false);
   return {
     success: true,
@@ -148,7 +148,7 @@ function trashDriveImageV2_(productCode, image, slotIndex) {
   }
 }
 
-function uploadProductImageV2(productCode, base64Data, slotIndex) {
+function uploadProductImageV2_(productCode, base64Data, slotIndex) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { success: false, message: "ระบบกำลังบันทึกรูปสินค้าอื่นอยู่ กรุณาลองใหม่" };
   try {
@@ -203,7 +203,7 @@ function uploadProductImageV2(productCode, base64Data, slotIndex) {
   }
 }
 
-function deleteProductImageV2(productCode, slotIndex) {
+function deleteProductImageV2_(productCode, slotIndex) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { success: false, message: "ระบบกำลังบันทึกรูปสินค้าอื่นอยู่ กรุณาลองใหม่" };
   try {
@@ -230,7 +230,7 @@ function deleteProductImageV2(productCode, slotIndex) {
   }
 }
 
-function setPrimaryProductImageV2(productCode, slotIndex) {
+function setPrimaryProductImageV2_(productCode, slotIndex) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { success: false, message: "ระบบกำลังบันทึกรูปสินค้าอื่นอยู่ กรุณาลองใหม่" };
   try {
@@ -253,7 +253,7 @@ function deleteAllProductImagesV2_(productCode) {
   return saveProductImagesV2_(productCode, [], -1);
 }
 
-function deleteProductWithImagesV2(productCode) {
+function deleteProductWithImagesV2_(productCode) {
   productCode = String(productCode || "").trim();
   if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
   var result = deleteProduct(productCode);
@@ -301,11 +301,11 @@ function apiGatewayV2(token, fnName, args, userAgent) {
       deleteProductWithImagesV2: "admin"
     };
     var functions = {
-      getProductImagesV2: getProductImagesV2,
-      uploadProductImageV2: uploadProductImageV2,
-      deleteProductImageV2: deleteProductImageV2,
-      setPrimaryProductImageV2: setPrimaryProductImageV2,
-      deleteProductWithImagesV2: deleteProductWithImagesV2
+      getProductImagesV2: getProductImagesV2_,
+      uploadProductImageV2: uploadProductImageV2_,
+      deleteProductImageV2: deleteProductImageV2_,
+      setPrimaryProductImageV2: setPrimaryProductImageV2_,
+      deleteProductWithImagesV2: deleteProductWithImagesV2_
     };
 
     var required = registry[fnName];
