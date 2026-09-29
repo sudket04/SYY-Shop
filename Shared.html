@@ -44,6 +44,27 @@ function p0RebuildPendingPoMap_(){if(!Array.isArray(window.purchaseOrders))retur
 function p0NormalizeStockChanges_(fnName,res){if(!res)return[];if(fnName==='receiveGoods')return Array.isArray(res.stockChanges)?res.stockChanges.map(function(x){return{productCode:x.productCode,before:num(x.before),after:num(x.after),qty:num(x.qty)};}):[];if(fnName==='issueStock')return Array.isArray(res.results)?res.results.map(function(x){return{productCode:x.productCode,before:num(x.before),after:num(x.after),qty:num(x.qty)};}):[];if(fnName==='adjustProductStock'&&res.productCode)return[{productCode:res.productCode,before:num(res.before),after:num(res.after),qty:Math.abs(num(res.delta))}];return[];}
 function p0ApplyStockChangesLocal_(changes){if(!Array.isArray(changes)||!changes.length)return;['productsCache','products','lowStockItems','allProducts'].forEach(function(name){var arr=window[name];if(!Array.isArray(arr))return;changes.forEach(function(ch){var p=arr.find(function(x){return String(x.productCode||x.id)===String(ch.productCode);});if(p)p.currentStock=num(ch.after);});});}
 function p0SendStockDelta_(changes){if(!changes||!changes.length)return;try{if(window.parent&&window.parent!==window)window.parent.postMessage({action:'STOCK_DELTAS',changes:changes,ts:Date.now()},'*');}catch(e){}}
+
+var P0_PENDING_MUTATIONS={};
+function p0ClientRequestId_(){try{if(window.crypto&&window.crypto.getRandomValues){var a=new Uint32Array(4);window.crypto.getRandomValues(a);return 'REQ_'+Array.prototype.map.call(a,function(x){return x.toString(16).padStart(8,'0');}).join('');}}catch(e){}return 'REQ_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,14);}
+function p0MutationKey_(fnName,p){
+  p=p||{};
+  if(fnName==='issueStock')return fnName+'|'+JSON.stringify({reason:String(p.reason||''),refNo:String(p.refNo||''),note:String(p.note||''),quoteId:String(p.quoteId||''),items:(p.items||[]).map(function(x){return{c:String(x.productCode||''),q:num(x.qty)};}).sort(function(a,b){return a.c.localeCompare(b.c);})});
+  if(fnName==='receiveGoods')return fnName+'|'+JSON.stringify({poId:String(p.poId||''),invoiceNo:String(p.invoiceNo||''),receiptDate:String(p.receiptDate||''),deliveryNoteNo:String(p.deliveryNoteNo||''),items:(p.items||[]).map(function(x){return{c:String(x.productCode||''),q:num(x.qtyReceivedNow)};}).sort(function(a,b){return a.c.localeCompare(b.c);})});
+  return '';
+}
+function p0PrepareMutationArgs_(fnName,args){
+  args=Array.isArray(args)?args:[];
+  if((fnName!=='issueStock'&&fnName!=='receiveGoods')||!args[0]||typeof args[0]!=='object')return{args:args,key:''};
+  var payload={},src=args[0];Object.keys(src).forEach(function(k){payload[k]=src[k];});
+  var key=p0MutationKey_(fnName,payload),entry=key?P0_PENDING_MUTATIONS[key]:null;
+  if(!entry){entry={id:p0ClientRequestId_(),at:Date.now()};if(key)P0_PENDING_MUTATIONS[key]=entry;}
+  payload.clientRequestId=entry.id;args=args.slice();args[0]=payload;
+  Object.keys(P0_PENDING_MUTATIONS).forEach(function(k){if(Date.now()-P0_PENDING_MUTATIONS[k].at>15*60*1000)delete P0_PENDING_MUTATIONS[k];});
+  return{args:args,key:key};
+}
+function p0ClearPendingMutation_(ctx){if(ctx&&ctx.key)delete P0_PENDING_MUTATIONS[ctx.key];}
+
 function p0ApplySuccess_(fnName,args,res){
   if(!res||res.success===false)return;
   if(fnName==='getDashboardBootstrap')window.__p0DashMeta={poWaitingCount:num(res.poWaitingCount),dataWindowDays:num(res.dataWindowDays),truncated:!!res.truncated};
@@ -56,7 +77,7 @@ function p0ApplySuccess_(fnName,args,res){
   if(fnName==='savePurchaseOrder'&&res.purchaseOrder&&Array.isArray(window.purchaseOrders)){p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});p0RebuildPendingPoMap_();window.__p0SkipPoLoad=true;}
   if(fnName==='receiveGoods'&&res.purchaseOrder&&Array.isArray(window.purchaseOrders)){var old=window.purchaseOrders.find(function(p){return p.poId===res.purchaseOrder.poId;});if(old){old.status=res.purchaseOrder.status;old.items=res.purchaseOrder.items;old.receipts=res.purchaseOrder.receipts;}else p0UpsertByKey_(window.purchaseOrders,res.purchaseOrder,function(p){return p.poId;});if(Array.isArray(window.lowStockItems)&&Array.isArray(res.stockChanges)){res.stockChanges.forEach(function(ch){var p=window.lowStockItems.find(function(x){return x.productCode===ch.productCode;});if(p)p.currentStock=num(ch.after);});window.lowStockItems=window.lowStockItems.filter(function(p){return num(p.currentStock)<=num(p.minStock);});}p0RebuildPendingPoMap_();window.__p0SkipPoLoad=true;}
   var stockChanges=p0NormalizeStockChanges_(fnName,res);if(stockChanges.length){p0ApplyStockChangesLocal_(stockChanges);p0SendStockDelta_(stockChanges);window.__p0RecentStockDeltaAt=Date.now();}
-  if(fnName==='issueStock'&&res.quotationMarked&&args&&args[0]&&args[0].quoteId){window.__p0AtomicQuoteMark={quoteId:String(args[0].quoteId),docNo:String(res.docNo||''),at:Date.now()};}
+  if(fnName==='issueStock'){window.__p0SkipStockIssueProductLoad=true;if(res.quotationMarked&&args&&args[0]&&args[0].quoteId)window.__p0AtomicQuoteMark={quoteId:String(args[0].quoteId),docNo:String(res.docNo||''),at:Date.now()};}
 
   if(fnName==='saveTaxInvoice'&&res.invoice){var taxArr=Array.isArray(window.invoicesCache)?window.invoicesCache:(Array.isArray(window.invoices)?window.invoices:null);if(taxArr){p0UpsertByKey_(taxArr,res.invoice,function(x){return x.id;});window.__p0SkipTaxLoad=true;}}
   if(fnName==='deleteTaxInvoice'&&args&&args[0]){if(Array.isArray(window.invoicesCache)){window.invoicesCache=window.invoicesCache.filter(function(x){return x.id!==args[0];});window.__p0SkipTaxLoad=true;}if(Array.isArray(window.invoices)){window.invoices=window.invoices.filter(function(x){return x.id!==args[0];});window.__p0SkipTaxLoad=true;}}
@@ -66,11 +87,11 @@ function p0ApplySuccess_(fnName,args,res){
 function callApi(fnName,args,onSuccess,onFailure){
   var token=(typeof AUTH_TOKEN!=='undefined')?AUTH_TOKEN:'';
   if(!token){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';return;}
+  args=Array.isArray(args)?args:[];
   if(fnName==='markQuotationStockIssued'&&window.__p0AtomicQuoteMark&&args&&String(args[0])===window.__p0AtomicQuoteMark.quoteId&&Date.now()-window.__p0AtomicQuoteMark.at<15000){var atomic=window.__p0AtomicQuoteMark;window.__p0AtomicQuoteMark=null;setTimeout(function(){if(onSuccess)onSuccess({success:true,alreadyMarked:true,docNo:atomic.docNo});},0);return;}
-  // Tax/Quote quick-add customer asks for the whole customer list immediately after save.
-  // The server already returned the saved customer; satisfy this one refresh from local state.
   if(fnName==='getCustomersFull'&&Array.isArray(window.customersCache)&&window.__p0CustomersLocalFreshUntil&&Date.now()<window.__p0CustomersLocalFreshUntil){window.__p0CustomersLocalFreshUntil=0;setTimeout(function(){if(onSuccess)onSuccess(window.customersCache.slice());},0);return;}
-  google.script.run.withSuccessHandler(function(res){if(res&&res.__authError){swyError('เซสชันหมดอายุ','กรุณาเข้าสู่ระบบใหม่').then(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';});return;}try{p0ApplySuccess_(fnName,args||[],res);}catch(e){console.error('p0ApplySuccess_',e);}if(onSuccess)onSuccess(res);}).withFailureHandler(onFailure||function(err){swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));}).p0GatewayV2(token,fnName,args||[],navigator.userAgent);
+  var mutationCtx=p0PrepareMutationArgs_(fnName,args);args=mutationCtx.args;
+  google.script.run.withSuccessHandler(function(res){if(res&&res.__authError){swyError('เซสชันหมดอายุ','กรุณาเข้าสู่ระบบใหม่').then(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';});return;}try{p0ApplySuccess_(fnName,args,res);}catch(e){console.error('p0ApplySuccess_',e);}if(res&&res.success)p0ClearPendingMutation_(mutationCtx);if(onSuccess)onSuccess(res);}).withFailureHandler(onFailure||function(err){swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));}).p0GatewayV2(token,fnName,args,navigator.userAgent);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -78,6 +99,7 @@ function callApi(fnName,args,onSuccess,onFailure){
    ═══════════════════════════════════════════════════════════ */
 function p0InstallReloadGuards_(){
   if(typeof window.loadTable==='function'&&document.getElementById('productBody')&&!window.loadTable.__p0){var productLoad=window.loadTable;window.loadTable=function(){if(window.__p0SkipProductLoad){window.__p0SkipProductLoad=false;if(typeof window.filterAndRenderTable==='function')window.filterAndRenderTable();return;}return productLoad.apply(this,arguments);};window.loadTable.__p0=true;}
+  if(typeof window.loadProducts==='function'&&document.getElementById('panelIssue')&&!window.loadProducts.__p0){var stockProductLoad=window.loadProducts;window.loadProducts=function(){if(window.__p0SkipStockIssueProductLoad){window.__p0SkipStockIssueProductLoad=false;if(typeof window.updateCounts==='function')window.updateCounts();if(typeof window.renderResults==='function')window.renderResults();return;}return stockProductLoad.apply(this,arguments);};window.loadProducts.__p0=true;}
   if(typeof window.loadAll==='function'&&document.getElementById('vendorGroupsContainer')&&!window.loadAll.__p0){var poLoad=window.loadAll;window.loadAll=function(){if(window.__p0SkipPoLoad){window.__p0SkipPoLoad=false;if(typeof window.renderCreateTab==='function')window.renderCreateTab();if(typeof window.renderHistoryTab==='function')window.renderHistoryTab();if(typeof window.updateStatCards==='function')window.updateStatCards();return;}return poLoad.apply(this,arguments);};window.loadAll.__p0=true;}
   if(typeof window.loadAll==='function'&&document.getElementById('taxBody')&&!window.loadAll.__p0){var taxLoad=window.loadAll;window.loadAll=function(){var cb=arguments.length>1?arguments[1]:null;if(window.__p0SkipTaxLoad){window.__p0SkipTaxLoad=false;if(typeof window.renderRows==='function')window.renderRows();if(typeof window.renderDashboard==='function')window.renderDashboard();if(typeof cb==='function')cb();return;}return taxLoad.apply(this,arguments);};window.loadAll.__p0=true;}
   if(typeof window.loadPageData==='function'&&document.getElementById('quotationBody')&&!window.loadPageData.__p0){var quoteLoad=window.loadPageData;window.loadPageData=function(){if(window.__p0SkipQuoteLoad){window.__p0SkipQuoteLoad=false;if(typeof window.renderList==='function')window.renderList();if(typeof window.renderQuoteStats==='function')window.renderQuoteStats();return;}return quoteLoad.apply(this,arguments);};window.loadPageData.__p0=true;}
