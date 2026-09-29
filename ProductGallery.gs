@@ -14,6 +14,12 @@ function productGalleryAuth_(token, userAgent, writeRequired) {
   return { ok:true, session:session };
 }
 
+function productGalleryWriteLock_() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) throw new Error('มีผู้ใช้อื่นกำลังแก้ไขรูปสินค้า กรุณาลองใหม่อีกครั้ง');
+  return lock;
+}
+
 function productGalleryDocUrl_(productCode) {
   return 'https://firestore.googleapis.com/v1/projects/' + PROJECT_ID +
     '/databases/(default)/documents/' + PRODUCT_GALLERY_COLLECTION + '/' + encodeURIComponent(productCode);
@@ -97,8 +103,7 @@ function productGalleryResult_(productCode, images, message) {
     imageUrl:(images && images.length) ? images[0].url : '',
     maxImages:PRODUCT_GALLERY_MAX_IMAGES
   };
-  // P0 efficiency: map only this product. getProductById() point-reads Product + primary
-  // image and uses cached masters, instead of scanning Product_Images for every gallery change.
+  // Point-read only this product; do not scan Product_Images after one image change.
   try { out.product = getProductById(productCode); } catch (ignore) {}
   return out;
 }
@@ -113,43 +118,51 @@ function getProductGallery(token, userAgent, productCode) {
 }
 
 function uploadProductGalleryImage(token, userAgent, productCode, base64Data) {
+  var lock = null, createdFile = null;
   try {
     var auth = productGalleryAuth_(token, userAgent, true);
     if (!auth.ok) return { success:false, message:auth.message };
     productCode = String(productCode || '').trim();
     if (!productCode) return { success:false, message:'กรุณาบันทึกสินค้าก่อนอัปโหลดรูป' };
     if (!base64Data) return { success:false, message:'ไม่พบข้อมูลรูปภาพ' };
+    var bytes = Utilities.base64Decode(base64Data);
+    if (bytes.length > 5 * 1024 * 1024) return { success:false, message:'ไฟล์รูปใหญ่เกิน 5MB' };
 
+    lock = productGalleryWriteLock_();
+    // Re-read only after acquiring the lock so concurrent writers cannot lose updates.
     var images = productGalleryRead_(productCode);
     if (images.length >= PRODUCT_GALLERY_MAX_IMAGES) {
       return { success:false, message:'สินค้า 1 รายการอัปโหลดได้สูงสุด ' + PRODUCT_GALLERY_MAX_IMAGES + ' รูป' };
     }
 
-    var bytes = Utilities.base64Decode(base64Data);
-    if (bytes.length > 5 * 1024 * 1024) return { success:false, message:'ไฟล์รูปใหญ่เกิน 5MB' };
-
     var now = new Date();
     var imageId = Utilities.getUuid();
     var fileName = productCode + '_' + now.getTime() + '_' + imageId.substring(0,8) + '.jpg';
     var folder = getProductImageFolder_();
-    var file = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', fileName));
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    var imageUrl = 'https://lh3.googleusercontent.com/d/' + file.getId();
+    createdFile = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', fileName));
+    createdFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    var imageUrl = 'https://lh3.googleusercontent.com/d/' + createdFile.getId();
 
-    images.push({ id:imageId, url:imageUrl, fileId:file.getId(), createdAt:now.toISOString(), legacy:false });
+    images.push({ id:imageId, url:imageUrl, fileId:createdFile.getId(), createdAt:now.toISOString(), legacy:false });
     productGallerySave_(productCode, images);
     return productGalleryResult_(productCode, images, 'เพิ่มรูปสินค้าแล้ว');
   } catch (e) {
+    // If Drive creation succeeded but metadata did not, remove the orphan file.
+    if (createdFile) { try { createdFile.setTrashed(true); } catch (ignore) {} }
     return { success:false, message:e.message };
+  } finally {
+    if (lock) { try { lock.releaseLock(); } catch (ignore2) {} }
   }
 }
 
 function deleteProductGalleryImage(token, userAgent, productCode, imageId) {
+  var lock = null;
   try {
     var auth = productGalleryAuth_(token, userAgent, true);
     if (!auth.ok) return { success:false, message:auth.message };
     productCode = String(productCode || '').trim();
     imageId = String(imageId || '').trim();
+    lock = productGalleryWriteLock_();
     var images = productGalleryRead_(productCode);
     var target = null;
     images = images.filter(function(img){
@@ -157,22 +170,29 @@ function deleteProductGalleryImage(token, userAgent, productCode, imageId) {
       return true;
     });
     if (!target) return { success:false, message:'ไม่พบรูปที่ต้องการลบ' };
-    if (target.fileId) {
-      try { DriveApp.getFileById(target.fileId).setTrashed(true); } catch (ignore) {}
-    }
+
+    // Commit gallery metadata/primary compatibility first. If it fails, the old image stays usable.
     productGallerySave_(productCode, images);
+    if (target.fileId) {
+      try { DriveApp.getFileById(target.fileId).setTrashed(true); }
+      catch (fileErr) { console.error('deleteProductGalleryImage orphan cleanup:', fileErr); }
+    }
     return productGalleryResult_(productCode, images, 'ลบรูปแล้ว');
   } catch (e) {
     return { success:false, message:e.message };
+  } finally {
+    if (lock) { try { lock.releaseLock(); } catch (ignore) {} }
   }
 }
 
 function setProductGalleryPrimary(token, userAgent, productCode, imageId) {
+  var lock = null;
   try {
     var auth = productGalleryAuth_(token, userAgent, true);
     if (!auth.ok) return { success:false, message:auth.message };
     productCode = String(productCode || '').trim();
     imageId = String(imageId || '').trim();
+    lock = productGalleryWriteLock_();
     var images = productGalleryRead_(productCode), foundIndex = -1;
     images.some(function(img, i){ if (String(img.id) === imageId) { foundIndex = i; return true; } return false; });
     if (foundIndex < 0) return { success:false, message:'ไม่พบรูปที่เลือก' };
@@ -181,5 +201,7 @@ function setProductGalleryPrimary(token, userAgent, productCode, imageId) {
     return productGalleryResult_(productCode, images, 'ตั้งเป็นรูปหลักแล้ว');
   } catch (e) {
     return { success:false, message:e.message };
+  } finally {
+    if (lock) { try { lock.releaseLock(); } catch (ignore) {} }
   }
 }
