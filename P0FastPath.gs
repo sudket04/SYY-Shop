@@ -64,7 +64,7 @@ function p0SaveProductFast_(d) {
 
   var r=p0SaveMasterData_('Master_Products','P',docId,obj,null);
   if(r.success){
-    p0InvalidateProducts_();
+    p0InvalidateProductDataOnly_(false);
     r.product=p0FastProduct_(r.id);
     r.stockProtected=!!existing;
   }
@@ -86,7 +86,7 @@ function p0AdjustProductStockFast_(d,callerUsername){
       {update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,docNo+'-01'),fields:{Doc_No:{stringValue:docNo},Type:{stringValue:delta>0?'IN':'OUT'},Product_Code:{stringValue:code},Product_Name:{stringValue:info.name},Qty:{doubleValue:Math.abs(delta)},Stock_Before:{doubleValue:info.stock},Stock_After:{doubleValue:target},Cost_Price:{doubleValue:info.costPrice||0},Reason:{stringValue:'ปรับยอดสต๊อก: '+reason},Ref_No:{stringValue:'STOCK-ADJUST'},Note:{stringValue:note},User:{stringValue:callerUsername||getCurrentUsername_()},Timestamp:{stringValue:nowIso}}},currentDocument:{exists:false}}
     ];
     var commit=fsCommit_(writes);
-    if(commit.ok){p0InvalidateProducts_();p0InvalidateDashboard_();return {success:true,message:'ปรับยอดสต๊อกเรียบร้อย',productCode:code,before:info.stock,after:target,delta:delta,docNo:docNo,product:p0FastProduct_(code)};}
+    if(commit.ok){p0InvalidateStockData_();return {success:true,message:'ปรับยอดสต๊อกเรียบร้อย',productCode:code,before:info.stock,after:target,delta:delta,docNo:docNo,product:p0FastProduct_(code)};}
     if(!isPreconditionFailure_(commit.message)||attempt===3)return p0Fail_('ปรับยอดไม่สำเร็จ: '+commit.message);
     Utilities.sleep(100*attempt);
   }
