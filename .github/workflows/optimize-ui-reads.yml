@@ -1,0 +1,71 @@
+name: Optimize UI and Firestore reads
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/optimize-ui-reads.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply optimization patches
+        run: python3 tools/optimize_ui_reads.py
+
+      - name: Verify JavaScript and invariants
+        run: |
+          cp Code.gs /tmp/syy-code.js
+          node --check /tmp/syy-code.js
+          python3 - <<'PY'
+          from pathlib import Path
+          code=Path('Code.gs').read_text(encoding='utf-8')
+          prod=Path('Master_Products.html').read_text(encoding='utf-8')
+          shared=Path('Shared.html').read_text(encoding='utf-8')
+          styles=Path('Styles.html').read_text(encoding='utf-8')
+          idx=Path('index.html').read_text(encoding='utf-8')
+          ui=Path('UiSystem.html').read_text(encoding='utf-8')
+          assert '"Master_Products"' in code and 'splitCollectionCacheChunks_' in code
+          assert 'getDashboardDelta' in code and 'queryDashboardMovementsRange_' in code
+          dash=code[code.index('function getDashboardBootstrap()'):code.index('function getDashboardDelta(')]
+          assert 'fetchAllStockMovements_()' not in dash
+          assert 'buildPoVendorMapForMovements_' in dash
+          assert 'imageUrl     : imageState.primary' in code
+          assert 'imageUrls    : imageUrls' in code
+          assert 'updateImageSectionForEdit(editingDocId, item.imageUrl, item.imageUrls, item.primaryImageIndex)' in prod
+          assert '(p.id||p.productCode)===editingDocId' in prod
+          assert 'RENDER_LIMIT=200' in shared
+          assert 'document.addEventListener(\'click\',SYYSelect.documentClick)' in shared
+          assert '.syy-select-panel{display:none;position:fixed' in styles
+          assert 'dashRefreshDelta' in idx and "REFRESH_STOCK_FULL'){ dashRefreshDelta();" in idx
+          assert 'DashboardEnhancement' not in ui
+          assert not Path('DashboardEnhancement.html').exists()
+          assert not Path('DashboardV2.gs').exists()
+          recv=code[code.index('function receiveGoods('):code.index('function deletePurchaseOrder(')]
+          assert 'logStockIn_(' not in recv
+          assert 'writes.push(poWrite)' in recv and 'fsCommit_(writes)' in recv
+          print('Static invariants passed')
+          PY
+          git diff --check
+
+      - name: Commit optimized source to main
+        run: |
+          git config user.name 'OpenAI Codex'
+          git config user.email 'codex@openai.com'
+          git add -A
+          git reset tools/optimize_ui_reads.py .github/workflows/optimize-ui-reads.yml
+          if git diff --cached --quiet; then
+            echo 'No source changes produced'
+            exit 0
+          fi
+          git commit -m 'Optimize UI and Firestore read write flows'
+          git push origin HEAD:main
