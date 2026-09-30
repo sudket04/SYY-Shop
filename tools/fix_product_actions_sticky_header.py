@@ -8,3 +8,4 @@ if old not in s:
     raise SystemExit('product sticky marker not found')
 s=s.replace(old,new,1)
 p.write_text(s,encoding='utf-8')
+# workflow trigger
