@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'tools/add_product_image_reorder.py'
+      - '.github/workflows/add-product-image-reorder.yml'
 
 permissions:
   contents: write
