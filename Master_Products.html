@@ -31,7 +31,13 @@
   .product-name-cell{min-width:220px}
   .product-cost-cell{color:var(--muted)}
   .product-selling-cell{font-size:16px;font-weight:700;color:var(--primary)}
-  #productTable .col-sticky-right{position:sticky;right:0;box-shadow:-2px 0 4px rgba(15,23,42,.05)}
+  #productTable{isolation:isolate}
+  #productTable .col-sticky-right{position:sticky;right:0;min-width:120px;width:120px;max-width:120px;box-shadow:-2px 0 4px rgba(15,23,42,.08);background:#fff;background-clip:padding-box}
+  #productTable tbody td.col-sticky-right{z-index:4}
+  #productTable tbody tr:hover td.col-sticky-right{background:#f8fbfe}
+  #productTable thead th.col-sticky-right{position:sticky;top:0;right:0;z-index:25;background:var(--line-soft);background-clip:padding-box;box-shadow:-2px 1px 5px rgba(15,23,42,.10)}
+  #productTable.table-compact thead th.col-sticky-right{position:sticky;top:0;right:0;z-index:25}
+  #productTable.table-compact tbody td.col-sticky-right{position:static;box-shadow:none}
   .pagination-bar{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:12px 13px 0;border-top:1px solid var(--line-soft);flex-wrap:wrap;gap:10px}
   .pagination-info{font-size:13px;color:var(--muted)}
   .pagination-controls{display:flex;align-items:center;gap:6px}
