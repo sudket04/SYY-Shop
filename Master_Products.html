@@ -89,7 +89,42 @@
 .product-image-actions-ui{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:7px}
 .product-image-add-ui{width:100%;height:128px;border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;color:#475569;cursor:pointer;font:inherit;font-weight:600}
 .product-image-add-ui:hover:not(:disabled){border-color:var(--primary,#005088);color:var(--primary,#005088);background:#eef6ff}.product-image-add-ui:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:640px){.product-image-slots-ui{grid-template-columns:1fr}.product-image-preview-btn,.product-image-add-ui{height:180px}}
+
+.product-image-slot-ui,.product-image-preview-btn,.product-image-add-ui{box-sizing:border-box;max-width:100%}
+.product-image-slot-ui{overflow:hidden}
+.product-image-preview-btn img{display:block;max-width:100%;max-height:100%}
+.product-image-position-ui{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;font-size:11px;color:var(--muted)}
+.product-image-order-ui{display:flex;gap:5px;margin-top:6px}
+.product-image-order-ui .btn{flex:1;padding:4px 7px;min-height:28px}
+.view-product-gallery{width:220px;max-width:100%;flex-shrink:0}
+.view-product-gallery-stage{position:relative;width:220px;max-width:100%;height:220px;border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.view-product-gallery-main{width:100%;height:100%;border:0;padding:8px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:zoom-in}
+.view-product-gallery-main img{display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;object-position:center}
+.view-product-gallery-nav{position:absolute;top:50%;transform:translateY(-50%);width:32px;height:38px;border:0;border-radius:9px;background:rgba(15,23,42,.70);color:#fff;font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2}
+.view-product-gallery-nav:hover{background:rgba(0,80,136,.92)}
+.view-product-gallery-nav.prev{left:7px}.view-product-gallery-nav.next{right:7px}
+.view-product-gallery-count{position:absolute;right:7px;bottom:7px;background:rgba(15,23,42,.72);color:#fff;border-radius:12px;padding:2px 7px;font-size:10.5px;pointer-events:none}
+.view-product-gallery-thumbs{display:flex;gap:6px;margin-top:7px;min-height:50px;overflow-x:auto;padding:1px}
+.view-product-gallery-thumb{width:50px;height:50px;flex:0 0 50px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:3px;cursor:pointer;overflow:hidden}
+.view-product-gallery-thumb img{display:block;width:100%;height:100%;object-fit:contain}
+.view-product-gallery-thumb.active{border:2px solid var(--primary);padding:2px;box-shadow:0 0 0 2px rgba(0,80,136,.10)}
+@media(max-width:640px){.product-image-slots-ui{grid-template-columns:1fr}.product-image-preview-btn,.product-image-add-ui{height:180px}.view-product-gallery,.view-product-gallery-stage{width:100%}.view-product-gallery-stage{height:min(62vw,280px)}}
+.product-image-viewer-overlay{position:fixed;inset:0;z-index:6000;background:rgba(2,8,23,.94);display:none;flex-direction:column;align-items:stretch;justify-content:stretch;overscroll-behavior:contain;touch-action:none}
+.product-image-viewer-overlay.open{display:flex}
+.product-image-viewer-toolbar{height:58px;flex:0 0 58px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;color:#fff;background:rgba(2,8,23,.82);border-bottom:1px solid rgba(255,255,255,.12)}
+.product-image-viewer-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.product-image-viewer-controls{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.product-image-viewer-btn{height:36px;min-width:36px;padding:0 10px;border:1px solid rgba(255,255,255,.25);border-radius:8px;background:rgba(255,255,255,.10);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.product-image-viewer-btn:hover{background:rgba(255,255,255,.20)}
+.product-image-viewer-stage{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;cursor:default}
+.product-image-viewer-stage.pan-enabled{cursor:grab}.product-image-viewer-stage.dragging{cursor:grabbing}
+.product-image-viewer-img{display:block;max-width:92vw;max-height:calc(100dvh - 104px);width:auto;height:auto;object-fit:contain;transform-origin:center center;user-select:none;-webkit-user-drag:none;will-change:transform}
+.product-image-viewer-arrow{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:54px;border:0;border-radius:11px;background:rgba(15,23,42,.62);color:#fff;font-size:30px;cursor:pointer;z-index:3}
+.product-image-viewer-arrow.prev{left:12px}.product-image-viewer-arrow.next{right:12px}
+.product-image-viewer-arrow:hover{background:rgba(0,80,136,.92)}
+.product-image-viewer-footer{height:42px;flex:0 0 42px;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:12px;background:rgba(2,8,23,.82);border-top:1px solid rgba(255,255,255,.08)}
+@media(max-width:640px){.product-image-viewer-toolbar{height:auto;min-height:58px;flex-wrap:wrap}.product-image-viewer-title{width:100%}.product-image-viewer-controls{width:100%;justify-content:center}}
+
 </style>
 </head>
 <body>
@@ -280,8 +315,9 @@
       </div>
       <div class="modal-body">
         <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px">
-          <div id="viewImgBox" style="width:140px;height:140px;border:1px solid var(--line);border-radius:12px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg);box-shadow:0 1px 3px rgba(0,0,0,.08)">
-            <span style="font-size:36px;color:var(--faint)">📦</span>
+          <div class="view-product-gallery">
+            <div id="viewImgBox" class="view-product-gallery-stage"><span style="font-size:36px;color:var(--faint)">📦</span></div>
+            <div id="viewImgThumbs" class="view-product-gallery-thumbs"></div>
           </div>
           <div style="flex:1;min-width:220px">
             <div id="viewProductName" style="font-size:18px;font-weight:700;color:var(--ink)"></div>
@@ -1000,14 +1036,16 @@
   // ==========================================
   var PROD_IMG_MAX_DIM=1600,PROD_IMG_QUALITY=0.82;
   var productImageUrls=[],productPrimaryImageIndex=0,pendingImageSlot=0;
-  function updateImageSectionForEdit(docId,imageUrl,imageUrls,primaryIndex){productImageUrls=Array.isArray(imageUrls)&&imageUrls.length?imageUrls.slice(0,3):(imageUrl?[imageUrl]:[]);productPrimaryImageIndex=Math.max(0,Math.min(parseInt(primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));document.getElementById('imageHint').innerText=docId?'เพิ่มได้สูงสุด 3 รูป · คลิกรูปเพื่อขยาย · รูปหลักใช้ในตารางและหน้าค้นหา':'บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้';renderProductImageSlots(docId);}
+  function updateImageSectionForEdit(docId,imageUrl,imageUrls,primaryIndex){productImageUrls=Array.isArray(imageUrls)&&imageUrls.length?imageUrls.slice(0,3):(imageUrl?[imageUrl]:[]);productPrimaryImageIndex=Math.max(0,Math.min(parseInt(primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));document.getElementById('imageHint').innerText=docId?'เพิ่มได้สูงสุด 3 รูป · คลิกรูปเพื่อขยาย/Zoom · เลื่อนซ้าย/ขวาเพื่อจัดตำแหน่ง · เลือกรูปหลักได้':'บันทึกสินค้าก่อน จึงจะอัปโหลดรูปได้';renderProductImageSlots(docId);}
   function renderProductImageSlots(docId){
     var box=document.getElementById('productImageSlots');if(!box)return;
     box.className='product-image-slots-ui';
+    var count=productImageUrls.length;
     box.innerHTML=[0,1,2].map(function(i){
       var url=productImageUrls[i]||'',main=!!url&&i===productPrimaryImageIndex;
-      if(!url)return '<div class="product-image-slot-ui"><button type="button" class="product-image-add-ui" '+(!docId?'disabled':'')+' onclick="pickProductImage('+i+')">+ เพิ่มรูป '+(i+1)+'</button></div>';
-      return '<div class="product-image-slot-ui"><button type="button" class="product-image-preview-btn" title="คลิกเพื่อขยายรูป" onclick="openProductImageLightbox('+i+')"><img src="'+esc(url)+'" alt="รูปสินค้า '+(i+1)+'"><span class="product-image-zoom-hint">🔍 ขยาย</span></button><div class="product-image-actions-ui"><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="pickProductImage('+i+')">เปลี่ยน</button><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="deleteProductImageNow('+i+')">ลบ</button>'+(main?'<span class="badge badge-ok">รูปหลัก</span>':'<button type="button" class="btn btn-soft" style="padding:4px 7px;min-height:28px" onclick="setPrimaryProductImageNow('+i+')">ตั้งรูปหลัก</button>')+'</div></div>';
+      if(!url)return '<div class="product-image-slot-ui"><div class="product-image-position-ui"><span>ตำแหน่ง '+(i+1)+'</span></div><button type="button" class="product-image-add-ui" '+(!docId?'disabled':'')+' onclick="pickProductImage('+i+')">+ เพิ่มรูป '+(i+1)+'</button></div>';
+      var order='<div class="product-image-order-ui"><button type="button" class="btn btn-ghost" '+(i<=0?'disabled':'')+' onclick="moveProductImageNow('+i+','+(i-1)+')">← ซ้าย</button><button type="button" class="btn btn-ghost" '+(i>=count-1?'disabled':'')+' onclick="moveProductImageNow('+i+','+(i+1)+')">ขวา →</button></div>';
+      return '<div class="product-image-slot-ui"><div class="product-image-position-ui"><span>ตำแหน่ง '+(i+1)+'</span>'+(main?'<span class="badge badge-ok">รูปหลัก</span>':'')+'</div><button type="button" class="product-image-preview-btn" title="คลิกเพื่อดูรูปขนาดใหญ่" onclick="openProductImageLightbox('+i+')"><img src="'+esc(url)+'" alt="รูปสินค้า '+(i+1)+'"><span class="product-image-zoom-hint">🔍 ขยาย</span></button><div class="product-image-actions-ui"><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="pickProductImage('+i+')">เปลี่ยน</button><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="deleteProductImageNow('+i+')">ลบ</button>'+(main?'':'<button type="button" class="btn btn-soft" style="padding:4px 7px;min-height:28px" onclick="setPrimaryProductImageNow('+i+')">ตั้งรูปหลัก</button>')+'</div>'+order+'</div>';
     }).join('');
   }
   function pickProductImage(slot){if(!editingDocId){swyWarning('บันทึกสินค้าก่อน');return;}pendingImageSlot=slot;var i=document.getElementById('inp_imageFile');i.value='';i.click();}
@@ -1024,12 +1062,67 @@
   function syncProductImageCache(primary){var c=productsCache.find(function(p){return (p.id||p.productCode)===editingDocId;});if(c){c.imageUrls=productImageUrls.slice();c.primaryImageIndex=productPrimaryImageIndex;c.imageUrl=primary||productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';}}
   function deleteProductImageNow(slot){if(!editingDocId)return;swyConfirm({icon:'warning',title:'ลบรูปสินค้า?',confirmText:'ลบรูป',danger:true}).then(function(ok){if(!ok)return;callApi('deleteProductImage',[editingDocId,slot],function(res){if(res&&res.success){productImageUrls=res.imageUrls||[];productPrimaryImageIndex=res.primaryIndex||0;syncProductImageCache();renderProductImageSlots(editingDocId);filterAndRenderTable();toast('ลบรูปเรียบร้อย');}else swyError('ลบไม่สำเร็จ',(res&&res.message)||'');});});}
   function setPrimaryProductImageNow(slot){if(!editingDocId)return;callApi('setPrimaryProductImage',[editingDocId,slot],function(res){if(res&&res.success){productPrimaryImageIndex=res.primaryIndex||0;productImageUrls=res.imageUrls||productImageUrls;syncProductImageCache(res.imageUrl);renderProductImageSlots(editingDocId);filterAndRenderTable();toast('ตั้งรูปหลักแล้ว');}else swyError('ตั้งรูปหลักไม่สำเร็จ',(res&&res.message)||'');});}
+  function moveProductImageNow(fromSlot,toSlot){
+    if(!editingDocId)return;
+    fromSlot=parseInt(fromSlot,10);toSlot=parseInt(toSlot,10);
+    if(fromSlot===toSlot||fromSlot<0||toSlot<0||fromSlot>=productImageUrls.length||toSlot>=productImageUrls.length)return;
+    callApi('moveProductImage',[editingDocId,fromSlot,toSlot],function(res){
+      if(res&&res.success){
+        productImageUrls=Array.isArray(res.imageUrls)?res.imageUrls.slice(0,3):productImageUrls;
+        productPrimaryImageIndex=Math.max(0,Math.min(parseInt(res.primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));
+        syncProductImageCache(res.imageUrl);renderProductImageSlots(editingDocId);filterAndRenderTable();toast('ปรับตำแหน่งรูปแล้ว');
+      }else swyError('ปรับตำแหน่งรูปไม่สำเร็จ',(res&&res.message)||'');
+    },function(err){swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));});
+  }
+  var PRODUCT_VIEWER={urls:[],index:0,title:'รูปสินค้า',scale:1,x:0,y:0,drag:false,startX:0,startY:0,baseX:0,baseY:0};
+  function ensureProductImageViewer(){
+    var overlay=document.getElementById('productImageViewer');if(overlay)return overlay;
+    overlay=document.createElement('div');overlay.id='productImageViewer';overlay.className='product-image-viewer-overlay';overlay.innerHTML=
+      '<div class="product-image-viewer-toolbar"><div class="product-image-viewer-title" id="productImageViewerTitle">รูปสินค้า</div><div class="product-image-viewer-controls">'+
+      '<button type="button" class="product-image-viewer-btn" onclick="zoomProductImageViewer(-0.25)" aria-label="ซูมออก">−</button>'+
+      '<button type="button" class="product-image-viewer-btn" id="productImageViewerScale" onclick="resetProductImageViewer()" title="รีเซ็ตการซูม">100%</button>'+
+      '<button type="button" class="product-image-viewer-btn" onclick="zoomProductImageViewer(0.25)" aria-label="ซูมเข้า">+</button>'+
+      '<button type="button" class="product-image-viewer-btn" onclick="resetProductImageViewer()">Reset</button>'+
+      '<button type="button" class="product-image-viewer-btn" onclick="closeProductImageViewer()" aria-label="ปิด">✕</button></div></div>'+
+      '<div class="product-image-viewer-stage" id="productImageViewerStage"><button type="button" class="product-image-viewer-arrow prev" id="productImageViewerPrev" onclick="stepProductImageViewer(-1)">‹</button><img id="productImageViewerImg" class="product-image-viewer-img" alt="รูปสินค้า" draggable="false"><button type="button" class="product-image-viewer-arrow next" id="productImageViewerNext" onclick="stepProductImageViewer(1)">›</button></div>'+
+      '<div class="product-image-viewer-footer" id="productImageViewerFooter">หมุนล้อเมาส์เพื่อ Zoom · ลากรูปเมื่อซูม</div>';
+    document.body.appendChild(overlay);
+    var stage=document.getElementById('productImageViewerStage');
+    stage.addEventListener('wheel',function(e){e.preventDefault();zoomProductImageViewer(e.deltaY<0?0.15:-0.15);},{passive:false});
+    stage.addEventListener('pointerdown',function(e){if(PRODUCT_VIEWER.scale<=1||e.target.tagName==='BUTTON')return;PRODUCT_VIEWER.drag=true;PRODUCT_VIEWER.startX=e.clientX;PRODUCT_VIEWER.startY=e.clientY;PRODUCT_VIEWER.baseX=PRODUCT_VIEWER.x;PRODUCT_VIEWER.baseY=PRODUCT_VIEWER.y;stage.classList.add('dragging');stage.setPointerCapture(e.pointerId);});
+    stage.addEventListener('pointermove',function(e){if(!PRODUCT_VIEWER.drag)return;PRODUCT_VIEWER.x=PRODUCT_VIEWER.baseX+(e.clientX-PRODUCT_VIEWER.startX);PRODUCT_VIEWER.y=PRODUCT_VIEWER.baseY+(e.clientY-PRODUCT_VIEWER.startY);applyProductImageViewerTransform();});
+    function endDrag(e){if(!PRODUCT_VIEWER.drag)return;PRODUCT_VIEWER.drag=false;stage.classList.remove('dragging');try{stage.releasePointerCapture(e.pointerId);}catch(_){}}
+    stage.addEventListener('pointerup',endDrag);stage.addEventListener('pointercancel',endDrag);
+    return overlay;
+  }
   function showProductImageLightbox(urls,index,title){
     urls=(Array.isArray(urls)?urls:[]).filter(Boolean).slice(0,3);if(!urls.length)return;
-    index=Math.max(0,Math.min(parseInt(index,10)||0,urls.length-1));
-    var html='<div style="display:flex;align-items:center;justify-content:center;min-height:52vh;background:#f8fafc;border-radius:10px;padding:10px"><img src="'+esc(urls[index])+'" alt="'+esc(title||'รูปสินค้า')+'" style="display:block;max-width:100%;width:auto;max-height:76vh;object-fit:contain;background:#fff;border-radius:8px"></div><div style="margin-top:8px;font-size:12px;color:#64748b">รูป '+(index+1)+' / '+urls.length+'</div>';
-    Swal.fire({title:title||'รูปสินค้า',html:html,width:'min(980px,96vw)',showConfirmButton:false,showCloseButton:true,allowOutsideClick:true,allowEscapeKey:true});
+    if(window.SYYSelect)SYYSelect.closeActive();
+    var active=document.activeElement;if(active&&active.blur)active.blur();
+    PRODUCT_VIEWER.urls=urls;PRODUCT_VIEWER.index=Math.max(0,Math.min(parseInt(index,10)||0,urls.length-1));PRODUCT_VIEWER.title=title||'รูปสินค้า';
+    ensureProductImageViewer().classList.add('open');document.body.style.overflow='hidden';renderProductImageViewer();
   }
+  function renderProductImageViewer(){
+    var img=document.getElementById('productImageViewerImg');if(!img)return;
+    resetProductImageViewer(false);img.src=PRODUCT_VIEWER.urls[PRODUCT_VIEWER.index]||'';img.alt=PRODUCT_VIEWER.title+' '+(PRODUCT_VIEWER.index+1);
+    document.getElementById('productImageViewerTitle').textContent=PRODUCT_VIEWER.title;
+    var multi=PRODUCT_VIEWER.urls.length>1;document.getElementById('productImageViewerPrev').style.display=multi?'':'none';document.getElementById('productImageViewerNext').style.display=multi?'':'none';
+    document.getElementById('productImageViewerFooter').textContent='รูป '+(PRODUCT_VIEWER.index+1)+' / '+PRODUCT_VIEWER.urls.length+' · หมุนล้อเมาส์เพื่อ Zoom · ลากรูปเมื่อซูม';
+  }
+  function applyProductImageViewerTransform(){
+    var img=document.getElementById('productImageViewerImg'),stage=document.getElementById('productImageViewerStage');if(!img)return;
+    img.style.transform='translate('+PRODUCT_VIEWER.x+'px,'+PRODUCT_VIEWER.y+'px) scale('+PRODUCT_VIEWER.scale+')';
+    var scale=document.getElementById('productImageViewerScale');if(scale)scale.textContent=Math.round(PRODUCT_VIEWER.scale*100)+'%';
+    if(stage)stage.classList.toggle('pan-enabled',PRODUCT_VIEWER.scale>1);
+  }
+  function zoomProductImageViewer(delta){
+    var next=Math.max(0.5,Math.min(5,Math.round((PRODUCT_VIEWER.scale+delta)*100)/100));PRODUCT_VIEWER.scale=next;
+    if(next<=1){PRODUCT_VIEWER.x=0;PRODUCT_VIEWER.y=0;}applyProductImageViewerTransform();
+  }
+  function resetProductImageViewer(apply){PRODUCT_VIEWER.scale=1;PRODUCT_VIEWER.x=0;PRODUCT_VIEWER.y=0;PRODUCT_VIEWER.drag=false;if(apply!==false)applyProductImageViewerTransform();else setTimeout(applyProductImageViewerTransform,0);}
+  function stepProductImageViewer(delta){if(PRODUCT_VIEWER.urls.length<=1)return;PRODUCT_VIEWER.index=(PRODUCT_VIEWER.index+delta+PRODUCT_VIEWER.urls.length)%PRODUCT_VIEWER.urls.length;renderProductImageViewer();}
+  function closeProductImageViewer(){var o=document.getElementById('productImageViewer');if(o)o.classList.remove('open');PRODUCT_VIEWER.drag=false;document.body.style.overflow='';}
+  document.addEventListener('keydown',function(e){var o=document.getElementById('productImageViewer');if(!o||!o.classList.contains('open'))return;if(e.key==='Escape')closeProductImageViewer();else if(e.key==='+'||e.key==='=')zoomProductImageViewer(0.25);else if(e.key==='-')zoomProductImageViewer(-0.25);else if(e.key==='ArrowLeft')stepProductImageViewer(-1);else if(e.key==='ArrowRight')stepProductImageViewer(1);});
   function openProductImageLightbox(index){showProductImageLightbox(productImageUrls,index,'รูปสินค้า');}
   function openTableProductImageLightbox(docId){var item=productsCache.find(function(p){return (p.id||p.productCode)===docId;});if(!item)return;var urls=Array.isArray(item.imageUrls)&&item.imageUrls.length?item.imageUrls:(item.imageUrl?[item.imageUrl]:[]);showProductImageLightbox(urls,Math.max(0,urls.indexOf(item.imageUrl)),item.productName||'รูปสินค้า');}
 
@@ -1082,9 +1175,19 @@
   // ดูรายละเอียดสินค้า + สร้าง/พิมพ์บาร์โค้ด
   // ==========================================
   function viewImgFallback() {
-    document.getElementById('viewImgBox').innerHTML = '<span style="font-size:36px;color:var(--faint)">📦</span>';
+    var box=document.getElementById('viewImgBox');if(box)box.innerHTML='<span style="font-size:36px;color:var(--faint)">📦</span>';
   }
-  var viewProductImageUrls=[];
+  var viewProductImageUrls=[],viewProductImageIndex=0;
+  function renderViewProductGallery(){
+    var box=document.getElementById('viewImgBox'),thumbs=document.getElementById('viewImgThumbs');if(!box||!thumbs)return;
+    if(!viewProductImageUrls.length){box.innerHTML='<span style="font-size:36px;color:var(--faint)">📦</span>';thumbs.innerHTML='';return;}
+    viewProductImageIndex=Math.max(0,Math.min(viewProductImageIndex,viewProductImageUrls.length-1));
+    var url=viewProductImageUrls[viewProductImageIndex],multi=viewProductImageUrls.length>1;
+    box.innerHTML='<button type="button" class="view-product-gallery-main" title="คลิกเพื่อดูรูปขนาดใหญ่" onclick="openViewProductImageLightbox('+viewProductImageIndex+')"><img src="'+esc(url)+'" alt="รูปสินค้า '+(viewProductImageIndex+1)+'" onerror="viewImgFallback()"></button>'+(multi?'<button type="button" class="view-product-gallery-nav prev" onclick="stepViewProductImage(-1)">‹</button><button type="button" class="view-product-gallery-nav next" onclick="stepViewProductImage(1)">›</button>':'')+'<span class="view-product-gallery-count">'+(viewProductImageIndex+1)+' / '+viewProductImageUrls.length+'</span>';
+    thumbs.innerHTML=viewProductImageUrls.map(function(u,i){return '<button type="button" class="view-product-gallery-thumb'+(i===viewProductImageIndex?' active':'')+'" onclick="setViewProductImage('+i+')"><img src="'+esc(u)+'" alt="รูปย่อ '+(i+1)+'"></button>';}).join('');
+  }
+  function setViewProductImage(index){if(!viewProductImageUrls.length)return;viewProductImageIndex=Math.max(0,Math.min(parseInt(index,10)||0,viewProductImageUrls.length-1));renderViewProductGallery();}
+  function stepViewProductImage(delta){if(viewProductImageUrls.length<=1)return;viewProductImageIndex=(viewProductImageIndex+delta+viewProductImageUrls.length)%viewProductImageUrls.length;renderViewProductGallery();}
   function openViewProductImageLightbox(index){showProductImageLightbox(viewProductImageUrls,index,'รูปสินค้า');}
 
   function openViewModal(docId) {
@@ -1092,6 +1195,8 @@
     if (!item) { toast('ไม่พบข้อมูลสินค้า', 'err'); return; }
     viewingDocId = item.id || docId;
     viewProductImageUrls = Array.isArray(item.imageUrls) && item.imageUrls.length ? item.imageUrls.slice(0,3) : (item.imageUrl ? [item.imageUrl] : []);
+    viewProductImageIndex = Math.max(0, Math.min(parseInt(item.primaryImageIndex,10)||0, Math.max(0,viewProductImageUrls.length-1)));
+    if(item.imageUrl){var preferred=viewProductImageUrls.indexOf(item.imageUrl);if(preferred>=0)viewProductImageIndex=preferred;}
 
     document.getElementById('viewProductName').innerText = item.productName || '(ไม่มีชื่อ)';
     document.getElementById('viewProductSub').innerHTML =
@@ -1120,11 +1225,7 @@
       return '<div class="view-field-tile' + (f.wide ? ' wide' : '') + '"><div class="vft-label">' + esc(f.label) + '</div><div class="vft-value">' + esc(f.value) + '</div></div>';
     }).join('');
 
-    var imgBox = document.getElementById('viewImgBox');
-    var viewPrimaryIndex = Math.max(0, viewProductImageUrls.indexOf(item.imageUrl));
-    imgBox.innerHTML = item.imageUrl
-      ? '<img src="' + esc(item.imageUrl) + '" class="product-image-clickable" style="width:100%;height:100%;object-fit:contain;background:#fff" onclick="openViewProductImageLightbox(' + viewPrimaryIndex + ')" onerror="viewImgFallback()">'
-      : '<span style="font-size:36px;color:var(--faint)">📦</span>';
+    renderViewProductGallery();
 
     renderViewBarcodeSection(item);
     openModal('viewProductModal');
