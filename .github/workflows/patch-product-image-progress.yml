@@ -1,0 +1,40 @@
+name: Patch product image progress
+
+on:
+  push:
+    paths:
+      - 'tools/patch_product_image_progress.py'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch product image UI
+        run: python tools/patch_product_image_progress.py
+      - name: Verify
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('Master_Products.html').read_text(encoding='utf-8')
+          assert 'imgUploadProgressPercent' in s
+          assert 'setImageUploadProgress(100' in s
+          assert "if(window.SYYSelect)SYYSelect.closeActive();" in s
+          assert "text:'รูปนี้จะถูกลบออกจากรายการรูปสินค้า'" in s
+          assert "input:'" not in s[s.index('function deleteProductImageNow'):s.index('function setPrimaryProductImageNow')]
+          PY
+          git diff --check
+          test -z "$(git diff --name-only | grep -v '^Master_Products.html$')"
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'OpenAI Codex'
+          git config user.email 'codex@openai.com'
+          git add Master_Products.html
+          git commit -m 'Improve product image upload status and delete dialog'
+          git push origin main
