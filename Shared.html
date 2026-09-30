@@ -51,6 +51,7 @@ function openModal(id){
 }
 function closeModal(id){
   var el=document.getElementById(id);
+  if(window.SYYSelect) SYYSelect.closeActive();
   if(el) el.classList.remove('active');
 }
 
@@ -71,6 +72,7 @@ function ensureSYYSelectRuntimeStyles(){
     '.syy-select-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.syy-select-caret{color:#94a3b8;flex:none}',
     '.syy-select-panel{display:none;position:fixed;z-index:10000;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.18);overflow:hidden;min-width:220px;max-width:calc(100vw - 16px)}',
     '.syy-select.open .syy-select-panel{display:flex;flex-direction:column}',
+    '.syy-select-panel[data-syy-open="true"]{display:flex;flex-direction:column}',
     '.syy-select-search{width:calc(100% - 16px);margin:8px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:7px;outline:none;font:inherit;flex:none;box-sizing:border-box}',
     '.syy-select-list{min-height:0;max-height:260px;overflow:auto;border-top:1px solid #f1f5f9;flex:1 1 auto}',
     '.syy-select-option{display:block;width:100%;border:0;background:#fff;text-align:left;padding:8px 11px;color:#334155;cursor:pointer;font:inherit}',
@@ -96,7 +98,7 @@ var SYYSelect=(function(){
     if(below>=180||below>=above){p.style.top=Math.round(r.bottom+4)+'px';p.style.bottom='auto';p.style.maxHeight=Math.max(150,Math.min(360,below))+'px';}
     else{p.style.top='auto';p.style.bottom=Math.round(window.innerHeight-r.top+4)+'px';p.style.maxHeight=Math.max(150,Math.min(360,above))+'px';}
   }
-  function close(inst){inst=inst||active;if(!inst)return;inst.wrap.classList.remove('open');inst.control.setAttribute('aria-expanded','false');if(active===inst)active=null;}
+  function close(inst){inst=inst||active;if(!inst)return;inst.wrap.classList.remove('open');inst.panel.removeAttribute('data-syy-open');inst.control.setAttribute('aria-expanded','false');if(active===inst)active=null;}
   function enhance(sel){
     if(!sel||registry.has(sel)||sel.multiple||sel.dataset.syyNoSearch==='true')return;
     var wrap=document.createElement('div');wrap.className='syy-select';
@@ -108,7 +110,7 @@ var SYYSelect=(function(){
     var search=document.createElement('input');search.type='search';search.className='syy-select-search';search.placeholder='ค้นหา...';search.autocomplete='off';
     var list=document.createElement('div');list.className='syy-select-list';list.setAttribute('role','listbox');
     var meta=document.createElement('div');meta.className='syy-select-meta';panel.appendChild(search);panel.appendChild(list);panel.appendChild(meta);
-    sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);wrap.appendChild(panel);sel.classList.add('syy-select-native');sel.style.position='absolute';sel.style.opacity='0';sel.style.pointerEvents='none';sel.style.width='1px';sel.style.height='1px';sel.style.margin='0';sel.style.padding='0';sel.setAttribute('aria-hidden','true');sel.tabIndex=-1;
+    sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);document.body.appendChild(panel);sel.classList.add('syy-select-native');sel.style.position='absolute';sel.style.opacity='0';sel.style.pointerEvents='none';sel.style.width='1px';sel.style.height='1px';sel.style.margin='0';sel.style.padding='0';sel.setAttribute('aria-hidden','true');sel.tabIndex=-1;
     var inst={sel:sel,wrap:wrap,control:control,label:label,panel:panel,search:search,list:list,meta:meta};
     function sync(){var o=sel.options[sel.selectedIndex];label.textContent=o?o.text:'เลือก...';control.disabled=sel.disabled;}
     function render(q){
@@ -117,7 +119,7 @@ var SYYSelect=(function(){
       list.innerHTML='';if(!matches.length){var e=document.createElement('div');e.className='syy-select-empty';e.textContent='ไม่พบข้อมูล';list.appendChild(e);}else list.appendChild(frag);
       meta.textContent=matches.length>RENDER_LIMIT?'แสดง '+RENDER_LIMIT+' จาก '+matches.length+' รายการ · พิมพ์เพิ่มเพื่อกรอง':'ทั้งหมด '+matches.length+' รายการ';
     }
-    function open(){if(control.disabled)return;if(active&&active!==inst)close(active);active=inst;sync();wrap.classList.add('open');control.setAttribute('aria-expanded','true');search.value='';render('');position(inst);setTimeout(function(){search.focus();},0);}
+    function open(){if(control.disabled)return;if(active&&active!==inst)close(active);active=inst;sync();wrap.classList.add('open');panel.setAttribute('data-syy-open','true');control.setAttribute('aria-expanded','true');search.value='';render('');position(inst);setTimeout(function(){search.focus();},0);}
     control.onclick=function(){wrap.classList.contains('open')?close(inst):open();};
     control.onkeydown=function(e){if(e.key==='Enter'||e.key===' '||e.key==='ArrowDown'){e.preventDefault();open();}};
     search.oninput=function(){render(search.value);position(inst);};
@@ -128,9 +130,9 @@ var SYYSelect=(function(){
   }
   function init(root){root=root||document;if(root.matches&&root.matches('select'))enhance(root);if(root.querySelectorAll)root.querySelectorAll('select').forEach(enhance);}
   function refresh(root){init(root);if(root&&root.matches&&root.matches('select')){var one=registry.get(root);if(one){var o=root.options[root.selectedIndex];one.label.textContent=o?o.text:'เลือก...';}}if((root||document).querySelectorAll)(root||document).querySelectorAll('select').forEach(function(sel){var x=registry.get(sel);if(x){var o=sel.options[sel.selectedIndex];x.label.textContent=o?o.text:'เลือก...';x.control.disabled=sel.disabled;}});}
-  function documentClick(e){if(active&&!active.wrap.contains(e.target))close(active);}
+  function documentClick(e){if(active&&!active.wrap.contains(e.target)&&!active.panel.contains(e.target))close(active);}
   function reposition(){if(active)position(active);}
-  return {init:init,refresh:refresh,enhance:enhance,documentClick:documentClick,reposition:reposition};
+  return {init:init,refresh:refresh,enhance:enhance,documentClick:documentClick,reposition:reposition,closeActive:function(){close(active);}};
 })();
 window.SYYSelect=SYYSelect;
 document.addEventListener('click',SYYSelect.documentClick);
