@@ -1,0 +1,130 @@
+from pathlib import Path
+
+# Shared.html: searchable select must remain usable even if Styles.html is stale/missing.
+p = Path('Shared.html')
+s = p.read_text(encoding='utf-8')
+marker = "var SYYSelect=(function(){"
+if 'function ensureSYYSelectRuntimeStyles()' not in s:
+    runtime = r'''function ensureSYYSelectRuntimeStyles(){
+  if(document.getElementById('syy-select-runtime-style'))return;
+  var st=document.createElement('style');st.id='syy-select-runtime-style';
+  st.textContent=[
+    '.syy-select{position:relative;display:inline-block;width:auto;min-width:160px;max-width:100%}',
+    '.syy-select.syy-select-block{display:block;width:100%;min-width:0}',
+    '.syy-select.syy-select-compact{width:auto;min-width:120px;flex:0 1 auto}',
+    '.syy-select-native{position:absolute!important;opacity:0!important;pointer-events:none!important;width:1px!important;height:1px!important;margin:0!important;padding:0!important;overflow:hidden!important}',
+    '.syy-select-control{width:100%;min-height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;cursor:pointer;font:inherit}',
+    '.syy-select-control:focus,.syy-select.open .syy-select-control{outline:none;border-color:#005088;box-shadow:0 0 0 3px rgba(0,80,136,.12)}',
+    '.syy-select-control:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed}',
+    '.syy-select-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.syy-select-caret{color:#94a3b8;flex:none}',
+    '.syy-select-panel{display:none;position:fixed;z-index:10000;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.18);overflow:hidden;min-width:220px;max-width:calc(100vw - 16px)}',
+    '.syy-select.open .syy-select-panel{display:flex;flex-direction:column}',
+    '.syy-select-search{width:calc(100% - 16px);margin:8px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:7px;outline:none;font:inherit;flex:none;box-sizing:border-box}',
+    '.syy-select-list{min-height:0;max-height:260px;overflow:auto;border-top:1px solid #f1f5f9;flex:1 1 auto}',
+    '.syy-select-option{display:block;width:100%;border:0;background:#fff;text-align:left;padding:8px 11px;color:#334155;cursor:pointer;font:inherit}',
+    '.syy-select-option:hover,.syy-select-option:focus{outline:none;background:#e6f0fa;color:#005088}.syy-select-option.selected{font-weight:600;background:#f8fbfe}',
+    '.syy-select-empty{padding:13px;text-align:center;color:#94a3b8;font-size:12px}.syy-select-meta{padding:5px 9px;border-top:1px solid #f1f5f9;font-size:10.5px;color:#94a3b8;background:#f8fafc}',
+    '@media(max-width:767px){.syy-select:not(.syy-select-block){min-width:110px}.syy-select-panel{min-width:min(280px,calc(100vw - 16px))}}'
+  ].join('');
+  (document.head||document.documentElement).appendChild(st);
+}
+ensureSYYSelectRuntimeStyles();
+'''
+    if marker not in s:
+        raise SystemExit('Shared marker not found')
+    s = s.replace(marker, runtime + '\n' + marker, 1)
+old = "sel.classList.add('syy-select-native');"
+new = "sel.classList.add('syy-select-native');sel.style.position='absolute';sel.style.opacity='0';sel.style.pointerEvents='none';sel.style.width='1px';sel.style.height='1px';sel.style.margin='0';sel.style.padding='0';sel.setAttribute('aria-hidden','true');sel.tabIndex=-1;"
+if old in s and new not in s:
+    s = s.replace(old, new, 1)
+s = '\n'.join(line.rstrip() for line in s.splitlines()) + '\n'
+p.write_text(s, encoding='utf-8')
+
+# Master_Products.html: UI-only image add / preview / zoom improvements.
+p = Path('Master_Products.html')
+s = p.read_text(encoding='utf-8')
+if '.product-image-slots-ui{' not in s:
+    css = r'''/* Product images UI hardening — no DB/schema changes */
+.product-image-slots-ui{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.product-image-slot-ui{border:1px solid var(--line,#e8edf2);border-radius:10px;padding:8px;background:#fff;min-width:0}
+.product-image-preview-btn{position:relative;width:100%;height:128px;border:0;padding:0;background:#fff;border-radius:8px;overflow:hidden;cursor:zoom-in;display:flex;align-items:center;justify-content:center}
+.product-image-preview-btn img{width:100%;height:100%;object-fit:contain;object-position:center;background:#fff}
+.product-image-zoom-hint{position:absolute;right:6px;bottom:6px;background:rgba(15,23,42,.78);color:#fff;border-radius:6px;padding:3px 7px;font-size:10.5px;pointer-events:none}
+.product-image-actions-ui{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-top:7px}
+.product-image-add-ui{width:100%;height:128px;border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;color:#475569;cursor:pointer;font:inherit;font-weight:600}
+.product-image-add-ui:hover:not(:disabled){border-color:var(--primary,#005088);color:var(--primary,#005088);background:#eef6ff}.product-image-add-ui:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:640px){.product-image-slots-ui{grid-template-columns:1fr}.product-image-preview-btn,.product-image-add-ui{height:180px}}
+'''
+    pos = s.find('</style>')
+    if pos < 0:
+        raise SystemExit('style end not found')
+    s = s[:pos] + css + s[pos:]
+
+start = s.find('  function renderProductImageSlots(docId){')
+end = s.find('  function pickProductImage(slot)', start)
+if start < 0 or end < 0:
+    raise SystemExit('render image slots not found')
+repl = r'''  function renderProductImageSlots(docId){
+    var box=document.getElementById('productImageSlots');if(!box)return;
+    box.className='product-image-slots-ui';
+    box.innerHTML=[0,1,2].map(function(i){
+      var url=productImageUrls[i]||'',main=!!url&&i===productPrimaryImageIndex;
+      if(!url)return '<div class="product-image-slot-ui"><button type="button" class="product-image-add-ui" '+(!docId?'disabled':'')+' onclick="pickProductImage('+i+')">+ เพิ่มรูป '+(i+1)+'</button></div>';
+      return '<div class="product-image-slot-ui"><button type="button" class="product-image-preview-btn" title="คลิกเพื่อขยายรูป" onclick="openProductImageLightbox('+i+')"><img src="'+esc(url)+'" alt="รูปสินค้า '+(i+1)+'"><span class="product-image-zoom-hint">🔍 ขยาย</span></button><div class="product-image-actions-ui"><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="pickProductImage('+i+')">เปลี่ยน</button><button type="button" class="btn btn-ghost" style="padding:4px 7px;min-height:28px" onclick="deleteProductImageNow('+i+')">ลบ</button>'+(main?'<span class="badge badge-ok">รูปหลัก</span>':'<button type="button" class="btn btn-soft" style="padding:4px 7px;min-height:28px" onclick="setPrimaryProductImageNow('+i+')">ตั้งรูปหลัก</button>')+'</div></div>';
+    }).join('');
+  }
+'''
+s = s[:start] + repl + s[end:]
+
+start = s.find('  function uploadProductImageNow(base64,slot){')
+end = s.find('  function syncProductImageCache(primary)', start)
+if start < 0 or end < 0:
+    raise SystemExit('upload handler not found')
+repl = r'''  function uploadProductImageNow(base64,slot){
+    var progress=document.getElementById('imgUploadProgress'),input=document.getElementById('inp_imageFile');
+    if(progress)progress.style.display='block';
+    callApi('uploadProductImage',[editingDocId,base64,slot],function(res){
+      if(progress)progress.style.display='none';if(input)input.value='';
+      if(res&&res.success){productImageUrls=Array.isArray(res.imageUrls)?res.imageUrls.slice(0,3):productImageUrls;productPrimaryImageIndex=Math.max(0,Math.min(parseInt(res.primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));syncProductImageCache(res.imageUrl);renderProductImageSlots(editingDocId);toast('อัปโหลดรูปสำเร็จ');filterAndRenderTable();}
+      else swyError('อัปโหลดไม่สำเร็จ',(res&&res.message)||'ไม่สามารถบันทึกรูปได้');
+    },function(err){if(progress)progress.style.display='none';if(input)input.value='';swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));});
+  }
+'''
+s = s[:start] + repl + s[end:]
+
+start = s.find('  function openProductImageLightbox(index){')
+end = s.find('\n\n  // ==========================================\n  // สร้างบาร์โค้ด', start)
+if start < 0 or end < 0:
+    raise SystemExit('edit lightbox not found')
+repl = r'''  function showProductImageLightbox(urls,index,title){
+    urls=(Array.isArray(urls)?urls:[]).filter(Boolean).slice(0,3);if(!urls.length)return;
+    index=Math.max(0,Math.min(parseInt(index,10)||0,urls.length-1));
+    var html='<div style="display:flex;align-items:center;justify-content:center;min-height:52vh;background:#f8fafc;border-radius:10px;padding:10px"><img src="'+esc(urls[index])+'" alt="'+esc(title||'รูปสินค้า')+'" style="display:block;max-width:100%;width:auto;max-height:76vh;object-fit:contain;background:#fff;border-radius:8px"></div><div style="margin-top:8px;font-size:12px;color:#64748b">รูป '+(index+1)+' / '+urls.length+'</div>';
+    Swal.fire({title:title||'รูปสินค้า',html:html,width:'min(980px,96vw)',showConfirmButton:false,showCloseButton:true,allowOutsideClick:true,allowEscapeKey:true});
+  }
+  function openProductImageLightbox(index){showProductImageLightbox(productImageUrls,index,'รูปสินค้า');}
+  function openTableProductImageLightbox(docId){var item=productsCache.find(function(p){return (p.id||p.productCode)===docId;});if(!item)return;var urls=Array.isArray(item.imageUrls)&&item.imageUrls.length?item.imageUrls:(item.imageUrl?[item.imageUrl]:[]);showProductImageLightbox(urls,Math.max(0,urls.indexOf(item.imageUrl)),item.productName||'รูปสินค้า');}'''
+s = s[:start] + repl + s[end:]
+
+old = """  function openViewProductImageLightbox(index){\n    if(!viewProductImageUrls.length)return;\n    index=Math.max(0,Math.min(parseInt(index,10)||0,viewProductImageUrls.length-1));\n    var html='<div style=\"display:flex;align-items:center;justify-content:center;min-height:50vh\"><img src=\"'+esc(viewProductImageUrls[index])+'\" style=\"max-width:90vw;max-height:72vh;object-fit:contain\"></div><div style=\"margin-top:8px\">รูป '+(index+1)+' / '+viewProductImageUrls.length+'</div>';\n    Swal.fire({html:html,width:'min(960px,96vw)',showConfirmButton:false,showCloseButton:true,allowOutsideClick:true,allowEscapeKey:true});\n  }"""
+if old not in s:
+    raise SystemExit('view lightbox not found')
+s = s.replace(old, "  function openViewProductImageLightbox(index){showProductImageLightbox(viewProductImageUrls,index,'รูปสินค้า');}", 1)
+
+old = """      var imgCell = item.imageUrl\n        ? '<img src=\"' + esc(item.imageUrl) + '\" alt=\"\" loading=\"lazy\" style=\"width:36px;height:36px;object-fit:contain;background:#fff;border-radius:6px;border:1px solid var(--line)\" onerror=\"prodImgFallback(this)\">'\n        : '<span style=\"font-size:16px;color:var(--faint)\">📦</span>';"""
+new = """      var imgCell = item.imageUrl\n        ? '<button type=\"button\" title=\"คลิกเพื่อขยายรูป\" aria-label=\"ขยายรูปสินค้า\" onclick=\"openTableProductImageLightbox(\\'' + escJs(codeKey) + '\\')\" style=\"border:0;background:transparent;padding:0;cursor:zoom-in\"><img src=\"' + esc(item.imageUrl) + '\" alt=\"\" loading=\"lazy\" style=\"width:36px;height:36px;object-fit:contain;background:#fff;border-radius:6px;border:1px solid var(--line)\" onerror=\"prodImgFallback(this)\"></button>'\n        : '<span style=\"font-size:16px;color:var(--faint)\">📦</span>';"""
+if old not in s:
+    raise SystemExit('table img block not found')
+s = s.replace(old, new, 1)
+s = '\n'.join(line.rstrip() for line in s.splitlines()) + '\n'
+p.write_text(s, encoding='utf-8')
+
+# Backend remains unchanged; verify existing API wiring only.
+code = Path('Code.gs').read_text(encoding='utf-8')
+for x in [
+    'uploadProductImage       : "staff"',
+    'deleteProductImage       : "staff"',
+    'setPrimaryProductImage   : "staff"',
+    'uploadProductImage        : uploadProductImage'
+]:
+    assert x in code, x
