@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - tools/fix_product_actions_sticky_header.py
+      - .github/workflows/fix-product-actions-sticky-header.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
