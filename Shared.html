@@ -57,6 +57,31 @@ function closeModal(id){
 
 /* ── SYY Searchable Select ────────────────────────────────────────────────
    Progressive enhancement for native <select>. Search is 100% client-side. */
+function ensureSYYSelectRuntimeStyles(){
+  if(document.getElementById('syy-select-runtime-style'))return;
+  var st=document.createElement('style');st.id='syy-select-runtime-style';
+  st.textContent=[
+    '.syy-select{position:relative;display:inline-block;width:auto;min-width:160px;max-width:100%}',
+    '.syy-select.syy-select-block{display:block;width:100%;min-width:0}',
+    '.syy-select.syy-select-compact{width:auto;min-width:120px;flex:0 1 auto}',
+    '.syy-select-native{position:absolute!important;opacity:0!important;pointer-events:none!important;width:1px!important;height:1px!important;margin:0!important;padding:0!important;overflow:hidden!important}',
+    '.syy-select-control{width:100%;min-height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;cursor:pointer;font:inherit}',
+    '.syy-select-control:focus,.syy-select.open .syy-select-control{outline:none;border-color:#005088;box-shadow:0 0 0 3px rgba(0,80,136,.12)}',
+    '.syy-select-control:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed}',
+    '.syy-select-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.syy-select-caret{color:#94a3b8;flex:none}',
+    '.syy-select-panel{display:none;position:fixed;z-index:10000;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.18);overflow:hidden;min-width:220px;max-width:calc(100vw - 16px)}',
+    '.syy-select.open .syy-select-panel{display:flex;flex-direction:column}',
+    '.syy-select-search{width:calc(100% - 16px);margin:8px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:7px;outline:none;font:inherit;flex:none;box-sizing:border-box}',
+    '.syy-select-list{min-height:0;max-height:260px;overflow:auto;border-top:1px solid #f1f5f9;flex:1 1 auto}',
+    '.syy-select-option{display:block;width:100%;border:0;background:#fff;text-align:left;padding:8px 11px;color:#334155;cursor:pointer;font:inherit}',
+    '.syy-select-option:hover,.syy-select-option:focus{outline:none;background:#e6f0fa;color:#005088}.syy-select-option.selected{font-weight:600;background:#f8fbfe}',
+    '.syy-select-empty{padding:13px;text-align:center;color:#94a3b8;font-size:12px}.syy-select-meta{padding:5px 9px;border-top:1px solid #f1f5f9;font-size:10.5px;color:#94a3b8;background:#f8fafc}',
+    '@media(max-width:767px){.syy-select:not(.syy-select-block){min-width:110px}.syy-select-panel{min-width:min(280px,calc(100vw - 16px))}}'
+  ].join('');
+  (document.head||document.documentElement).appendChild(st);
+}
+ensureSYYSelectRuntimeStyles();
+
 var SYYSelect=(function(){
   var registry=new WeakMap(),active=null,RENDER_LIMIT=200;
   function norm(v){return String(v==null?'':v).toLocaleLowerCase('th-TH').normalize('NFKC').trim();}
@@ -83,7 +108,7 @@ var SYYSelect=(function(){
     var search=document.createElement('input');search.type='search';search.className='syy-select-search';search.placeholder='ค้นหา...';search.autocomplete='off';
     var list=document.createElement('div');list.className='syy-select-list';list.setAttribute('role','listbox');
     var meta=document.createElement('div');meta.className='syy-select-meta';panel.appendChild(search);panel.appendChild(list);panel.appendChild(meta);
-    sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);wrap.appendChild(panel);sel.classList.add('syy-select-native');
+    sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);wrap.appendChild(panel);sel.classList.add('syy-select-native');sel.style.position='absolute';sel.style.opacity='0';sel.style.pointerEvents='none';sel.style.width='1px';sel.style.height='1px';sel.style.margin='0';sel.style.padding='0';sel.setAttribute('aria-hidden','true');sel.tabIndex=-1;
     var inst={sel:sel,wrap:wrap,control:control,label:label,panel:panel,search:search,list:list,meta:meta};
     function sync(){var o=sel.options[sel.selectedIndex];label.textContent=o?o.text:'เลือก...';control.disabled=sel.disabled;}
     function render(q){
