@@ -1,0 +1,28 @@
+name: Fix product actions sticky header
+
+on:
+  push:
+    paths:
+      - tools/fix_product_actions_sticky_header.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Apply patch
+        run: python tools/fix_product_actions_sticky_header.py
+      - name: Verify file
+        run: python -c "from pathlib import Path; s=Path('Master_Products.html').read_text(encoding='utf-8'); assert '#productTable thead th.col-sticky-right' in s; assert 'z-index:25' in s"
+      - name: Commit change
+        run: |
+          git config user.name 'OpenAI Codex'
+          git config user.email 'codex@openai.com'
+          git add Master_Products.html
+          git diff --cached --quiet || git commit -m 'Fix product actions sticky header during scroll'
+          git push origin main
