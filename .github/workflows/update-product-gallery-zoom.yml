@@ -1,0 +1,46 @@
+name: Update product gallery and zoom
+
+on:
+  push:
+    paths:
+      - '.github/workflows/update-product-gallery-zoom.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch gallery
+        run: python tools/update_product_gallery.py
+      - name: Patch zoom viewer
+        run: python tools/update_product_zoom.py
+      - name: Verify
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('Master_Products.html').read_text(encoding='utf-8')
+          assert 'function moveProductImageNow(fromSlot,toSlot)' in s
+          assert "callApi('moveProductImage'" in s
+          assert 'function renderViewProductGallery()' in s
+          assert 'view-product-gallery-thumb' in s
+          assert 'function zoomProductImageViewer(delta)' in s
+          assert "stage.addEventListener('wheel'" in s
+          assert 'product-image-viewer-btn' in s
+          assert 'SYYSelect.closeActive()' in s
+          assert 'max(0.5' in s and 'Math.min(5' in s
+          PY
+          git diff --check
+          test -z "$(git diff --name-only | grep -v '^Master_Products.html$')"
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'OpenAI Codex'
+          git config user.email 'codex@openai.com'
+          git add Master_Products.html
+          git commit -m 'Add product gallery reorder and zoom viewer'
+          git push origin main
