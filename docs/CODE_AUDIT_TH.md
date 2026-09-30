@@ -83,3 +83,17 @@ Mobile navigation สร้างจากเงื่อนไข role ชุ�
 ### Remaining scale ceiling
 
 Dashboard ยังต้องอ่าน raw movements ใน reporting horizon ตอน initial bootstrap. หากปริมาณจริงขึ้นถึงหลายแสน/ล้าน movements ภายใน 5 ปี ขั้นถัดไปควรใช้ daily/monthly aggregate documents และ backfill ที่ควบคุมได้; Phase นี้ยังไม่เปลี่ยน schema หรือ migrate ข้อมูลย้อนหลัง.
+
+
+## Phase A — Post-write Read/Write Efficiency
+
+- Product Save ไม่ reload `getAllProducts()` ทั้งใน iframe และ parent อีกต่อไป: backend คืนสินค้าที่บันทึกแล้วหนึ่งรายการ แล้ว Product table/Dashboard patch cache เฉพาะ record นั้น.
+- Product Gallery ใช้ draft ฝั่ง browser สำหรับ Add/Delete/Move/Primary; ไม่มี Firestore/Drive mutation ระหว่างจัดรูป และ commit metadata ครั้งเดียวตอนกดบันทึกสินค้า. กดยกเลิกก่อนบันทึกไม่แก้ข้อมูลรูป.
+- Quotation และ Tax Invoice ใช้ full bootstrap เฉพาะครั้งแรก; การเปลี่ยนปีและ refresh หลัง write ใช้ list-only endpoint จึงไม่โหลด Customer/Product master ซ้ำ.
+- Quotation Save อ่านลูกค้าด้วย document ID ตรงรายการ แทนการ hydrate ลูกค้าทั้ง collection.
+- Quick Add Customer ใน Tax Invoice ใช้ response ของ `saveCustomer` อัปเดต local cache ไม่เรียก `getCustomersFull()` ซ้ำ.
+- Stock Issue ใช้ `issueStock().results` patch stock ในหน้าเดิม และยังใช้ Dashboard delta เดิม; ไม่ reload Product collection หลังตัดสต๊อก.
+- Receive Goods คืน PO/product-stock delta จาก transaction ที่มีข้อมูลอยู่แล้ว และหน้า PO patch เฉพาะรายการที่เปลี่ยน พร้อมส่ง Dashboard delta trigger; ไม่ `loadAll()` หลังรับสินค้า.
+- Brand/Category/Vendor/Zone/Car/Customer patch local table หลัง save/delete; master ที่มีผลต่อ dropdown ส่ง `MASTER_DELTA` ไป parent/Product iframe แทน reload master collections ทั้งชุด.
+- Phase นี้ไม่เพิ่ม/rename/delete collection หรือ field, ไม่มี migration/backfill และไม่คำนวณ stock ย้อนหลัง. Endpoint เดิมยังคงไว้เพื่อ backward compatibility.
+- การตรวจใน CI เป็น static/source verification; การพิสูจน์ Firestore quota/runtime regression ยังต้องทำ Apps Script deployment verification + UAT/telemetry บน environment จริง.

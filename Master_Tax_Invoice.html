@@ -524,6 +524,7 @@ var sellerInfo     = { name: '', branch: '', address: '', taxId: '' };
 // ★ ปีที่กำลังแสดงอยู่ตอนนี้ ('all' = ทุกปี, หรือตัวเลข พ.ศ.) — เริ่มต้นเป็นปีล่าสุดเสมอ
 var currentPageYear   = null;
 var availableYearsCache = [];
+var taxInvoiceBootstrapped = false;
 var editingDocId   = null;
 var targetDeleteId = null;
 var itemRowSeq     = 0;
@@ -657,12 +658,14 @@ function loadAll(yearParam, onDone) {
   document.getElementById('recordCount').innerText = 'กำลังโหลด';
   document.getElementById('pageYearLoadingBadge').style.display = 'inline';
 
-  callApi('getTaxInvoicePageData', [yearParam || ''], function(data) {
-      invoicesCache      = (data && data.invoices)       || [];
-      sellerInfo          = (data && data.seller)          || sellerInfo;
-      customersCache       = (data && data.customers)       || [];
-      productsCache       = (data && data.products)        || [];
+  var apiName = taxInvoiceBootstrapped ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
+  callApi(apiName, [yearParam || ''], function(data) {
+      invoicesCache = (data && data.invoices) || [];
+      if (data && data.seller) sellerInfo = data.seller;
+      if (data && data.customers) customersCache = data.customers;
+      if (data && data.products) productsCache = data.products;
       availableYearsCache = (data && data.availableYears) || [new Date().getFullYear() + 543];
+      taxInvoiceBootstrapped = true;
 
       // ★ บันทึกว่าตอนนี้กำลังดูปีไหนอยู่ (ใช้ทั้งใน dashboard และ drill-down)
       currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || availableYearsCache[0]);
@@ -833,15 +836,26 @@ function submitQuickAddCustomer() {
       btn.disabled = false;
       btn.innerText = '💾 บันทึกลูกค้า';
       if (res.success) {
-        // ★ ต้องโหลดรายชื่อลูกค้าใหม่จาก server เพราะเราไม่มีสำเนา backend ฝั่ง client
-        //   แล้วค่อย auto-select ลูกค้าที่เพิ่งเพิ่ม + auto-fill ให้ทันที
-        callApi('getCustomersFull', [], function(freshCustomers) {
-            customersCache = freshCustomers || [];
-            populateCustomerDropdown();
-            document.getElementById('modalCustomerSelect').value = res.id;
-            onCustomerSelect();
-            closeQuickAddCustomer();
-          }, function() { closeQuickAddCustomer(); });
+        var raw = res.data || {};
+        var customer = {
+          id:res.id,
+          Customer_Name:raw.Customer_Name || payload.customerName || '',
+          Customer_Type:raw.Customer_Type || 'ลูกค้าทั่วไป',
+          Address_No:raw.Address_No || payload.addressNo || '', Address_Moo:raw.Address_Moo || payload.addressMoo || '',
+          Address_Road:raw.Address_Road || payload.addressRoad || '', Subdistrict:raw.Subdistrict || payload.subdistrict || '',
+          District:raw.District || payload.district || '', Province:raw.Province || payload.province || '',
+          Postal_Code:raw.Postal_Code || payload.postalCode || '', Tax_ID:raw.Tax_ID || payload.taxId || '',
+          Branch:raw.Branch || payload.branch || 'สำนักงานใหญ่', Phone:raw.Phone || payload.phone || '', Status:raw.Status || 'Active'
+        };
+        customer.Address=[customer.Address_No?'เลขที่ '+customer.Address_No:'',customer.Address_Moo?'หมู่ '+customer.Address_Moo:'',
+          customer.Address_Road?'ถนน'+customer.Address_Road:'',customer.Subdistrict?'ตำบล/แขวง'+customer.Subdistrict:'',
+          customer.District?'อำเภอ/เขต'+customer.District:'',customer.Province?'จังหวัด'+customer.Province:'',customer.Postal_Code||''].filter(Boolean).join(' ');
+        customersCache.push(customer);
+        populateCustomerDropdown();
+        document.getElementById('modalCustomerSelect').value = res.id;
+        if(window.SYYSelect)SYYSelect.refresh(document.getElementById('modalCustomerSelect'));
+        onCustomerSelect();
+        closeQuickAddCustomer();
       } else {
         alertEl.className = 'modal-alert error';
         alertEl.innerText = '' + res.message;

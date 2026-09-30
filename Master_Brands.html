@@ -260,8 +260,10 @@
       if(res && res.success){
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+' “'+name+'” เรียบร้อย');
-        loadTable();
-        notifyParentRefreshDropdowns();
+        var raw=res.data||{},item={id:res.id,Name:raw.Brand_Name||name,Brand_Name:raw.Brand_Name||name};
+        var pos=cache.findIndex(function(x){return x.id===item.id;});if(pos>-1)cache[pos]=item;else cache.push(item);
+        renderRows();
+        notifyParentMasterDelta('brands',item,false);
       } else {
         alertEl.className='modal-alert error';
         alertEl.innerText=''+((res&&res.message)||'บันทึกไม่สำเร็จ');
@@ -295,8 +297,8 @@
       closeModal('deleteModal');
       if(res && res.success){
         toast('ลบ'+ENTITY+'เรียบร้อย');
-        loadTable();
-        notifyParentRefreshDropdowns();
+        var removedId=deleteId;cache=cache.filter(function(x){return x.id!==removedId;});renderRows();
+        notifyParentMasterDelta('brands',{id:removedId},true);
       } else {
         swyError('ลบไม่สำเร็จ',(res&&res.message)||'');
       }

@@ -329,6 +329,7 @@ var listStatusFilter = '';
 // ★ ปีที่กำลังแสดงอยู่ในทะเบียนตอนนี้ ('all' = ทุกปี, หรือตัวเลข พ.ศ.) — เริ่มต้นเป็นปีล่าสุดเสมอ
 var currentPageYear = null;
 var availableYearsCache = [];
+var quotationBootstrapped = false;
 
 var STATUS_CLASS = {
   'ร่าง'               : 'status-draft',
@@ -355,16 +356,18 @@ function loadPageData(yearParam, afterLoad) {
   if (btn) btnBusy(btn, 'กำลังโหลด...');
   var badge = document.getElementById('listYearLoadingBadge');
   if (badge) badge.style.display = 'inline';
-  callApi('getQuotationPageData', [yearParam || ''], function (data) {
+  var apiName = quotationBootstrapped ? 'getQuotationListData' : 'getQuotationPageData';
+  callApi(apiName, [yearParam || ''], function (data) {
     if (btn) btnDone(btn);
     data = data || {};
-    customers  = data.customers  || [];
-    products   = data.products   || [];
+    if (data.customers) customers = data.customers;
+    if (data.products) products = data.products;
     quotations = data.quotations || [];
-    sellerInfo = data.seller     || {};
-    marginMin  = data.marginMin  || 15;
-    statuses   = data.statuses   || [];
+    if (data.seller) sellerInfo = data.seller;
+    if (data.marginMin != null) marginMin = data.marginMin;
+    if (data.statuses) statuses = data.statuses;
     availableYearsCache = data.availableYears || [new Date().getFullYear() + 543];
+    quotationBootstrapped = true;
     currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || availableYearsCache[0]);
     populateListYearDropdown();
     renderCustomerOptions();

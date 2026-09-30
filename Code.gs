@@ -380,6 +380,80 @@ function moveProductImage(productCode, fromSlot, toSlot) {
   }
 }
 
+
+/**
+ * Phase A: บันทึก Product Gallery จาก draft ฝั่ง browser ครั้งเดียวตอนกดบันทึกสินค้า
+ * - ไม่เปลี่ยน schema Product_Images เดิม
+ * - รูปเดิมที่ยังถูกอ้างอิงจะ reuse URL/File ID เดิม
+ * - รูปใหม่สร้างใน Drive ก่อน แล้วค่อยเขียน metadata; ถ้า metadata ล้มเหลวจะ trash ไฟล์ใหม่
+ * - ไฟล์เดิมที่ผู้ใช้ลบออกจะ trash หลัง metadata สำเร็จเท่านั้น
+ */
+function commitProductImageDraft(productCode, draft) {
+  var newFileIds = [];
+  try {
+    productCode = String(productCode || "").trim();
+    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
+    draft = draft || {};
+    var items = Array.isArray(draft.items) ? draft.items.slice(0, 3) : [];
+    var cur = getProductImageDocData_(productCode);
+    var oldByUrl = {};
+    cur.urls.forEach(function(url, i) { if (url) oldByUrl[url] = cur.ids[i] || ""; });
+
+    var folder = null, urls = [], ids = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      var existingUrl = String(it.url || "").trim();
+      var base64 = String(it.base64 || "").trim();
+      if (base64) {
+        var bytes = Utilities.base64Decode(base64);
+        if (bytes.length > 5 * 1024 * 1024) throw new Error("ไฟล์รูปใหญ่เกิน 5MB หลังประมวลผล");
+        if (!(bytes.length > 3 && (bytes[0] & 255) === 255 && (bytes[1] & 255) === 216 && (bytes[2] & 255) === 255)) {
+          throw new Error("รูปหลังประมวลผลไม่ใช่ JPEG ที่ถูกต้อง");
+        }
+        if (!folder) folder = getProductImageFolder_();
+        var file = folder.createFile(Utilities.newBlob(bytes, "image/jpeg", productCode + "_" + (i + 1) + ".jpg"));
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        var fileId = file.getId();
+        urls.push("https://lh3.googleusercontent.com/d/" + fileId);
+        ids.push(fileId);
+        newFileIds.push(fileId);
+      } else if (existingUrl && Object.prototype.hasOwnProperty.call(oldByUrl, existingUrl)) {
+        urls.push(existingUrl);
+        ids.push(oldByUrl[existingUrl]);
+      }
+    }
+
+    var primaryIndex = Math.max(0, Math.min(parseInt(draft.primaryIndex, 10) || 0, Math.max(0, urls.length - 1)));
+    var saved;
+    try {
+      if (!urls.length) {
+        deleteProductImageDoc_(productCode);
+        saved = { primaryUrl: "", urls: [], ids: [], primaryIndex: 0 };
+      } else {
+        saved = saveProductImageDoc_(productCode, "", "", urls, ids, primaryIndex);
+      }
+    } catch (saveErr) {
+      newFileIds.forEach(function(id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {} });
+      throw saveErr;
+    }
+
+    var retained = {};
+    (saved.ids || ids).forEach(function(id) { if (id) retained[id] = true; });
+    cur.ids.forEach(function(id) {
+      if (id && !retained[id]) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {} }
+    });
+    return {
+      success: true,
+      imageUrl: saved.primaryUrl || "",
+      imageUrls: (saved.urls || []).slice(0, 3),
+      primaryIndex: saved.primaryIndex || 0
+    };
+  } catch (e) {
+    newFileIds.forEach(function(id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e2) {} });
+    return { success: false, message: e.message };
+  }
+}
+
 // ==========================================
 // 2b. ★ Cache Layer — ลด Firestore Reads (Firebase Spark Plan / Free Quota)
 // ==========================================
@@ -871,7 +945,7 @@ function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicat
         var code = createRes.getResponseCode();
         if (code === 200) {
           clearCollectionCache(collectionName);
-          return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: newId };
+          return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: newId, data: dataObject };
         }
         if (code === 409) {
           newId = allocateNextAutoId_(collectionName, prefix, attempt === 0);
@@ -896,7 +970,7 @@ function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicat
 
     if (res.getResponseCode() === 200) {
       clearCollectionCache(collectionName);
-      return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: id };
+      return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: id, data: dataObject };
     }
     return { success: false, title: "ล้มเหลว", message: res.getContentText() };
   } catch (e) {
@@ -1259,7 +1333,12 @@ function saveProduct(d) {
     }
   }
 
-  return saveMasterData("Master_Products", "P", docId, dataObject, null);
+  var saveRes = saveMasterData("Master_Products", "P", docId, dataObject, null);
+  if (saveRes && saveRes.success) {
+    saveRes.product = getProductById(saveRes.id);
+    if (saveRes.product) saveRes.product.id = saveRes.id;
+  }
+  return saveRes;
 }
 
 function getProductRawFields_(docId) {
@@ -1581,6 +1660,42 @@ function getCustomersFull() {
   return list;
 }
 
+
+function getCustomerById_(docId) {
+  try {
+    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+            + "/databases/(default)/documents/Master_Customers/" + encodeURIComponent(docId);
+    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return null;
+    var f = JSON.parse(res.getContentText()).fields || {};
+    var obj = {
+      id            : docId,
+      Customer_Name : parseFirestoreValue(f.Customer_Name) || "",
+      Customer_Type : parseFirestoreValue(f.Customer_Type) || "",
+      Address_No     : parseFirestoreValue(f.Address_No) || "",
+      Address_Moo    : parseFirestoreValue(f.Address_Moo) || "",
+      Address_Road   : parseFirestoreValue(f.Address_Road) || "",
+      Subdistrict    : parseFirestoreValue(f.Subdistrict) || "",
+      District       : parseFirestoreValue(f.District) || "",
+      Province       : parseFirestoreValue(f.Province) || "",
+      Postal_Code    : parseFirestoreValue(f.Postal_Code) || "",
+      Tax_ID         : String(parseFirestoreValue(f.Tax_ID) || ""),
+      Branch         : parseFirestoreValue(f.Branch) || "",
+      Phone          : parseFirestoreValue(f.Phone) || "",
+      Status         : parseFirestoreValue(f.Status) || ""
+    };
+    obj.Address = buildFullAddress({
+      addressNo: obj.Address_No, addressMoo: obj.Address_Moo, addressRoad: obj.Address_Road,
+      subdistrict: obj.Subdistrict, district: obj.District, province: obj.Province,
+      postalCode: obj.Postal_Code, address: parseFirestoreValue(f.Address)
+    });
+    return obj;
+  } catch (e) {
+    console.error("getCustomerById_ error:", e);
+    return null;
+  }
+}
+
 function deleteCustomer(docId) { return deleteFirestoreDocument("Master_Customers", docId); }
 
 // ==========================================
@@ -1890,6 +2005,17 @@ function getTaxInvoiceList() {
   return list;
 }
 
+function getTaxInvoiceListData(yearFilter) {
+  var invoices;
+  if (yearFilter === "all") {
+    invoices = getTaxInvoiceList();
+  } else {
+    var yearBE = parseInt(yearFilter, 10) || (new Date().getFullYear() + 543);
+    invoices = getTaxInvoiceListByYear(yearBE);
+  }
+  return { invoices: invoices, availableYears: getTaxInvoiceAvailableYears() };
+}
+
 function getTaxInvoicePageData(yearFilter) {
   var invoices;
   if (yearFilter === "all") {
@@ -2003,7 +2129,7 @@ function saveQuotation(d, callerUsername) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกลูกค้า" };
   }
 
-  var cust = getCustomersFull().filter(function(c) { return c.id === d.customerId; })[0];
+  var cust = getCustomerById_(d.customerId);
   if (!cust) return { success: false, title: "ไม่พบข้อมูล", message: "ไม่พบลูกค้ารายนี้ในระบบ — อาจถูกลบไปแล้ว" };
 
   var quoteDate  = String(d.quoteDate || "").trim() || new Date().toISOString().slice(0, 10);
@@ -2312,6 +2438,17 @@ function seedQuotationYearsMeta_() {
 
 // ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
 //   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
+function getQuotationListData(yearFilter) {
+  var quotationsList;
+  if (yearFilter === "all") {
+    quotationsList = getQuotationList();
+  } else {
+    var yearBE = parseInt(yearFilter, 10) || (new Date().getFullYear() + 543);
+    quotationsList = getQuotationListByYear(yearBE);
+  }
+  return { quotations: quotationsList, availableYears: getQuotationAvailableYears() };
+}
+
 function getQuotationPageData(yearFilter) {
   var quotationsList;
   if (yearFilter === "all") {
@@ -3088,7 +3225,12 @@ function receiveGoods(d, callerUsername) {
         return {
           success:true, title:"สำเร็จ",
           message:allComplete ? "บันทึกรับสินค้าครบถ้วน และอัปเดตสต็อกเรียบร้อย" : "บันทึกรับสินค้าบางส่วน และอัปเดตสต็อกเรียบร้อย",
-          status:newStatus
+          status:newStatus,
+          po:{ poId:d.poId, status:newStatus, items:poItems, receipts:receipts },
+          productStocks:stockAdditions.map(function(l) {
+            var info=stockMap[l.productCode], qty=parseFloat(l.qty || 0);
+            return { productCode:l.productCode, currentStock:info.stock + qty, minStock:info.minStock, costPrice:info.costPrice, sellingPrice:info.sellingPrice };
+          })
         };
       }
       if (!isPreconditionFailure_(commit.message) || attempt === MAX_ATTEMPTS) {
@@ -3534,7 +3676,9 @@ var API_REGISTRY = {
   getCarsFull              : "viewer",
   getPurchaseOrderPageData : "viewer",
   getTaxInvoicePageData    : "viewer",
+  getTaxInvoiceListData    : "viewer",
   getQuotationPageData     : "viewer",
+  getQuotationListData     : "viewer",
 
   // ── เพิ่ม/แก้ไข: staff ขึ้นไป ──
   saveBrand                : "staff",
@@ -3548,6 +3692,7 @@ var API_REGISTRY = {
   deleteProductImage       : "staff",
   setPrimaryProductImage   : "staff",
   moveProductImage         : "staff",
+  commitProductImageDraft  : "staff",
   generateProductBarcode   : "staff",
   // ★ FIX: saveMasterData ไม่เคยอยู่ใน registry นี้เลย — apiGateway ปฏิเสธทุกครั้งที่เรียก
   //   (Master_Brands.html และ Master_Categories.html เรียกฟังก์ชันนี้ตรงๆ ไม่ผ่าน saveBrand/saveCategory)
@@ -3619,7 +3764,9 @@ var API_FUNCTIONS = {
   getCarsFull               : getCarsFull,
   getPurchaseOrderPageData  : getPurchaseOrderPageData,
   getTaxInvoicePageData     : getTaxInvoicePageData,
+  getTaxInvoiceListData     : getTaxInvoiceListData,
   getQuotationPageData      : getQuotationPageData,
+  getQuotationListData      : getQuotationListData,
   saveBrand                 : saveBrand,
   saveCategory              : saveCategory,
   saveVendor                : saveVendor,
@@ -3631,6 +3778,7 @@ var API_FUNCTIONS = {
   deleteProductImage        : deleteProductImage,
   setPrimaryProductImage    : setPrimaryProductImage,
   moveProductImage          : moveProductImage,
+  commitProductImageDraft   : commitProductImageDraft,
   generateProductBarcode    : generateProductBarcode,
   saveMasterData            : saveMasterData,
   savePurchaseOrder         : savePurchaseOrder,
@@ -3686,6 +3834,7 @@ var ACTIVITY_ACTIONS = {
   uploadProductImage          : { action: "update", label: "อัปโหลดรูปสินค้า" },
   deleteProductImage          : { action: "delete", label: "ลบรูปสินค้า" },
   setPrimaryProductImage      : { action: "update", label: "ตั้งรูปสินค้าหลัก" },
+  commitProductImageDraft     : { action: "update", label: "บันทึกรูปสินค้า" },
   generateProductBarcode      : { action: "update", label: "สร้างบาร์โค้ดสินค้า" },
   savePurchaseOrder           : { action: "save",   label: "บันทึกใบสั่งซื้อ" },
   saveTaxInvoice               : { action: "save",   label: "บันทึกใบกำกับภาษี" },

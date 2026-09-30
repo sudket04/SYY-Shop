@@ -787,7 +787,12 @@
           document.getElementById('inpRefNo').value = '';
           document.getElementById('inpNote').value  = '';
           renderBasket();
-          loadProducts();
+          (res.results || []).forEach(function(r) {
+            var p = products.find(function(x) { return x.productCode === r.productCode; });
+            if (p) p.currentStock = num(r.after);
+          });
+          updateCounts();
+          renderResults();
           movements = [];
           try { window.parent.postMessage({ action: 'REFRESH_STOCK_FULL' }, '*'); } catch (e) {}
           focusScanInput(); // ★ พร้อมยิงบิลถัดไปได้ทันที

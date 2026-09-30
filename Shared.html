@@ -204,6 +204,12 @@ function toggleDensity(){
      2) REFRESH_PRODUCTS  — สินค้าเปลี่ยน (เพิ่ม/แก้/ลบ) → อ่านแค่ Master_Products ใหม่ ไม่แตะ
         Stock_Movements/Purchase_Orders เพราะบันทึกสินค้าไม่ได้สร้างรายการเคลื่อนไหวสต๊อก
      3) REFRESH_STOCK_FULL — สต๊อกเคลื่อนไหวจริง (ตัดสต๊อก) → ต้องรีโหลด dashboard เต็มเท่านั้น */
+function notifyParentProductDelta(product,deleted){
+  try{ window.parent.postMessage({action:'PRODUCT_DELTA',product:product||null,deleted:!!deleted},'*'); }catch(e){}
+}
+function notifyParentMasterDelta(kind,item,deleted){
+  try{ window.parent.postMessage({action:'MASTER_DELTA',kind:kind,item:item||null,deleted:!!deleted},'*'); }catch(e){}
+}
 function notifyParentRefreshDropdowns(){
   try{ window.parent.postMessage({action:'REFRESH_DROPDOWNS'},'*'); }catch(e){}
 }

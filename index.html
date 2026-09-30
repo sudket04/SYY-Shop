@@ -565,9 +565,67 @@
       frame.contentWindow.postMessage({ action:'PREFILL_INVOICE', items:payload.items, note:payload.note }, '*');
     }
   }
+  function applyDashboardProductDelta(product,deleted){
+    if(!product) return;
+    var key=product.productCode||product.id;
+    if(!key) return;
+    var pos=DASH.products.findIndex(function(p){return (p.productCode||p.id)===key;});
+    if(deleted){
+      if(pos>-1) DASH.products.splice(pos,1);
+    }else{
+      product.id=product.id||key;product.productCode=product.productCode||key;
+      if(pos>-1) DASH.products[pos]=product; else DASH.products.push(product);
+    }
+    allProducts=DASH.products;
+    if(DASH.loaded){dashBuildAggregates();dashRenderAll();}
+    dashUpdateSidebarBadges();
+  }
+
+  function shellMasterDeltaLabel(kind,item){
+    if(!item)return '';
+    if(kind==='brands')return item.Brand_Name||item.Name||item.id||'';
+    if(kind==='categories')return item.Category_Name||item.Name||item.id||'';
+    if(kind==='vendors'){
+      var vn=item.Vendor_name||item.Name||item.id||'';
+      return item.Phone?vn+' ('+item.Phone+')':vn;
+    }
+    if(kind==='zones'){
+      var z=item.Area||item.Name||item.id||'';
+      if(item.Build||item.Floor)z+=' — '+[item.Build,item.Floor].filter(Boolean).join(' ');
+      if(item.Rack_no)z+=' (Rack '+item.Rack_no+')';
+      return z;
+    }
+    if(kind==='cars'){
+      var c=[item.Brand,item.Model].filter(Boolean).join(' ');
+      if(item.Year)c+=' ('+item.Year+')';
+      if(item.Type_Car)c+=' — '+item.Type_Car;
+      return c||item.Name||item.id||'';
+    }
+    return item.Name||item.id||'';
+  }
+
+  function applyMasterDelta(kind,item,deleted){
+    if(!kind||!item||!item.id)return;
+    var list=masters[kind]||[],pos=list.findIndex(function(x){return x.id===item.id;});
+    if(deleted){if(pos>-1)list.splice(pos,1);}
+    else{
+      var label=shellMasterDeltaLabel(kind,item),entry={id:item.id,Name:label,name:String(label).toLowerCase()};
+      if(pos>-1)list[pos]=entry;else list.push(entry);
+    }
+    masters[kind]=list;
+    var selectId={brands:'mBrandId',categories:'mCategoryId',vendors:'mVendorId',zones:'mZoneId'}[kind];
+    if(selectId)fillSelect(selectId,list);
+    var frame=document.getElementById('iframe-products');
+    if(frame&&frame.contentWindow&&frame.src){
+      try{frame.contentWindow.postMessage({action:'MASTER_DELTA',kind:kind,item:item,deleted:!!deleted},'*');}catch(e){}
+    }
+  }
+
   window.addEventListener('message', function(e){
     var d = e.data || {};
-    if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
+    if(d.action==='PRODUCT_DELTA'){ applyDashboardProductDelta(d.product,d.deleted); }
+    else if(d.action==='MASTER_DELTA'){ applyMasterDelta(d.kind,d.item,d.deleted); }
+    else if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
     else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }
     else if(d.action==='REFRESH_STOCK_FULL'){ dashRefreshDelta(); }
     else if(d.action==='OPEN_STOCK_ISSUE'){

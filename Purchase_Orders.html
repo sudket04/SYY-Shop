@@ -357,12 +357,7 @@
           if (!(p.productCode in checkedState)) checkedState[p.productCode] = true;
         });
 
-        pendingProductCodes = {};
-        purchaseOrders.forEach(function(po) {
-          if (po.status === 'Pending' || po.status === 'Ordered') {
-            (po.items || []).forEach(function(it) { pendingProductCodes[it.productCode] = true; });
-          }
-        });
+        rebuildPendingProductCodes();
 
         renderCreateTab();
         renderHistoryTab();
@@ -375,6 +370,47 @@
           emptyStateHtml(8,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err)});
         btn.classList.remove('is-loading');
       });
+  }
+
+  function rebuildPendingProductCodes() {
+    pendingProductCodes = {};
+    purchaseOrders.forEach(function(po) {
+      if (po.status !== 'Pending' && po.status !== 'Ordered' && po.status !== 'PartiallyReceived') return;
+      (po.items || []).forEach(function(it) {
+        if (num(it.qty) - num(it.receivedQty) > 0) pendingProductCodes[it.productCode] = true;
+      });
+    });
+  }
+
+  function applyReceiveGoodsDelta(res) {
+    var p = res && res.po;
+    if (p && p.poId) {
+      var idx = purchaseOrders.findIndex(function(x) { return x.poId === p.poId; });
+      if (idx > -1) {
+        purchaseOrders[idx].status = p.status || purchaseOrders[idx].status;
+        purchaseOrders[idx].items = p.items || purchaseOrders[idx].items;
+        purchaseOrders[idx].receipts = p.receipts || purchaseOrders[idx].receipts;
+      }
+    }
+    (res && res.productStocks || []).forEach(function(s) {
+      var li = lowStockItems.findIndex(function(x) { return x.productCode === s.productCode; });
+      if (li < 0) return;
+      if (num(s.currentStock) > num(s.minStock)) {
+        lowStockItems.splice(li, 1);
+        delete qtyState[s.productCode];
+        delete checkedState[s.productCode];
+      } else {
+        lowStockItems[li].currentStock = num(s.currentStock);
+        lowStockItems[li].minStock = num(s.minStock);
+        lowStockItems[li].costPrice = num(s.costPrice);
+        lowStockItems[li].suggestedQty = Math.max(num(s.minStock) - num(s.currentStock), 1);
+        qtyState[s.productCode] = lowStockItems[li].suggestedQty;
+      }
+    });
+    rebuildPendingProductCodes();
+    renderCreateTab();
+    renderHistoryTab();
+    updateStatCards();
   }
 
   function updateStatCards() {
@@ -978,10 +1014,9 @@
           if (res.success) {
             alertEl.className = 'modal-alert success';
             alertEl.innerText = '' + res.message;
-            setTimeout(function() {
-              closeReceiveModal();
-              loadAll();
-            }, 1000);
+            applyReceiveGoodsDelta(res);
+            try { window.parent.postMessage({ action:'REFRESH_STOCK_FULL' }, '*'); } catch (e) {}
+            setTimeout(function() { closeReceiveModal(); }, 700);
           } else {
             alertEl.className = 'modal-alert error';
             alertEl.innerText = '' + res.message;

@@ -500,8 +500,12 @@
       if(res && res.success){
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+' “'+vendorName+'” เรียบร้อย');
-        loadTable();
-        notifyParentRefreshDropdowns();
+        var raw=res.data||{};
+        var item={id:res.id,Vendor_name:raw.Vendor_name||vendorName,Contact_name:raw.Contact_name||payload.contact||'',Phone:raw.Phone||payload.phone||'',Email:raw.Email||payload.email||'',
+          Address_No:raw.Address_No||payload.addressNo||'',Address_Moo:raw.Address_Moo||payload.addressMoo||'',Address_Road:raw.Address_Road||payload.addressRoad||'',Subdistrict:raw.Subdistrict||payload.subdistrict||'',District:raw.District||payload.district||'',Province:raw.Province||payload.province||'',Postal_Code:raw.Postal_Code||payload.postalCode||'',Tax_ID:raw.Tax_ID||taxIdVal,Branch:raw.Branch||payload.branch||'สำนักงานใหญ่',Status:raw.Status||payload.status||'Active'};
+        item.Address=[item.Address_No?'เลขที่ '+item.Address_No:'',item.Address_Moo?'หมู่ '+item.Address_Moo:'',item.Address_Road?'ถนน'+item.Address_Road:'',item.Subdistrict?'ตำบล/แขวง'+item.Subdistrict:'',item.District?'อำเภอ/เขต'+item.District:'',item.Province?'จังหวัด'+item.Province:'',item.Postal_Code||''].filter(Boolean).join(' ');
+        item._taxStatus=(item.Tax_ID&&item.Tax_ID.length===13)?'มีเลขผู้เสียภาษีแล้ว':'ยังไม่มีเลขผู้เสียภาษี';
+        var pos=cache.findIndex(function(x){return x.id===item.id;});if(pos>-1)cache[pos]=item;else cache.push(item);renderRows();notifyParentMasterDelta('vendors',item,false);
       } else {
         alertEl.className='modal-alert error';
         alertEl.innerText=''+((res&&res.message)||'บันทึกไม่สำเร็จ');
@@ -536,8 +540,8 @@
       closeModal('deleteModal');
       if(res && res.success){
         toast('ลบ'+ENTITY+'เรียบร้อย');
-        loadTable();
-        notifyParentRefreshDropdowns();
+        var removedId=deleteId;cache=cache.filter(function(x){return x.id!==removedId;});renderRows();
+        notifyParentMasterDelta('vendors',{id:removedId},true);
       } else {
         swyError('ลบไม่สำเร็จ',(res&&res.message)||'');
       }
