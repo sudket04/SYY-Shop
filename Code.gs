@@ -67,6 +67,7 @@ function doGet(e) {
   var template = HtmlService.createTemplateFromFile(files[page] || 'index');
   template.webAppUrl = getWebAppUrl_();
   template.authToken = token;
+  template.frameChannel = /^[A-Za-z0-9-]{16,80}$/.test(String(e.parameter.channel || "")) ? e.parameter.channel : "";
   template.userRole  = session.role;
   template.userName  = session.fullName || session.username;
   template.username  = session.username;
@@ -153,7 +154,7 @@ function normalizeProductImageData_(imageUrl, driveFileId, imageUrls, driveFileI
   };
 }
 
-function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex) {
+function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex, expectedUpdateTime) {
   var data = normalizeProductImageData_(imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex);
   var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
           + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
@@ -164,6 +165,9 @@ function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, dri
     Drive_File_Ids: data.ids,
     Primary_Index: data.primaryIndex
   };
+  if (expectedUpdateTime === undefined) throw new Error("ต้องระบุเวอร์ชันข้อมูลรูปสินค้า");
+  url += expectedUpdateTime ? "?currentDocument.updateTime="+encodeURIComponent(expectedUpdateTime) : "?currentDocument.exists=false";
+  payload.Images_JSON = JSON.stringify(data.urls.map(function(url,i){return {url:url,fileId:data.ids[i]||""};}));
   var res = UrlFetchApp.fetch(url, {
     method: "patch",
     headers: getAuthHeader_(),
@@ -174,38 +178,29 @@ function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, dri
     throw new Error('บันทึกข้อมูลรูปสินค้าไม่สำเร็จ (' + res.getResponseCode() + ')');
   }
   clearCollectionCache_(PRODUCT_IMAGES_COLLECTION);
+  try {CacheService.getScriptCache().remove("pimgv2_"+productCode);}catch(e){}
+  data.updateTime=JSON.parse(res.getContentText()).updateTime || "";
   return data;
 }
 
-function deleteProductImageDoc_(productCode) {
-  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-          + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
-  UrlFetchApp.fetch(url, { method: "delete", headers: getAuthHeader_(), muteHttpExceptions: true });
+function deleteProductImageDoc_(productCode, expectedUpdateTime) {
+  if(expectedUpdateTime===undefined) throw new Error("ต้องระบุเวอร์ชันข้อมูลรูปสินค้า");
+  if(!expectedUpdateTime) return;
+  var url="https://firestore.googleapis.com/v1/"+fsDocPath_(PRODUCT_IMAGES_COLLECTION,productCode)+"?currentDocument.updateTime="+encodeURIComponent(expectedUpdateTime);
+  var res=UrlFetchApp.fetch(url,{method:"delete",headers:getAuthHeader_(),muteHttpExceptions:true});
+  if([200,204].indexOf(res.getResponseCode())<0) throw new Error("ลบข้อมูลรูปไม่สำเร็จ กรุณารีเฟรชแล้วลองใหม่");
   clearCollectionCache_(PRODUCT_IMAGES_COLLECTION);
+  try{CacheService.getScriptCache().remove("pimgv2_"+productCode);}catch(e){}
 }
 
 // ★ อ่าน URL รูปของสินค้าทั้งหมดครั้งเดียวเป็น map ให้ getAllProducts() ใช้
 // รองรับทั้ง schema เดิม (Image_Url) และ V2 gallery โดยไม่เพิ่ม N+1 reads
 function getProductImageUrlMap_() {
-  var map = {};
-  try {
-    var docs = fetchCollectionDocsCached_(PRODUCT_IMAGES_COLLECTION);
-    docs.forEach(function(doc) {
-      var f = doc.fields || {};
-      var data = normalizeProductImageData_(
-        parseFirestoreValue_(f.Image_Url),
-        parseFirestoreValue_(f.Drive_File_Id),
-        parseFirestoreValue_(f.Image_Urls),
-        parseFirestoreValue_(f.Drive_File_Ids),
-        parseFirestoreValue_(f.Primary_Index)
-      );
-      if (data.urls.length) {
-        map[doc.id] = { primary: data.primaryUrl, urls: data.urls, primaryIndex: data.primaryIndex };
-      }
-    });
-  } catch (e) {
-    console.error("getProductImageUrlMap_ error:", e);
-  }
+  var map={};
+  fetchCollectionDocsCached_(PRODUCT_IMAGES_COLLECTION).forEach(function(doc){
+    var data=imageDataFromFields_(doc.fields);
+    map[doc.id]={primary:data.primaryUrl,urls:data.urls,primaryIndex:data.primaryIndex,updateTime:doc.updateTime||""};
+  });
   return map;
 }
 
@@ -236,117 +231,44 @@ function getProductImageUrlSingle_(productCode) {
  * จะเขียน V2 ลง Firestoreเมื่อผู้ใช้แก้ไขรูปจริงเท่านั้น (lazy migration)
  */
 function getProductImageDocData_(productCode) {
-  try {
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
-    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
-    if (res.getResponseCode() !== 200) return { urls: [], ids: [], primaryIndex: 0 };
-    var f = (JSON.parse(res.getContentText()).fields || {});
-    var data = normalizeProductImageData_(
-      parseFirestoreValue_(f.Image_Url),
-      parseFirestoreValue_(f.Drive_File_Id),
-      parseFirestoreValue_(f.Image_Urls),
-      parseFirestoreValue_(f.Drive_File_Ids),
-      parseFirestoreValue_(f.Primary_Index)
-    );
-    return { urls: data.urls, ids: data.ids, primaryIndex: data.primaryIndex };
-  } catch (e) {
-    console.error("getProductImageDocData_ error:", e);
-    return { urls: [], ids: [], primaryIndex: 0 };
-  }
+  var url="https://firestore.googleapis.com/v1/"+fsDocPath_(PRODUCT_IMAGES_COLLECTION,productCode);
+  var res=UrlFetchApp.fetch(url,{method:"get",headers:getAuthHeader_(),muteHttpExceptions:true});
+  if(res.getResponseCode()===404) return {urls:[],ids:[],primaryIndex:0,updateTime:""};
+  if(res.getResponseCode()!==200) throw new Error("อ่านข้อมูลรูปสินค้าไม่สำเร็จ กรุณาลองใหม่");
+  var doc=JSON.parse(res.getContentText()),data=imageDataFromFields_(doc.fields);
+  if(!doc.updateTime) throw new Error("ไม่พบเวอร์ชันข้อมูลรูปสินค้า");
+  data.updateTime=doc.updateTime;
+  return data;
 }
 
 function uploadProductImage_(productCode, base64Data, slot) {
   try {
-    productCode = String(productCode || "").trim();
-    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
-    if (!base64Data) return { success: false, message: "ไม่พบข้อมูลรูปภาพ" };
-
-    var bytes = Utilities.base64Decode(base64Data);
-    if (bytes.length > 5 * 1024 * 1024) return { success: false, message: "ไฟล์รูปใหญ่เกินไป" };
-    if (!(bytes.length > 3 && (bytes[0] & 255) === 255 && (bytes[1] & 255) === 216 && (bytes[2] & 255) === 255)) {
-      return { success: false, message: "รูปหลังประมวลผลไม่ใช่ JPEG ที่ถูกต้อง" };
-    }
-
-    var cur = getProductImageDocData_(productCode);
-    slot = Math.max(0, Math.min(parseInt(slot, 10) || 0, 2));
-    // ห้ามสร้างช่องว่าง: ถ้ากดรูป 3 ทั้งที่มีแค่รูป 1 ให้เติมเป็นรูป 2 โดยอัตโนมัติ
-    if (slot > cur.urls.length) slot = cur.urls.length;
-    if (slot >= 3 && cur.urls.length >= 3) return { success: false, message: "เพิ่มรูปได้สูงสุด 3 รูป" };
-
-    var folder = getProductImageFolder_();
-    var oldFileId = cur.ids[slot] || '';
-    var file = folder.createFile(Utilities.newBlob(bytes, "image/jpeg", productCode + "_" + (slot + 1) + ".jpg"));
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    var imageUrl = "https://lh3.googleusercontent.com/d/" + file.getId();
-
-    // เขียน metadata ใหม่ให้สำเร็จก่อน แล้วค่อย trash ไฟล์เก่า ลดความเสี่ยงรูปหายหาก Firestore เขียนไม่สำเร็จ
-    cur.urls[slot] = imageUrl;
-    cur.ids[slot] = file.getId();
-    if (cur.primaryIndex >= cur.urls.length) cur.primaryIndex = 0;
-    var saved = saveProductImageDoc_(productCode, "", "", cur.urls, cur.ids, cur.primaryIndex);
-    if (oldFileId && oldFileId !== file.getId()) {
-      try { DriveApp.getFileById(oldFileId).setTrashed(true); } catch (e) { console.warn('trash old product image failed:', e); }
-    }
-
-    return {
-      success: true,
-      imageUrl: saved.primaryUrl,
-      imageUrls: saved.urls,
-      primaryIndex: saved.primaryIndex,
-      slot: slot
-    };
-  } catch (e) {
-    return { success: false, message: e.message };
-  }
+    var cur=getProductImageDocData_(productCode),items=cur.urls.map(function(url){return {url:url};});
+    slot=slot==null ? items.length : Number(slot);
+    if(!Number.isInteger(slot)||slot<0||slot>items.length||slot>=3) throw new Error("ตำแหน่งรูปไม่ถูกต้อง");
+    items[slot]={base64:base64Data};
+    return commitProductImageDraft_(productCode,{items:items,primaryIndex:cur.primaryIndex,expectedUpdateTime:cur.updateTime});
+  } catch(e) {return {success:false,message:e.message};}
 }
 
 function deleteProductImage_(productCode, slot) {
   try {
-    productCode = String(productCode || "").trim();
-    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
-    var cur = getProductImageDocData_(productCode);
-
-    if (slot === undefined || slot === null || slot === '') {
-      cur.ids.forEach(function(id) { if (id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {} } });
-      deleteProductImageDoc_(productCode);
-      return { success: true, imageUrl: '', imageUrls: [], primaryIndex: 0 };
+    var cur=getProductImageDocData_(productCode),items=cur.urls.map(function(url){return {url:url};}), primary=cur.primaryIndex;
+    if(slot==null||slot==="") items=[];
+    else {
+      slot=Number(slot); if(!Number.isInteger(slot)||slot<0||slot>=items.length) throw new Error("ไม่พบรูปที่ต้องการลบ");
+      items.splice(slot,1); if(primary===slot) primary=0; else if(primary>slot) primary--;
     }
-
-    slot = Math.max(0, Math.min(parseInt(slot, 10) || 0, 2));
-    if (!cur.urls[slot]) return { success: false, message: "ไม่พบรูปที่ต้องการลบ" };
-    var removeFileId = cur.ids[slot] || '';
-    cur.urls.splice(slot, 1);
-    cur.ids.splice(slot, 1);
-
-    if (!cur.urls.length) {
-      deleteProductImageDoc_(productCode);
-      if (removeFileId) { try { DriveApp.getFileById(removeFileId).setTrashed(true); } catch (e) {} }
-      return { success: true, imageUrl: '', imageUrls: [], primaryIndex: 0 };
-    }
-
-    if (cur.primaryIndex === slot) cur.primaryIndex = 0;
-    else if (cur.primaryIndex > slot) cur.primaryIndex--;
-    var saved = saveProductImageDoc_(productCode, "", "", cur.urls, cur.ids, cur.primaryIndex);
-    if (removeFileId) { try { DriveApp.getFileById(removeFileId).setTrashed(true); } catch (e) {} }
-    return { success: true, imageUrl: saved.primaryUrl, imageUrls: saved.urls, primaryIndex: saved.primaryIndex };
-  } catch (e) {
-    return { success: false, message: e.message };
-  }
+    return commitProductImageDraft_(productCode,{items:items,primaryIndex:primary,expectedUpdateTime:cur.updateTime});
+  }catch(e){return {success:false,message:e.message};}
 }
 
 function setPrimaryProductImage_(productCode, slot) {
-  try {
-    productCode = String(productCode || "").trim();
-    if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
-    var cur = getProductImageDocData_(productCode);
-    slot = Math.max(0, Math.min(parseInt(slot, 10) || 0, 2));
-    if (!cur.urls[slot]) return { success: false, message: "ไม่พบรูป" };
-    var saved = saveProductImageDoc_(productCode, "", "", cur.urls, cur.ids, slot);
-    return { success: true, imageUrl: saved.primaryUrl, imageUrls: saved.urls, primaryIndex: saved.primaryIndex };
-  } catch (e) {
-    return { success: false, message: e.message };
-  }
+  try{
+    var cur=getProductImageDocData_(productCode);slot=Number(slot);
+    if(!Number.isInteger(slot)||slot<0||slot>=cur.urls.length) throw new Error("ไม่พบรูป");
+    return commitProductImageDraft_(productCode,{items:cur.urls.map(function(url){return {url:url};}),primaryIndex:slot,expectedUpdateTime:cur.updateTime});
+  }catch(e){return {success:false,message:e.message};}
 }
 
 
@@ -376,8 +298,7 @@ function moveProductImage_(productCode, fromSlot, toSlot) {
     else if (fromSlot < oldPrimary && toSlot >= oldPrimary) cur.primaryIndex = oldPrimary - 1;
     else if (fromSlot > oldPrimary && toSlot <= oldPrimary) cur.primaryIndex = oldPrimary + 1;
 
-    var saved = saveProductImageDoc_(productCode, "", "", cur.urls, cur.ids, cur.primaryIndex);
-    return { success: true, imageUrl: saved.primaryUrl, imageUrls: saved.urls, primaryIndex: saved.primaryIndex };
+    return commitProductImageDraft_(productCode,{items:cur.urls.map(function(url){return {url:url};}),primaryIndex:cur.primaryIndex,expectedUpdateTime:cur.updateTime});
   } catch (e) {
     return { success: false, message: e.message };
   }
@@ -392,13 +313,17 @@ function moveProductImage_(productCode, fromSlot, toSlot) {
  * - ไฟล์เดิมที่ผู้ใช้ลบออกจะ trash หลัง metadata สำเร็จเท่านั้น
  */
 function commitProductImageDraft_(productCode, draft) {
-  var newFileIds = [];
+  var newFileIds = [], lock=LockService.getScriptLock();
+  if(!lock.tryLock(10000)) return {success:false,message:"ระบบกำลังบันทึกรูป กรุณาลองใหม่"};
   try {
     productCode = String(productCode || "").trim();
     if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
     draft = draft || {};
     var items = Array.isArray(draft.items) ? draft.items.slice(0, 3) : [];
+    readExistingDocument_("Master_Products",productCode);
     var cur = getProductImageDocData_(productCode);
+    if(draft.expectedUpdateTime===undefined || String(draft.expectedUpdateTime||"")!==cur.updateTime) throw new Error("รูปสินค้าเปลี่ยนแปลงแล้ว กรุณาปิดฟอร์มและรีเฟรชก่อนแก้ไขรูป");
+    if(!Array.isArray(draft.items) || draft.items.length>3) throw new Error("เพิ่มรูปได้สูงสุด 3 รูป");
     var oldByUrl = {};
     cur.urls.forEach(function(url, i) { if (url) oldByUrl[url] = cur.ids[i] || ""; });
 
@@ -415,46 +340,46 @@ function commitProductImageDraft_(productCode, draft) {
         }
         if (!folder) folder = getProductImageFolder_();
         var file = folder.createFile(Utilities.newBlob(bytes, "image/jpeg", productCode + "_" + (i + 1) + ".jpg"));
+        newFileIds.push(file.getId());
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         var fileId = file.getId();
         urls.push("https://lh3.googleusercontent.com/d/" + fileId);
         ids.push(fileId);
-        newFileIds.push(fileId);
+
       } else if (existingUrl && Object.prototype.hasOwnProperty.call(oldByUrl, existingUrl)) {
         urls.push(existingUrl);
         ids.push(oldByUrl[existingUrl]);
-      }
+      } else {throw new Error("รูปเดิมไม่ตรงกับข้อมูลล่าสุด กรุณารีเฟรช");}
     }
 
     var primaryIndex = Math.max(0, Math.min(parseInt(draft.primaryIndex, 10) || 0, Math.max(0, urls.length - 1)));
     var saved;
     try {
       if (!urls.length) {
-        deleteProductImageDoc_(productCode);
+        deleteProductImageDoc_(productCode,cur.updateTime);
         saved = { primaryUrl: "", urls: [], ids: [], primaryIndex: 0 };
       } else {
-        saved = saveProductImageDoc_(productCode, "", "", urls, ids, primaryIndex);
+        saved = saveProductImageDoc_(productCode, "", "", urls, ids, primaryIndex,cur.updateTime);
       }
     } catch (saveErr) {
-      newFileIds.forEach(function(id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {} });
+      trashUnreferencedImageFiles_(productCode,newFileIds);
       throw saveErr;
     }
 
     var retained = {};
     (saved.ids || ids).forEach(function(id) { if (id) retained[id] = true; });
-    cur.ids.forEach(function(id) {
-      if (id && !retained[id]) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {} }
-    });
+    trashUnreferencedImageFiles_(productCode,cur.ids);
     return {
       success: true,
       imageUrl: saved.primaryUrl || "",
       imageUrls: (saved.urls || []).slice(0, 3),
+      imageUpdateTime:saved.updateTime || "",
       primaryIndex: saved.primaryIndex || 0
     };
   } catch (e) {
-    newFileIds.forEach(function(id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e2) {} });
+    trashUnreferencedImageFiles_(productCode,newFileIds);
     return { success: false, message: e.message };
-  }
+  } finally {lock.releaseLock();}
 }
 
 // ==========================================
@@ -475,7 +400,7 @@ function cacheTtlForCollection_(collectionName) {
 }
 
 function collectionCacheBaseKey_(collectionName) {
-  return "docs_" + collectionName;
+  return "docs_v2_" + collectionName;
 }
 
 function splitCollectionCacheChunks_(docs) {
@@ -562,6 +487,7 @@ function queryByEqualityField_(collectionName, fieldPath, value) {
     var res = UrlFetchApp.fetch(url, {
       method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
     if (res.getResponseCode() === 200) {
       (JSON.parse(res.getContentText()) || []).forEach(function(row) {
         if (row.document) docs.push({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} });
@@ -569,9 +495,7 @@ function queryByEqualityField_(collectionName, fieldPath, value) {
     } else {
       console.error("queryByEqualityField_ " + collectionName + "." + fieldPath + " HTTP " + res.getResponseCode());
     }
-  } catch (e) {
-    console.error("queryByEqualityField_ error:", e);
-  }
+  } catch (e) { console.error("queryByEqualityField_ read failed", e); throw e; }
   return docs;
 }
 
@@ -591,7 +515,7 @@ function fetchAllPagesRaw_(collectionName, firstPageJson) {
         json = JSON.parse(res.getContentText());
       }
       (json.documents || []).forEach(function(doc) {
-        docs.push({ id: doc.name.split('/').pop(), fields: doc.fields || {} });
+        docs.push({ id: doc.name.split('/').pop(), fields: doc.fields || {}, updateTime:doc.updateTime || "" });
       });
       pageToken = json.nextPageToken || "";
       json = null;
@@ -601,7 +525,7 @@ function fetchAllPagesRaw_(collectionName, firstPageJson) {
     console.error("fetchAllPagesRaw error:", e);
     return { ok: false, docs: [] };
   }
-  return { ok: true, docs: docs };
+  return { ok: !pageToken, docs: pageToken ? [] : docs };
 }
 
 function fetchCollectionsParallel_(collectionNames) {
@@ -621,17 +545,18 @@ function fetchCollectionsParallel_(collectionNames) {
     var responses = UrlFetchApp.fetchAll(requests);
     responses.forEach(function(res, i) {
       var name = toFetch[i];
-      if (res.getResponseCode() !== 200) { result[name] = []; return; }
+      if (res.getResponseCode() !== 200) throw new Error("โหลด " + name + " ไม่สำเร็จ");
       var first = JSON.parse(res.getContentText());
       // ใช้ first page เดิมต่อทันที ไม่อ่าน 300 docs หน้าแรกซ้ำเมื่อมี pagination
       var fetched = fetchAllPagesRaw_(name, first);
-      var docs = fetched.ok ? fetched.docs : [];
+      if (!fetched.ok) throw new Error("โหลด " + name + " ไม่ครบ");
+      var docs = fetched.docs;
       result[name] = docs;
       if (fetched.ok) writeCollectionCache_(name, docs);
     });
   } catch (e) {
     console.error("fetchCollectionsParallel error:", e);
-    toFetch.forEach(function(name) { if (!result[name]) result[name] = []; });
+    throw e;
   }
   return result;
 }
@@ -640,6 +565,7 @@ function fetchCollectionDocsCached_(collectionName) {
   var cached = readCollectionCache_(collectionName);
   if (cached !== null) return cached;
   var fetched = fetchAllPagesRaw_(collectionName);
+  if (!fetched.ok) throw new Error("โหลด " + collectionName + " ไม่สำเร็จ กรุณาลองใหม่");
   if (fetched.ok) writeCollectionCache_(collectionName, fetched.docs);
   return fetched.docs;
 }
@@ -884,9 +810,7 @@ function getFirestoreRawList_(collectionName) {
         name      : displayName.trim().toLowerCase()
       });
     });
-  } catch (e) {
-    console.error("getFirestoreRawList error:", e);
-  }
+  } catch (e) { console.error("getFirestoreRawList_ read failed", e); throw e; }
   return list;
 }
 
@@ -1096,6 +1020,7 @@ function getAllProducts_() {
         imageUrl     : imageState.primary || imageUrls[primaryIndex] || imageUrls[0] || "",
         imageUrls    : imageUrls,
         primaryImageIndex: primaryIndex,
+        imageUpdateTime:imageState.updateTime || "",
         brandId      : brandId,
         brandName    : brandMap[brandId] || brandId,
         categoryId   : catId,
@@ -1113,9 +1038,7 @@ function getAllProducts_() {
         status       : parseFirestoreValue_(f.Status) || "Active"
       });
     });
-  } catch (e) {
-    console.error("getAllProducts error:", e);
-  }
+  } catch (e) { console.error("getAllProducts_ read failed", e); throw e; }
   return products;
 }
 
@@ -1170,6 +1093,7 @@ function getProductById_(productCode) {
         imageUrl     : imgState.urls[imgState.primaryIndex] || imgState.urls[0] || "",
         imageUrls    : imgState.urls.slice(0, 3),
         primaryImageIndex: imgState.primaryIndex,
+        imageUpdateTime:imgState.updateTime || "",
         brandId      : brandId,
         brandName    : brandMap[brandId]   || brandId,
         categoryId   : catId,
@@ -1276,10 +1200,19 @@ function getAllMasterDropdowns_(preloadedMasters) {
 // ==========================================
 function saveProduct_(d) {
   d = d || {};
+  if (typeof d.productName!=="string" || !d.productName.trim() || d.productName.length>500) return {success:false, message:"กรุณาระบุชื่อสินค้า"};
+  var numeric = ["costPrice","sellingPrice","currentStock","minStock"];
+  if (numeric.some(function(k) {return d[k] != null && !validBusinessNumber_(d[k],0,false);})) return {success:false, message:"ราคาและจำนวนต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป"};
+  if (["Active","Inactive"].indexOf(d.status || "Active") < 0) return {success:false, message:"สถานะสินค้าไม่ถูกต้อง"};
+  var refs = {brandId:"Master_Brands",categoryId:"Master_Categories",vendorId:"Master_Vendors",zoneId:"Master_Zones"};
+  try {
+    Object.keys(refs).forEach(function(k) {if (d[k] && d[k] !== "PENDING") readExistingDocument_(refs[k], d[k]);});
+    (Array.isArray(d.carIds) ? d.carIds : []).forEach(function(id) {readExistingDocument_("Master_Cars", id);});
+  } catch (e) {return {success:false, message:"ข้อมูลอ้างอิงไม่ถูกต้อง: " + e.message};}
   var carIds = Array.isArray(d.carIds) ? d.carIds.filter(Boolean) : [];
 
   var dataObject = {
-    Product_Name      : String(d.productName   || ""),
+    Product_Name      : String(d.productName   || "").trim(),
     Part_Type         : String(d.partType      || "").trim() || "PENDING", // ★ ไม่บังคับเลือก — ว่างไว้ได้ (แสดงเป็น "รอดำเนินการ" เหมือน Zone_ID)
     Part_Number       : String(d.partNumber    || "").trim(),
     Barcode           : String(d.barcode       || "").trim(),
@@ -1288,10 +1221,10 @@ function saveProduct_(d) {
     Default_Vendor_ID : String(d.vendorId      || ""),
     Zone_ID           : String(d.zoneId        || "").trim() || "PENDING",
     Car_IDs           : carIds,
-    Cost_Price        : parseFloat(d.costPrice    || 0),
-    Selling_Price     : parseFloat(d.sellingPrice || 0),
-    Current_Stock     : parseFloat(d.currentStock || 0),
-    Min_Stock         : parseFloat(d.minStock     || 0),
+    Cost_Price        : Number(d.costPrice || 0),
+    Selling_Price     : Number(d.sellingPrice || 0),
+    Current_Stock     : Number(d.currentStock || 0),
+    Min_Stock         : Number(d.minStock || 0),
     Status            : String(d.status        || "Active")
   };
 
@@ -1379,7 +1312,8 @@ function saveProduct_(d) {
 
   var saveRes = saveMasterData_("Master_Products", "P", docId, dataObject, null, editOptions);
   if (saveRes && saveRes.success) {
-    saveRes.product = getProductById_(saveRes.id);
+    try { saveRes.product = getProductById_(saveRes.id); }
+    catch (e) {saveRes.refreshWarning = "บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณารีเฟรช";}
     if (saveRes.product) saveRes.product.id = saveRes.id;
   }
   return saveRes;
@@ -1387,6 +1321,7 @@ function saveProduct_(d) {
 
 // Reads for edits fail closed: never recreate a deleted record or allocate a new document number.
 function readExistingDocument_(collection, docId) {
+  if(!validDocumentId_(String(docId || ""))) throw new Error("รหัสเอกสารไม่ถูกต้อง");
   var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
     + "/databases/(default)/documents/" + collection + "/" + encodeURIComponent(docId);
   var res = UrlFetchApp.fetch(url, { method:"get", headers:getAuthHeader_(), muteHttpExceptions:true });
@@ -1611,9 +1546,7 @@ function getVendorsFull_() {
         Status       : parseFirestoreValue_(f.Status)       || ""
       });
     });
-  } catch (e) {
-    console.error("getVendorsFull error:", e);
-  }
+  } catch (e) { console.error("getVendorsFull_ read failed", e); throw e; }
   return list;
 }
 
@@ -1709,9 +1642,7 @@ function getCustomersFull_() {
         Status        : parseFirestoreValue_(f.Status)        || ""
       });
     });
-  } catch (e) {
-    console.error("getCustomersFull error:", e);
-  }
+  } catch (e) { console.error("getCustomersFull_ read failed", e); throw e; }
   return list;
 }
 
@@ -1893,7 +1824,7 @@ function saveTaxInvoice_(d) {
     dataObject.Invoice_No = invoiceNo;
     var editRes = saveMasterData_("Master_Tax_Invoice", "TX", d.docId, dataObject, null, {updateTime:existingDoc.updateTime});
     if (editRes.success) {
-      updateTaxInvoiceYearsMeta_(invoiceYearBE);
+      try { updateTaxInvoiceYearsMeta_(invoiceYearBE); } catch (metaError) { editRes.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
       editRes.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + editRes.id, fields:mapToFirestoreFields_(dataObject)});
     }
     return editRes;
@@ -1920,7 +1851,7 @@ function saveTaxInvoice_(d) {
     dataObject.Invoice_No = candidateNo;
     var res = saveMasterData_("Master_Tax_Invoice", "TX", d.docId || null, dataObject, null);
     if (res.success) {
-      updateTaxInvoiceYearsMeta_(invoiceYearBE);
+      try { updateTaxInvoiceYearsMeta_(invoiceYearBE); } catch (metaError) { res.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
       res.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + res.id, fields:mapToFirestoreFields_(dataObject)});
       return res;
     }
@@ -1936,41 +1867,14 @@ function saveTaxInvoice_(d) {
 var META_COLLECTION      = "Meta_Counters";
 var TAX_INVOICE_YEARS_ID = "tax_invoice_years";
 
-function updateTaxInvoiceYearsMeta_(yearBE) {
-  try {
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + META_COLLECTION + "/" + TAX_INVOICE_YEARS_ID;
-    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
-
-    var years = [];
-    if (res.getResponseCode() === 200) {
-      var doc = JSON.parse(res.getContentText());
-      years = parseFirestoreValue_((doc.fields || {}).Years) || [];
-      years = years.map(function(y) { return parseInt(y, 10); });
-    }
-    if (years.indexOf(yearBE) > -1) return;
-
-    years.push(yearBE);
-    years.sort(function(a, b) { return b - a; });
-
-    var payload = {
-      fields: {
-        Years: { arrayValue: { values: years.map(function(y) { return { integerValue: y }; }) } }
-      }
-    };
-    UrlFetchApp.fetch(url + "?updateMask.fieldPaths=Years", {
-      method: "patch", headers: getAuthHeader_(), payload: JSON.stringify(payload), muteHttpExceptions: true
-    });
-  } catch (e) {
-    console.error("updateTaxInvoiceYearsMeta_ error:", e);
-  }
-}
+function updateTaxInvoiceYearsMeta_(yearBE) { appendYearMeta_(TAX_INVOICE_YEARS_ID,yearBE); }
 
 function getTaxInvoiceAvailableYears_() {
   try {
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
             + "/databases/(default)/documents/" + META_COLLECTION + "/" + TAX_INVOICE_YEARS_ID;
     var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200 && res.getResponseCode() !== 404) throw new Error("โหลดปีเอกสารไม่สำเร็จ");
     if (res.getResponseCode() === 200) {
       var doc = JSON.parse(res.getContentText());
       var years = parseFirestoreValue_((doc.fields || {}).Years) || [];
@@ -1978,7 +1882,7 @@ function getTaxInvoiceAvailableYears_() {
       if (years.length) return years;
     }
   } catch (e) {
-    console.error("getTaxInvoiceAvailableYears error:", e);
+    throw e;
   }
   return [new Date().getFullYear() + 543];
 }
@@ -2066,6 +1970,7 @@ function getTaxInvoiceList_() {
     var res = UrlFetchApp.fetch(url, {
       method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
     if (res.getResponseCode() === 200) {
       (JSON.parse(res.getContentText()) || []).forEach(function(row) {
         if (row.document) list.push(mapTaxInvoiceQueryDoc_(row.document));
@@ -2074,10 +1979,7 @@ function getTaxInvoiceList_() {
       console.error("getTaxInvoiceList HTTP " + res.getResponseCode() + ": " + res.getContentText());
       throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ");
     }
-  } catch (e) {
-    console.error("getTaxInvoiceList error:", e);
-    throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
-  }
+  } catch (e) { console.error("getTaxInvoiceList_ read failed", e); throw e; }
   list.sort(function(a, b) { return b.invoiceNo.localeCompare(a.invoiceNo); });
   return list;
 }
@@ -2286,7 +2188,7 @@ function saveQuotation_(d, callerUsername) {
     dataObject.Quote_No = quoteNo;
     var editRes = saveMasterData_(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId, dataObject, null, {updateTime:existingDoc.updateTime});
     if (editRes.success) {
-      updateQuotationYearsMeta_(quoteYearBE);
+      try { updateQuotationYearsMeta_(quoteYearBE); } catch (metaError) { editRes.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
       var savedFields = Object.assign({}, ef, mapToFirestoreFields_(dataObject));
       editRes.quotation = mapQuotationDoc_({id:editRes.id, fields:savedFields});
     }
@@ -2314,7 +2216,7 @@ function saveQuotation_(d, callerUsername) {
     dataObject.Quote_No = candidateNo;
     var res = saveMasterData_(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId || null, dataObject, null);
     if (res.success) {
-      updateQuotationYearsMeta_(quoteYearBE);
+      try { updateQuotationYearsMeta_(quoteYearBE); } catch (metaError) { res.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
       res.quotation = mapQuotationDoc_({id:res.id, fields:mapToFirestoreFields_(dataObject)});
       return res;
     }
@@ -2384,6 +2286,7 @@ function getQuotationList_() {
     var res = UrlFetchApp.fetch(url, {
       method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
     if (res.getResponseCode() === 200) {
       (JSON.parse(res.getContentText()) || []).forEach(function(row) {
         if (row.document) list.push(mapQuotationDoc_({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} }));
@@ -2392,10 +2295,7 @@ function getQuotationList_() {
       console.error("getQuotationList HTTP " + res.getResponseCode() + ": " + res.getContentText());
       throw new Error("โหลดใบเสนอราคาไม่สำเร็จ");
     }
-  } catch (e) {
-    console.error("getQuotationList error:", e);
-    throw new Error("โหลดใบเสนอราคาไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
-  }
+  } catch (e) { console.error("getQuotationList_ read failed", e); throw e; }
   list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
   return list;
 }
@@ -2429,6 +2329,7 @@ function getQuotationListByYear_(yearBE) {
     var res = UrlFetchApp.fetch(url, {
       method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
 
     if (res.getResponseCode() === 200) {
       var rows = JSON.parse(res.getContentText());
@@ -2439,10 +2340,7 @@ function getQuotationListByYear_(yearBE) {
       console.error("getQuotationListByYear HTTP " + res.getResponseCode() + ": " + res.getContentText());
       throw new Error("โหลดใบเสนอราคาไม่สำเร็จ");
     }
-  } catch (e) {
-    console.error("getQuotationListByYear error:", e);
-    throw new Error("โหลดใบเสนอราคาไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
-  }
+  } catch (e) { console.error("getQuotationListByYear_ read failed", e); throw e; }
   list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
   return list;
 }
@@ -2451,41 +2349,14 @@ var QUOTATION_YEARS_ID = "quotation_years";
 
 // ★ เก็บรายชื่อปี (พ.ศ.) ที่มีใบเสนอราคาอยู่จริง ไว้ใช้สร้างตัวเลือกปีในหน้าเว็บ (pattern เดียวกับ
 //   updateTaxInvoiceYearsMeta_ ของใบกำกับภาษี) — เรียกครั้งเดียวตอนบันทึกสำเร็จ ไม่ใช่ทุกครั้งที่โหลดหน้า
-function updateQuotationYearsMeta_(yearBE) {
-  try {
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + META_COLLECTION + "/" + QUOTATION_YEARS_ID;
-    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
-
-    var years = [];
-    if (res.getResponseCode() === 200) {
-      var doc = JSON.parse(res.getContentText());
-      years = parseFirestoreValue_((doc.fields || {}).Years) || [];
-      years = years.map(function(y) { return parseInt(y, 10); });
-    }
-    if (years.indexOf(yearBE) > -1) return;
-
-    years.push(yearBE);
-    years.sort(function(a, b) { return b - a; });
-
-    var payload = {
-      fields: {
-        Years: { arrayValue: { values: years.map(function(y) { return { integerValue: y }; }) } }
-      }
-    };
-    UrlFetchApp.fetch(url + "?updateMask.fieldPaths=Years", {
-      method: "patch", headers: getAuthHeader_(), payload: JSON.stringify(payload), muteHttpExceptions: true
-    });
-  } catch (e) {
-    console.error("updateQuotationYearsMeta_ error:", e);
-  }
-}
+function updateQuotationYearsMeta_(yearBE) { appendYearMeta_(QUOTATION_YEARS_ID,yearBE); }
 
 function getQuotationAvailableYears_() {
   try {
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
             + "/databases/(default)/documents/" + META_COLLECTION + "/" + QUOTATION_YEARS_ID;
     var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200 && res.getResponseCode() !== 404) throw new Error("โหลดปีเอกสารไม่สำเร็จ");
     if (res.getResponseCode() === 200) {
       var doc = JSON.parse(res.getContentText());
       var years = parseFirestoreValue_((doc.fields || {}).Years) || [];
@@ -2498,42 +2369,18 @@ function getQuotationAvailableYears_() {
       return seedQuotationYearsMeta_();
     }
   } catch (e) {
-    console.error("getQuotationAvailableYears error:", e);
+    throw e;
   }
   return [new Date().getFullYear() + 543];
 }
 
 function seedQuotationYearsMeta_() {
-  var years = [];
-  try {
-    var fetched = fetchAllPagesRaw_(QUOTATION_COLLECTION);
-    if (fetched.ok) {
-      var seen = {};
-      fetched.docs.forEach(function(doc) {
-        var dateStr = parseFirestoreValue_((doc.fields || {}).Quote_Date);
-        if (!dateStr) return;
-        var y = new Date(dateStr + "T00:00:00").getFullYear() + 543;
-        if (!isNaN(y) && !seen[y]) { seen[y] = true; years.push(y); }
-      });
-    }
-  } catch (e) {
-    console.error("seedQuotationYearsMeta_ scan error:", e);
-  }
-  if (!years.length) years.push(new Date().getFullYear() + 543);
-  years.sort(function(a, b) { return b - a; });
-
-  try {
-    var createUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                  + "/databases/(default)/documents/" + META_COLLECTION
-                  + "?documentId=" + encodeURIComponent(QUOTATION_YEARS_ID);
-    UrlFetchApp.fetch(createUrl, {
-      method: "post", headers: getAuthHeader_(), muteHttpExceptions: true,
-      payload: JSON.stringify({ fields: { Years: { arrayValue: { values: years.map(function(y) { return { integerValue: y }; }) } } } })
-    });
-  } catch (e) {
-    console.error("seedQuotationYearsMeta_ write error:", e);
-  }
-  return years;
+  var fetched=fetchAllPagesRaw_(QUOTATION_COLLECTION),seen={};
+  if(!fetched.ok)throw new Error("อ่านปีใบเสนอราคาไม่ครบ");
+  fetched.docs.forEach(function(doc){var date=parseFirestoreValue_((doc.fields||{}).Quote_Date);if(validDateOnly_(date)) seen[new Date(date+"T00:00:00Z").getUTCFullYear()+543]=true;});
+  var years=Object.keys(seen).map(Number);if(!years.length)years=[new Date().getFullYear()+543];
+  years.forEach(updateQuotationYearsMeta_);
+  return getQuotationAvailableYears_();
 }
 
 // ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
@@ -2600,30 +2447,13 @@ function deleteQuotation_(docId) { return deleteFirestoreDocument_(QUOTATION_COL
  *   ไม่ทับข้อมูลอื่นของใบเสนอราคา (ต่างจาก saveMasterData ที่ PATCH แบบไม่มี updateMask)
  */
 function markQuotationStockIssued_(docId, docNo, callerUsername) {
-  try {
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + docId
-            + "?updateMask.fieldPaths=Stock_Issued&updateMask.fieldPaths=Stock_Issue_Doc"
-            + "&updateMask.fieldPaths=Stock_Issued_By&updateMask.fieldPaths=Stock_Issued_At";
-    var res = UrlFetchApp.fetch(url, {
-      method  : "patch",
-      headers : getAuthHeader_(),
-      payload : JSON.stringify({ fields: mapToFirestoreFields_({
-        Stock_Issued    : "true",
-        Stock_Issue_Doc : String(docNo || ""),
-        Stock_Issued_By : callerUsername || getCurrentUsername_(),
-        Stock_Issued_At : new Date().toISOString()
-      }) }),
-      muteHttpExceptions: true
-    });
-    if (res.getResponseCode() === 200) {
-      clearCollectionCache_(QUOTATION_COLLECTION);
-      return { success: true };
-    }
-    return { success: false, message: res.getContentText() };
-  } catch (e) {
-    return { success: false, message: e.message };
-  }
+  try{
+    var movement=readExistingDocument_(STOCK_MOVEMENT_COLLECTION,String(docNo)+"-1"),fields=movement.fields||{};
+    if(parseFirestoreValue_(fields.Quote_Id)!==docId || parseFirestoreValue_(fields.User)!==callerUsername) return {success:false,message:"รายการตัดสต๊อกไม่ตรงกับใบเสนอราคา"};
+    var quote=readExistingDocument_(QUOTATION_COLLECTION,docId),f=quote.fields||{};
+    if(parseFirestoreValue_(f.Stock_Issued)!=="true") return {success:false,message:"ข้อมูลอ้างอิงการตัดสต๊อกไม่ครบ กรุณาแจ้งผู้ดูแลระบบ"};
+    return {success:true};
+  }catch(e){return {success:false,message:e.message};}
 }
 
 // ==========================================
@@ -2713,9 +2543,7 @@ function getZonesFull_() {
         Status  : parseFirestoreValue_(f.Status)  || ""
       });
     });
-  } catch (e) {
-    console.error("getZonesFull error:", e);
-  }
+  } catch (e) { console.error("getZonesFull_ read failed", e); throw e; }
   return list;
 }
 
@@ -2748,9 +2576,7 @@ function getCarsFull_() {
         Year     : parseFirestoreValue_(f.Year)     || ""
       });
     });
-  } catch (e) {
-    console.error("getCarsFull error:", e);
-  }
+  } catch (e) { console.error("getCarsFull_ read failed", e); throw e; }
   return list;
 }
 
@@ -2770,7 +2596,9 @@ var BACKUP_FOLDER_NAME  = "SYY Shop - Backups";
 var BACKUP_KEEP_COUNT   = 8;
 var BACKUP_COLLECTIONS  = [
   "Master_Brands", "Master_Categories", "Master_Vendors", "Master_Customers",
-  "Master_Zones", "Master_Cars", "Master_Products", "Master_Tax_Invoice", "Purchase_Orders"
+  "Master_Zones", "Master_Cars", "Master_Products", "Master_Tax_Invoice", "Purchase_Orders",
+  "Quotations", "Stock_Movements", "Product_Images", "Master_Users",
+  "Doc_Running_Numbers", "Doc_No_Reservations", "Meta_Counters", "Activity_Log"
 ];
 
 function getOrCreateBackupFolder_() {
@@ -2780,58 +2608,47 @@ function getOrCreateBackupFolder_() {
 }
 
 function backupAllDataToBackup_() {
-  var result = { success: true, collections: {}, errors: [] };
-  var snapshot = {};
-
-  BACKUP_COLLECTIONS.forEach(function(collectionName) {
-    try {
-      var fetched = fetchAllPagesRaw_(collectionName);
-      if (fetched.ok) {
-        snapshot[collectionName] = fetched.docs;
-        result.collections[collectionName] = fetched.docs.length;
-      } else {
-        result.errors.push(collectionName + ": ดึงข้อมูลไม่สำเร็จ");
-        snapshot[collectionName] = [];
-      }
-    } catch (e) {
-      result.errors.push(collectionName + ": " + e.message);
-      snapshot[collectionName] = [];
-      console.error("backupAllDataToBackup " + collectionName + " error:", e);
-    }
-  });
-
-  var backupPayload = {
-    backupDate    : new Date().toISOString(),
-    projectId     : PROJECT_ID,
-    collections   : snapshot
-  };
-
+  var result={success:false,collections:{},errors:[]},transaction="",assetFolder=null,manifest=null;
+  var endpoint="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents";
   try {
-    var folder   = getOrCreateBackupFolder_();
-    var fileName = "syy-shop-backup_" + Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd_HH-mm") + ".json";
-    var jsonStr  = JSON.stringify(backupPayload);
-    folder.createFile(fileName, jsonStr, MimeType.PLAIN_TEXT);
-
-    result.fileName = fileName;
-    result.fileSizeKB = Math.round(jsonStr.length / 1024);
-
+    var folder=getOrCreateBackupFolder_();assertPrivateBackupFolder_(folder);
+    var properties=PropertiesService.getScriptProperties().getProperties();
+    var begin=UrlFetchApp.fetch(endpoint+":beginTransaction",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({options:{readOnly:{}}}),muteHttpExceptions:true});
+    if(begin.getResponseCode()!==200)throw new Error("เริ่ม Backup snapshot ไม่สำเร็จ");
+    transaction=JSON.parse(begin.getContentText()).transaction;
+    if(!transaction)throw new Error("ไม่พบ Backup transaction");
+    var snapshot={};BACKUP_COLLECTIONS.forEach(function(name){snapshot[name]=fetchBackupSnapshotCollection_(name,transaction);result.collections[name]=snapshot[name].length;});
+    var ids={};snapshot.Product_Images.forEach(function(doc){imageDataFromFields_(doc.fields).ids.forEach(function(id){if(!id)throw new Error("รูปสินค้ามี URL แต่ไม่มี Drive File ID");ids[id]=true;});});
+    var suffix=Utilities.formatDate(new Date(),"Asia/Bangkok","yyyy-MM-dd_HH-mm-ss")+"_"+Utilities.getUuid();
+    assetFolder=folder.createFolder("syy-shop-assets_"+suffix);assertPrivateBackupFolder_(assetFolder);
+    var assets=[];
+    Object.keys(ids).forEach(function(id){
+      var original=DriveApp.getFileById(id),before=original.getLastUpdated().getTime(),blob=original.getBlob(),digest=backupDigest_(blob.getBytes());
+      var copy=assetFolder.createFile(blob).setName(original.getName());assertPrivateBackupItem_(copy);
+      if(original.getLastUpdated().getTime()!==before || backupDigest_(copy.getBlob().getBytes())!==digest)throw new Error("รูปสินค้าถูกแก้ไขระหว่าง Backup");
+      assets.push({originalId:id,backupId:copy.getId(),digest:digest});
+    });
+    if(backupJsonDigest_(properties)!==backupJsonDigest_(PropertiesService.getScriptProperties().getProperties()))throw new Error("Script Properties เปลี่ยนแปลงระหว่าง Backup กรุณาลองใหม่");
+    var bundle={schemaVersion:2,complete:true,backupDate:new Date().toISOString(),projectId:PROJECT_ID,collections:snapshot,scriptProperties:properties,assets:assets,assetFolderId:assetFolder.getId()};
+    bundle.digest=backupJsonDigest_({collections:snapshot,scriptProperties:properties,assets:assets,assetFolderId:bundle.assetFolderId});
+    validateBackupBundle_(bundle);
+    result.fileName="syy-shop-backup_"+suffix+".json";
+    var text=JSON.stringify(bundle);manifest=folder.createFile(result.fileName,text,MimeType.PLAIN_TEXT);assertPrivateBackupItem_(manifest);
+    result.fileSizeKB=Math.round(text.length/1024);result.fileId=manifest.getId();result.success=true;
     cleanupOldBackups_(folder);
-
-  } catch (e) {
-    result.success = false;
-    result.errors.push("บันทึกไฟล์ลง Drive ไม่สำเร็จ: " + e.message);
-    console.error("backupAllDataToBackup save error:", e);
+  } catch(e) {
+    result.errors.push(e.message);
+    if(manifest){try{manifest.setTrashed(true);}catch(ignore){}}
+    if(assetFolder){try{assetFolder.setTrashed(true);}catch(ignore){}}
+  } finally {
+    if(transaction){try{UrlFetchApp.fetch(endpoint+":rollback",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({transaction:transaction}),muteHttpExceptions:true});}catch(ignore){}}
   }
-
-  if (result.errors.length > 0 && result.success) {
-    result.success = false;
-  }
-
   return result;
 }
 
 function cleanupOldBackups_(folder) {
   try {
+    assertPrivateBackupFolder_(folder);
     var files = folder.getFilesByType(MimeType.PLAIN_TEXT);
     var fileList = [];
     while (files.hasNext()) {
@@ -2843,7 +2660,14 @@ function cleanupOldBackups_(folder) {
     fileList.sort(function(a, b) { return b.date - a.date; });
 
     for (var i = BACKUP_KEEP_COUNT; i < fileList.length; i++) {
-      fileList[i].file.setTrashed(true);
+      var old=fileList[i].file,bundle=JSON.parse(old.getBlob().getDataAsString());
+      if(bundle.schemaVersion===2 && bundle.assetFolderId){
+        var assets=DriveApp.getFolderById(bundle.assetFolderId),parents=assets.getParents(),owned=false;
+        while(parents.hasNext())if(parents.next().getId()===folder.getId())owned=true;
+        if(!owned || assets.getName()!==old.getName().replace("syy-shop-backup_","syy-shop-assets_").replace(/\.json$/,""))throw new Error("Backup asset folder ไม่ตรง");
+        assertPrivateBackupFolder_(assets);assets.setTrashed(true);
+      }
+      old.setTrashed(true);
     }
   } catch (e) {
     console.error("cleanupOldBackups error:", e);
@@ -2883,6 +2707,7 @@ function listBackupFiles_() {
   var list = [];
   try {
     var folder = getOrCreateBackupFolder_();
+    assertPrivateBackupFolder_(folder);
     var files = folder.getFilesByType(MimeType.PLAIN_TEXT);
     while (files.hasNext()) {
       var f = files.next();
@@ -2897,59 +2722,58 @@ function listBackupFiles_() {
     }
     list.sort(function(a, b) { return new Date(b.date) - new Date(a.date); });
   } catch (e) {
-    console.error("listBackupFiles error:", e);
+    throw e;
   }
   return list;
 }
 
-function restoreFromBackup_(fileId, restoreMode) {
-  var result = { success: true, restored: {}, errors: [] };
-  try {
-    var file = DriveApp.getFileById(fileId);
-    var backupData = JSON.parse(file.getBlob().getDataAsString());
-    var collectionsToRestore = (restoreMode && restoreMode !== "all")
-      ? [restoreMode]
-      : Object.keys(backupData.collections || {});
-
-    collectionsToRestore.forEach(function(collectionName) {
-      var docs = (backupData.collections || {})[collectionName] || [];
-      var restoredCount = 0, failedCount = 0;
-
-      docs.forEach(function(doc) {
-        try {
-          var fieldNames = Object.keys(doc.fields || {});
-          var maskParams = fieldNames.map(function(fn) {
-            return "updateMask.fieldPaths=" + encodeURIComponent(fn);
-          }).join("&");
-          var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                  + "/databases/(default)/documents/" + collectionName + "/" + doc.id
-                  + (maskParams ? "?" + maskParams : "");
-          var res = UrlFetchApp.fetch(url, {
-            method             : "patch",
-            headers            : getAuthHeader_(),
-            payload            : JSON.stringify({ fields: doc.fields }),
-            muteHttpExceptions : true
-          });
-          if (res.getResponseCode() === 200) restoredCount++;
-          else failedCount++;
-        } catch (e) {
-          failedCount++;
-        }
-      });
-
-      result.restored[collectionName] = { restored: restoredCount, failed: failedCount };
-      if (failedCount > 0) result.errors.push(collectionName + ": กู้คืนไม่สำเร็จ " + failedCount + " รายการ");
-
-      clearCollectionCache_(collectionName);
-    });
-
-    if (result.errors.length > 0) result.success = false;
-
-  } catch (e) {
-    result.success = false;
-    result.errors.push("อ่านไฟล์ backup ไม่สำเร็จ: " + e.message);
-    console.error("restoreFromBackup error:", e);
-  }
+function restoreFromBackup_(fileId, restoreMode, options) {
+  options=options||{};
+  var result={success:false,dryRun:options.confirmRestore!==true,restored:{},errors:[]};
+  try{
+    var file=DriveApp.getFileById(fileId);assertPrivateBackupItem_(file);
+    var bundle=JSON.parse(file.getBlob().getDataAsString()),assets=validateBackupBundle_(bundle,options.sourceProjectId);
+    var names=restoreMode && restoreMode!=="all" ? [restoreMode] : BACKUP_COLLECTIONS.slice();
+    if(names.some(function(n){return BACKUP_COLLECTIONS.indexOf(n)<0;}))throw new Error("ชุดข้อมูลที่จะกู้คืนไม่ถูกต้อง");
+    names.forEach(function(n){result.restored[n]={planned:bundle.collections[n].length,restored:0};});
+    if(result.dryRun){result.success=true;return result;}
+    // Recovery rehearsal writes only to an explicitly selected empty staging database.
+    var target=String(options.targetProjectId||"");
+    if(!/^[a-z][a-z0-9-]{4,62}$/.test(target)||target===bundle.projectId || target!==PROJECT_ID || options.confirmStagingScript!==true)throw new Error("ต้องระบุโปรเจกต์ Staging ที่ว่างสำหรับกู้คืน; Production ต้องใช้แผนที่อนุมัติแยกต่างหาก");
+    var endpoint="https://firestore.googleapis.com/v1/projects/"+target+"/databases/(default)/documents";
+    names.forEach(function(n){var res=UrlFetchApp.fetch(endpoint+"/"+n+"?pageSize=1",{method:"get",headers:getAuthHeader_(),muteHttpExceptions:true});
+      if(res.getResponseCode()!==200 || (JSON.parse(res.getContentText()).documents||[]).length)throw new Error("Staging ต้องว่างและเข้าถึงได้ก่อนกู้คืน");});
+    if(names.indexOf("Master_Users")>=0 && !options.restoreProperties)throw new Error("กู้คืนบัญชีต้องกู้คืน Script Properties ในสคริปต์ Staging ด้วย");
+    if(options.restoreProperties && options.confirmStagingScript!==true)throw new Error("ต้องยืนยันว่าเรียกจากสคริปต์ Staging ก่อนกู้คืน Properties");
+    var remap={},copies=[];
+    if(names.indexOf("Product_Images")>=0){
+      var imageFolder=DriveApp.createFolder("SYY Shop - Recovery Images "+Utilities.getUuid());
+      assertPrivateBackupFolder_(imageFolder);
+      Object.keys(assets).forEach(function(id){var source=DriveApp.getFileById(assets[id].backupId),copy=imageFolder.createFile(source.getBlob()).setName(source.getName());copies.push(copy.getId());
+        if(backupDigest_(copy.getBlob().getBytes())!==assets[id].digest)throw new Error("รูปที่กู้คืน checksum ไม่ตรง");
+        copy.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);remap[id]=copy.getId();});
+    }
+    var writes=[];
+    names.forEach(function(n){bundle.collections[n].forEach(function(doc){
+      var fields=JSON.parse(JSON.stringify(doc.fields));
+      if(n==="Product_Images"){
+        var data=imageDataFromFields_(fields),ids=data.ids.map(function(id){return remap[id];}),urls=ids.map(function(id){return "https://lh3.googleusercontent.com/d/"+id;});
+        fields=mapToFirestoreFields_({Image_Url:urls[data.primaryIndex]||"",Drive_File_Id:ids[data.primaryIndex]||"",Image_Urls:urls,Drive_File_Ids:ids,Primary_Index:data.primaryIndex,Images_JSON:JSON.stringify(urls.map(function(url,i){return {url:url,fileId:ids[i]};}))});
+      }
+      if(n==="Master_Users")fields.Session_Version={stringValue:Utilities.getUuid()};
+      writes.push({update:{name:"projects/"+target+"/databases/(default)/documents/"+n+"/"+doc.id,fields:fields},currentDocument:{exists:false}});
+    });});
+    for(var i=0;i<writes.length;i+=450){var part=writes.slice(i,i+450),res=UrlFetchApp.fetch(endpoint+":commit",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({writes:part}),muteHttpExceptions:true});
+      if(res.getResponseCode()!==200)throw new Error("กู้คืนไม่ครบ: หยุดก่อนชุดถัดไป กรุณาตรวจ Staging");
+      part.forEach(function(w){var n=w.update.name.split('/documents/')[1].split('/')[0];result.restored[n].restored++;});}
+    if(options.restoreProperties){
+      var props=JSON.parse(JSON.stringify(bundle.scriptProperties));
+      props[PRODUCT_IMAGE_FOLDER_PROP_KEY]=imageFolder ? imageFolder.getId() : PropertiesService.getScriptProperties().getProperty(PRODUCT_IMAGE_FOLDER_PROP_KEY)||"";
+      PropertiesService.getScriptProperties().setProperties(props,false);
+    }
+    if(imageFolder)PropertiesService.getScriptProperties().setProperty(PRODUCT_IMAGE_FOLDER_PROP_KEY,imageFolder.getId());
+    names.forEach(clearCollectionCache_);result.imageFileMap=remap;result.success=true;
+  }catch(e){result.errors.push(e.message);}
   return result;
 }
 
@@ -3043,21 +2867,33 @@ function buildLowStockList_(vendorMap) {
           vendorBranch  : v.Branch       || ""
         };
       });
-  } catch (e) {
-    console.error("buildLowStockList error:", e);
-  }
+  } catch (e) { console.error("buildLowStockList_ read failed", e); throw e; }
   return result;
 }
 
 function savePurchaseOrder_(d) {
+  d = d || {};
+  if (!validDateOnly_(d.orderDate)) return {success:false, message:"วันที่สั่งซื้อไม่ถูกต้อง"};
+  if (["Pending","Ordered"].indexOf(d.status || "Pending") < 0) return {success:false, message:"สถานะใบสั่งซื้อไม่ถูกต้อง"};
   var items = Array.isArray(d.items) ? d.items : [];
   if (!d.vendorId)   return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาระบุผู้จัดจำหน่าย" };
   if (!items.length) return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกสินค้าอย่างน้อย 1 รายการ" };
 
+  if (items.length > 200 || items.some(function(it) {return !it || !validDocumentId_(it.productCode) || !validBusinessNumber_(it.qty,0,true) || !validBusinessNumber_(it.costPrice,0,false);})) return {success:false, message:"จำนวนและต้นทุนสินค้าต้องถูกต้อง"};
+  var seenCodes = {};
+  try {
+    readExistingDocument_("Master_Vendors", d.vendorId);
+    items.forEach(function(it) {
+      if (seenCodes[it.productCode]) throw new Error("สินค้าซ้ำในใบสั่งซื้อ");
+      seenCodes[it.productCode] = true;
+      var doc = readExistingDocument_("Master_Products", it.productCode);
+      it.productName = parseFirestoreValue_((doc.fields || {}).Product_Name) || it.productCode;
+    });
+  } catch (e) {return {success:false, message:e.message};}
   var totalQty = 0, totalAmount = 0;
   items = items.map(function(it) {
-    var qty  = parseFloat(it.qty       || 0);
-    var cost = parseFloat(it.costPrice || 0);
+    var qty  = Number(it.qty);
+    var cost = Number(it.costPrice);
     totalQty    += qty;
     totalAmount += qty * cost;
     return {
@@ -3069,6 +2905,7 @@ function savePurchaseOrder_(d) {
     };
   });
 
+  if(!isFinite(totalQty)||!isFinite(totalAmount)||totalQty>Number.MAX_SAFE_INTEGER||totalAmount>Number.MAX_SAFE_INTEGER)return {success:false,message:"จำนวนหรือยอดรวมเกินช่วงที่ระบบรองรับ"};
   var dataObject = {
     Vendor_ID     : String(d.vendorId  || ""),
     Order_Date    : String(d.orderDate || new Date().toISOString().slice(0, 10)),
@@ -3109,6 +2946,7 @@ function buildPurchaseOrderList_(vendorMap) {
     var res = UrlFetchApp.fetch(url, {
       method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
     if (res.getResponseCode() === 200) {
       (JSON.parse(res.getContentText()) || []).forEach(function(row) {
         if (!row.document) return;
@@ -3145,9 +2983,7 @@ function buildPurchaseOrderList_(vendorMap) {
     } else {
       console.error("buildPurchaseOrderList HTTP " + res.getResponseCode() + ": " + res.getContentText());
     }
-  } catch (e) {
-    console.error("buildPurchaseOrderList error:", e);
-  }
+  } catch (e) { console.error("buildPurchaseOrderList_ read failed", e); throw e; }
 
   list.sort(function(a, b) { return b.poId.localeCompare(a.poId); });
   return list;
@@ -3163,6 +2999,7 @@ function getPurchaseOrderPageData_() {
 
 function updatePurchaseOrderStatus_(docId, newStatus) {
   try {
+    if (["Pending","Ordered","Cancelled"].indexOf(newStatus) < 0) return {success:false, message:"สถานะไม่ถูกต้อง"};
     if (newStatus === "Received" || newStatus === "PartiallyReceived") {
       return { success: false, title: "ไม่อนุญาต", message: "กรุณาใช้ปุ่ม '📥 รับสินค้า' เพื่อบันทึกการรับสินค้าแทน" };
     }
@@ -3173,9 +3010,11 @@ function updatePurchaseOrderStatus_(docId, newStatus) {
     if (getRes.getResponseCode() !== 200) {
       return { success: false, title: "ไม่พบข้อมูล", message: "ไม่พบใบสั่งซื้อนี้" };
     }
-    var currentStatus = parseFirestoreValue_((JSON.parse(getRes.getContentText()).fields || {}).Status) || "Pending";
+    var currentDoc = JSON.parse(getRes.getContentText());
+    if (!currentDoc.updateTime) throw new Error("ไม่พบเวอร์ชันใบสั่งซื้อ");
+    var currentStatus = parseFirestoreValue_((currentDoc.fields || {}).Status) || "Pending";
 
-    if (currentStatus === "Received") {
+    if (currentStatus === "Received" || currentStatus === "Cancelled" || currentStatus === "PartiallyReceived") {
       return { success: false, title: "ไม่อนุญาต", message: "ใบสั่งซื้อนี้ได้รับสินค้าครบแล้ว ไม่สามารถเปลี่ยนสถานะได้อีก" };
     }
     if (newStatus === "Cancelled" && currentStatus === "PartiallyReceived") {
@@ -3183,7 +3022,7 @@ function updatePurchaseOrderStatus_(docId, newStatus) {
     }
 
     var payload = { fields: { Status: { stringValue: String(newStatus || "Pending") } } };
-    var res = UrlFetchApp.fetch(url + "?updateMask.fieldPaths=Status", {
+    var res = UrlFetchApp.fetch(url + "?updateMask.fieldPaths=Status&currentDocument.updateTime=" + encodeURIComponent(currentDoc.updateTime), {
       method             : "patch",
       headers            : getAuthHeader_(),
       payload            : JSON.stringify(payload),
@@ -3191,7 +3030,7 @@ function updatePurchaseOrderStatus_(docId, newStatus) {
     });
     return res.getResponseCode() === 200
       ? { success: true,  title: "สำเร็จ",       message: "อัปเดตสถานะเรียบร้อย" }
-      : { success: false, title: "ล้มเหลว",       message: res.getContentText() };
+      : { success: false, title: "ล้มเหลว",       message: "ข้อมูลเปลี่ยนแปลงแล้ว หรือบันทึกไม่สำเร็จ กรุณารีเฟรชแล้วลองใหม่" };
   } catch (e) {
     return { success: false, title: "ข้อผิดพลาด", message: e.message };
   }
@@ -3235,19 +3074,20 @@ function incrementProductStockBatch_(items) {
 
 function receiveGoods_(d, callerUsername) {
   function fail(msg) { return { success: false, title: "ข้อมูลไม่ครบ", message: msg }; }
+  var commitAttempted=false;
   try {
     d = d || {};
     if (!d.poId) return fail("ไม่พบเลขที่ใบสั่งซื้อ");
     if (!String(d.invoiceNo || "").trim()) return fail("กรุณากรอกเลขที่ Invoice");
-    if (!String(d.receiptDate || "").trim()) return fail("กรุณาระบุวันที่รับสินค้า");
+    if (!validDateOnly_(d.receiptDate)) return fail("กรุณาระบุวันที่รับสินค้า");
     if (!String(d.receiverName || "").trim()) return fail("กรุณากรอกชื่อผู้รับสินค้า");
     var reqItems = Array.isArray(d.items) ? d.items : [];
-    if (!reqItems.length) return fail("ไม่มีรายการสินค้าที่จะรับ");
+    if (!reqItems.length || reqItems.length > 200 || reqItems.some(function(it) {return !it || !validDocumentId_(it.productCode) || !validBusinessNumber_(it.qtyReceivedNow,0,true);})) return fail("จำนวนสินค้าที่รับต้องมากกว่า 0 และไม่เกิน 200 รายการ");
 
     var user = callerUsername || getCurrentUsername_();
-    var nowIso = new Date().toISOString();
-    var docNo = "SR" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyMMdd-HHmmss")
-              + "-" + Utilities.getUuid().replace(/-/g, "").slice(0, 4).toUpperCase();
+    var request = stockRequest_("SR",d,user), replay = replayStockRequest_(request);
+    if (replay) return replay;
+    var nowIso = new Date().toISOString(), docNo = request.docNo;
     var poUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
               + "/databases/(default)/documents/Purchase_Orders/" + d.poId;
     var MAX_ATTEMPTS = 3;
@@ -3256,30 +3096,34 @@ function receiveGoods_(d, callerUsername) {
       var res = UrlFetchApp.fetch(poUrl, { method:"get", headers:getAuthHeader_(), muteHttpExceptions:true });
       if (res.getResponseCode() !== 200) return fail("ไม่พบใบสั่งซื้อนี้");
       var poDoc = JSON.parse(res.getContentText());
+      if (!poDoc.updateTime) throw new Error("ไม่พบเวอร์ชันใบสั่งซื้อ");
       var f = poDoc.fields || {};
       var currentStatus = parseFirestoreValue_(f.Status) || "Pending";
       if (currentStatus === "Received") return fail("ใบสั่งซื้อนี้ได้รับสินค้าครบแล้ว ไม่สามารถบันทึกรับซ้ำได้");
       if (currentStatus === "Cancelled") return fail("ใบสั่งซื้อนี้ถูกยกเลิกแล้ว ไม่สามารถรับสินค้าได้");
 
       var poItems = [];
-      try { poItems = JSON.parse(parseFirestoreValue_(f.Items_JSON) || "[]"); } catch (e) { poItems = []; }
-      var receiveMap = {};
+      poItems = JSON.parse(parseFirestoreValue_(f.Items_JSON) || "[]");
+      if (reqItems.some(function(it) {return !poItems.some(function(p) {return p.productCode === it.productCode;});})) return fail("สินค้าไม่ตรงกับใบสั่งซื้อ");
+      var poCodes=Object.create(null);
+      if(!Array.isArray(poItems)||!poItems.length)throw new Error("รายการใบสั่งซื้อไม่สมบูรณ์");
+      poItems.forEach(function(it){if(!it||!it.productCode||poCodes[it.productCode]||!isFinite(Number(it.qty))||Number(it.qty)<=0||!isFinite(Number(it.receivedQty||0))||Number(it.receivedQty||0)<0||Number(it.receivedQty||0)>Number(it.qty))throw new Error("ข้อมูลใบสั่งซื้อไม่ถูกต้อง กรุณาแจ้งผู้ดูแลระบบ");poCodes[it.productCode]=true;});
+      var receiveMap = Object.create(null);
       reqItems.forEach(function(it) {
         var code = String(it.productCode || "");
-        receiveMap[code] = (receiveMap[code] || 0) + (parseFloat(it.qtyReceivedNow || 0) || 0);
+        receiveMap[code] = (receiveMap[code] || 0) + Number(it.qtyReceivedNow);
       });
       var allComplete = true, receiptLineItems = [], stockAdditions = [];
       poItems = poItems.map(function(it) {
         var already = parseFloat(it.receivedQty || 0), ordered = parseFloat(it.qty || 0);
         var remaining = Math.max(ordered - already, 0);
-        var receiveNow = receiveMap.hasOwnProperty(it.productCode) ? receiveMap[it.productCode] : 0;
-        if (receiveNow < 0) receiveNow = 0;
-        if (receiveNow > remaining) receiveNow = remaining;
+        var receiveNow = Object.prototype.hasOwnProperty.call(receiveMap,it.productCode) ? receiveMap[it.productCode] : 0;
+        if (!isFinite(receiveNow) || receiveNow < 0 || receiveNow > remaining) throw new Error("จำนวนรับสินค้าเกินจำนวนคงค้าง: " + it.productCode);
         var newReceived = already + receiveNow;
         if (newReceived < ordered) allComplete = false;
         if (receiveNow > 0) {
           receiptLineItems.push({ productCode:it.productCode, productName:it.productName, qtyReceivedNow:receiveNow });
-          stockAdditions.push({ productCode:it.productCode, productName:it.productName, qty:receiveNow });
+          stockAdditions.push({ productCode:it.productCode, productName:it.productName, qty:receiveNow, costPrice:it.costPrice == null ? null : Number(it.costPrice) });
         }
         it.receivedQty = newReceived;
         return it;
@@ -3291,12 +3135,12 @@ function receiveGoods_(d, callerUsername) {
 
       var stockMap = getProductStockMap_(stockAdditions.map(function(x) { return x.productCode; }));
       for (var si = 0; si < stockAdditions.length; si++) {
-        if (!stockMap[stockAdditions[si].productCode]) return fail("ไม่พบสินค้า " + stockAdditions[si].productCode + " ใน Master Product");
+        if (!stockMap[stockAdditions[si].productCode] || !stockMap[stockAdditions[si].productCode].updateTime) return fail("ไม่พบสินค้า " + stockAdditions[si].productCode + " ใน Master Product");
       }
 
       var receipts = [];
-      try { receipts = JSON.parse(parseFirestoreValue_(f.Receipts_JSON) || "[]"); } catch (e2) { receipts = []; }
-      var effectiveDeliveryNote = allComplete ? "" : String(d.deliveryNoteNo || "").trim();
+      receipts = JSON.parse(parseFirestoreValue_(f.Receipts_JSON) || "[]");
+      var effectiveDeliveryNote = String(d.deliveryNoteNo || "").trim();
       var receiptExists = receipts.some(function(r) {
         return String(r.invoiceNo || "").trim() === String(d.invoiceNo || "").trim()
           && String(r.date || "") === String(d.receiptDate || "")
@@ -3306,7 +3150,7 @@ function receiveGoods_(d, callerUsername) {
       receipts.push({
         date:d.receiptDate, invoiceNo:d.invoiceNo, receiverName:d.receiverName,
         deliveryNoteNo:effectiveDeliveryNote,
-        isFinal:allComplete, items:receiptLineItems
+        requestId:d.requestId, isFinal:allComplete, items:receiptLineItems
       });
       var newStatus = allComplete ? "Received" : "PartiallyReceived";
       var writes = [];
@@ -3345,20 +3189,25 @@ function receiveGoods_(d, callerUsername) {
       if (poDoc.updateTime) poWrite.currentDocument = { updateTime:poDoc.updateTime };
       writes.push(poWrite);
 
+      writes.forEach(function(w) {
+        if (w.update && w.update.fields.Type && w.update.fields.Type.stringValue === "IN") {
+          var code = w.update.fields.Product_Code.stringValue;
+          var line = stockAdditions.find(function(l) {return l.productCode === code;});
+          if (line.costPrice !== null && isFinite(line.costPrice) && line.costPrice >= 0) w.update.fields.Cost_Price = {doubleValue:line.costPrice};
+        }
+      });
+      var result = {success:true,title:"สำเร็จ",message:allComplete ? "บันทึกรับสินค้าครบถ้วน และอัปเดตสต็อกเรียบร้อย" : "บันทึกรับสินค้าบางส่วน และอัปเดตสต็อกเรียบร้อย",
+        status:newStatus,po:{poId:d.poId,status:newStatus,items:poItems,receipts:receipts},
+        productStocks:stockAdditions.map(function(l) {var info=stockMap[l.productCode];return {productCode:l.productCode,currentStock:info.stock+l.qty,minStock:info.minStock,costPrice:info.costPrice,sellingPrice:info.sellingPrice};})};
+      sealStockRequest_(writes,request,result);
+      commitAttempted=true;
       var commit = fsCommit_(writes);
       if (commit.ok) {
         clearCollectionCache_("Master_Products");
-        return {
-          success:true, title:"สำเร็จ",
-          message:allComplete ? "บันทึกรับสินค้าครบถ้วน และอัปเดตสต็อกเรียบร้อย" : "บันทึกรับสินค้าบางส่วน และอัปเดตสต็อกเรียบร้อย",
-          status:newStatus,
-          po:{ poId:d.poId, status:newStatus, items:poItems, receipts:receipts },
-          productStocks:stockAdditions.map(function(l) {
-            var info=stockMap[l.productCode], qty=parseFloat(l.qty || 0);
-            return { productCode:l.productCode, currentStock:info.stock + qty, minStock:info.minStock, costPrice:info.costPrice, sellingPrice:info.sellingPrice };
-          })
-        };
+        return result;
       }
+      replay = replayStockRequest_(request);
+      if (replay) return replay;
       if (!isPreconditionFailure_(commit.message) || attempt === MAX_ATTEMPTS) {
         return { success:false, title:"ล้มเหลว", message:"บันทึกรับสินค้าไม่สำเร็จ: " + commit.message };
       }
@@ -3366,7 +3215,7 @@ function receiveGoods_(d, callerUsername) {
     }
     return { success:false, title:"ล้มเหลว", message:"ข้อมูลมีการเปลี่ยนแปลงพร้อมกัน กรุณาลองใหม่" };
   } catch (e) {
-    return { success:false, title:"ข้อผิดพลาด", message:e.message };
+    return {success:false,title:"ข้อผิดพลาด",message:e.message,uncertain:commitAttempted || /ตรวจสอบรายการเดิม|network|timeout/i.test(e.message)};
   }
 }
 
@@ -3539,41 +3388,43 @@ function verifyTotp_(secretB32, code) {
 //   AUTH_SESSION_HOURS แม้จะโดนปิดบัญชีไปแล้วก็ตาม
 function createSession_(user, userAgent) {
   var token = Utilities.getUuid() + "-" + Utilities.getUuid();
-  var payload = {
-    username  : user.Username,
-    fullName  : user.Full_Name,
-    role      : user.Role,
-    issuedAt  : Date.now()
-  };
+  var payload = {username:user.Username, fullName:user.Full_Name, role:user.Role, docId:user.docId,
+    sessionVersion:String(user.Session_Version || ""), issuedAt:Date.now()};
   CacheService.getScriptCache().put("sess_" + token, JSON.stringify(payload), AUTH_SESSION_HOURS * 3600);
-  return { token: token, profile: payload };
+  return {token:token, profile:payload};
 }
 
 // ★ เพิกถอน session ที่ออกไปแล้วทั้งหมดของผู้ใช้คนนี้ทันที (เรียกตอนปิดบัญชี/เปลี่ยนสิทธิ์/รีเซ็ตรหัสผ่าน)
 //   ไม่ได้ลบ cache key ของ session ตรงๆ เพราะไม่รู้ token ของ session ที่ออกไปแล้ว — เก็บ "เวลาที่เพิกถอน"
 //   ไว้แทน แล้วให้ getSession_() เทียบกับ issuedAt ของ session นั้นๆ ทุกครั้งที่ใช้งาน
 function revokeUserSessions_(username) {
-  var uname = String(username || "").trim().toLowerCase();
-  if (!uname) return;
-  CacheService.getScriptCache().put("revoked_" + uname, String(Date.now()), AUTH_SESSION_HOURS * 3600);
+  var user = findUserByUsername_(username);
+  if (!user) throw new Error("ไม่พบบัญชีที่จะเพิกถอนเซสชัน");
+  user = readAuthUser_(user.docId);
+  if (!updateUserFields_(user.docId, {Session_Version:Utilities.getUuid()}, user.updateTime))
+    throw new Error("เพิกถอนเซสชันไม่สำเร็จ กรุณาลองใหม่");
 }
 
 function getSession_(token, userAgent) {
   if (!token) return null;
+  if (validatedGatewaySession_ && validatedGatewaySession_.token === token) return validatedGatewaySession_.session;
   try {
     var raw = CacheService.getScriptCache().get("sess_" + token);
     if (!raw) return null;
     var session = JSON.parse(raw);
-
-    var revokedAt = CacheService.getScriptCache().get("revoked_" + String(session.username || "").trim().toLowerCase());
-    if (revokedAt && parseInt(revokedAt, 10) >= session.issuedAt) {
-      return null;
+    if (!session.docId) {
+      var legacy = findUserByUsername_(session.username);
+      if (!legacy) return null;
+      session.docId = legacy.docId;
     }
-
+    var revokedAt=CacheService.getScriptCache().get("revoked_"+String(session.username||"").trim().toLowerCase());
+    if(revokedAt && Number(revokedAt)>=session.issuedAt)return null;
+    var user = readAuthUser_(session.docId);
+    if (user.Status !== "Active" || user.Username !== session.username || user.Role !== session.role ||
+        String(user.Session_Version || "") !== String(session.sessionVersion || "")) return null;
+    session.fullName = user.Full_Name;
     return session;
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
 function destroySession_(token) {
@@ -3635,21 +3486,25 @@ function findUserByEmail_(email) {
   return null;
 }
 
-function updateUserFields_(docId, fieldsObj) {
+function updateUserFields_(docId, fieldsObj, updateTime) {
   try {
+    fieldsObj = Object.assign({}, fieldsObj);
+    if (Object.prototype.hasOwnProperty.call(fieldsObj, "Password_Hash") && !Object.prototype.hasOwnProperty.call(fieldsObj,"Session_Version")) fieldsObj.Session_Version = Utilities.getUuid();
     var names = Object.keys(fieldsObj);
     if (!names.length) return false;
     var mask = names.map(function (n) { return "updateMask.fieldPaths=" + encodeURIComponent(n); }).join("&");
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + AUTH_USERS_COLLECTION + "/" + docId + "?" + mask;
+            + "/databases/(default)/documents/" + AUTH_USERS_COLLECTION + "/" + encodeURIComponent(docId) + "?" + mask
+            + (updateTime ? "&currentDocument.updateTime=" + encodeURIComponent(updateTime) : "&currentDocument.exists=true");
     var res = UrlFetchApp.fetch(url, {
       method             : "patch",
       headers            : getAuthHeader_(),
       payload            : JSON.stringify({ fields: mapToFirestoreFields_(fieldsObj) }),
       muteHttpExceptions : true
     });
-    clearCollectionCache_(AUTH_USERS_COLLECTION);
-    return res.getResponseCode() === 200;
+    var ok=res.getResponseCode()===200;
+    if(ok)clearCollectionCache_(AUTH_USERS_COLLECTION);
+    return ok;
   } catch (e) {
     console.error("updateUserFields_ error:", e);
     return false;
@@ -3668,19 +3523,15 @@ function generateRecoveryCodes_() {
 
 function consumeRecoveryCode_(user, code) {
   try {
-    var list = JSON.parse(user.Recovery_Codes || "[]");
+    var fresh = readAuthUser_(user.docId);
+    if (!fresh.updateTime || fresh.Status !== "Active" || fresh.Password_Hash !== user.Password_Hash) return false;
+    var list = JSON.parse(fresh.Recovery_Codes || "[]");
     var target = hashPassword_(String(code).trim().toUpperCase(), "recovery");
-    var idx = -1;
-    for (var i = 0; i < list.length; i++) {
-      if (safeEquals_(list[i], target)) { idx = i; break; }
-    }
-    if (idx === -1) return false;
+    var idx = list.findIndex(function(hash) { return safeEquals_(hash, target); });
+    if (idx < 0) return false;
     list.splice(idx, 1);
-    updateUserFields_(user.docId, { Recovery_Codes: JSON.stringify(list) });
-    return true;
-  } catch (e) {
-    return false;
-  }
+    return updateUserFields_(user.docId, {Recovery_Codes:JSON.stringify(list)}, fresh.updateTime);
+  } catch (e) { return false; }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3693,6 +3544,7 @@ function authLogin(username, password, otpCode, userAgent) {
     var genericFail = { success: false, message: "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" };
 
     if (!user) return genericFail;
+    user = readAuthUser_(user.docId);
     if (user.Status !== "Active") return { success: false, message: "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ" };
 
     if (user.Locked_Until) {
@@ -3751,7 +3603,7 @@ function authLogin(username, password, otpCode, userAgent) {
       var tempToken = Utilities.getUuid() + "-" + Utilities.getUuid();
       CacheService.getScriptCache().put(
         "pwforce_" + tempToken,
-        JSON.stringify({ username: user.Username, docId: user.docId }),
+        JSON.stringify({username:user.Username,docId:user.docId,sessionVersion:user.Session_Version,passwordHash:user.Password_Hash}),
         600
       );
       return {
@@ -4049,14 +3901,16 @@ function apiGateway(token, fnName, args, userAgent) {
       return { success: false, message: "ไม่อนุญาตให้บันทึกข้อมูลลงชุดข้อมูลนี้" };
     }
 
-    // inject username ของผู้เรียกจาก session สำหรับฟังก์ชันที่ต้องกันแก้ไขบัญชีตัวเอง
-    // (issueStock/receiveGoods/saveQuotation ก็ใช้ช่องทางเดียวกันนี้ เพื่อบันทึก User จริงลง Stock_Movements/Quotations)
-    if (fnName === "resetUserPassword" || fnName === "toggleUserStatus" || fnName === "updateUserAccount" ||
-        fnName === "issueStock" || fnName === "receiveGoods" || fnName === "saveQuotation" ||
-        fnName === "markQuotationStockIssued") {
-      a = a.slice();
-      a.push(session.username);
+    var identityPositions = {resetUserPassword:1, toggleUserStatus:2, updateUserAccount:4,
+      issueStock:1, receiveGoods:1, saveQuotation:1, markQuotationStockIssued:2};
+    a = a.slice();
+    if (Object.prototype.hasOwnProperty.call(identityPositions, fnName)) {
+      var identityIndex = identityPositions[fnName];
+      if (a.length > identityIndex) return {success:false, message:"คำขอมีข้อมูลผู้ทำรายการที่ไม่อนุญาต"};
+      a[identityIndex] = session.username;
     }
+    if (["authGetMyProfile","authChangePassword","authLogout","authStartTotpSetup","authConfirmTotpSetup","authDisableTotp"].indexOf(fnName) >= 0) a[0] = token;
+    validatedGatewaySession_ = {token:token, session:session};
 
     var fn = API_FUNCTIONS[fnName];
     if (typeof fn !== "function") {
@@ -4072,7 +3926,7 @@ function apiGateway(token, fnName, args, userAgent) {
   } catch (e) {
     console.error("apiGateway error [" + fnName + "]:", e);
     return { success: false, message: friendlyErrorMessage_(e) };
-  }
+  } finally { validatedGatewaySession_ = null; }
 }
 
 // ★ แปลง exception ดิบ (มักเป็นภาษาอังกฤษเทคนิค) ให้เป็นข้อความไทยที่พนักงานอ่านแล้วรู้ว่าควรทำอะไรต่อ
@@ -4114,6 +3968,7 @@ function getActivityLog_(limitCount) {
     var res = UrlFetchApp.fetch(url, {
       method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
     if (res.getResponseCode() === 200) {
       (JSON.parse(res.getContentText()) || []).forEach(function (row) {
         if (!row.document) return;
@@ -4131,9 +3986,7 @@ function getActivityLog_(limitCount) {
     } else {
       console.error("getActivityLog HTTP " + res.getResponseCode() + ": " + res.getContentText());
     }
-  } catch (e) {
-    console.error("getActivityLog error:", e);
-  }
+  } catch (e) { console.error("getActivityLog_ read failed", e); throw e; }
   return list;
 }
 
@@ -4230,7 +4083,7 @@ function authChangePassword_(token, oldPassword, newPassword) {
     return { success: false, message: "รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร" };
   }
 
-  var user = findUserByUsername_(session.username);
+  var user = readAuthUser_(session.docId);
   if (!user) return { success: false, message: "ไม่พบบัญชีผู้ใช้" };
 
   if (!safeEquals_(hashPassword_(oldPassword, user.Salt), user.Password_Hash)) {
@@ -4247,9 +4100,9 @@ function authChangePassword_(token, oldPassword, newPassword) {
     Salt                 : newSalt,
     Password_Changed_At  : new Date().toISOString(),
     Must_Change_Password : "false"
-  });
+  }, user.updateTime);
 
-  return ok ? { success: true, message: "เปลี่ยนรหัสผ่านสำเร็จ" }
+  return ok ? { success: true, requiresLogin:true, message: "เปลี่ยนรหัสผ่านสำเร็จ กรุณาเข้าสู่ระบบใหม่" }
             : { success: false, message: "บันทึกไม่สำเร็จ กรุณาลองใหม่" };
 }
 
@@ -4412,6 +4265,8 @@ function authResetPassword(resetToken, newPassword) {
     var data = JSON.parse(raw);
     var user = findUserByUsername_(data.username);
     if (!user) return { success: false, message: "ไม่พบบัญชีผู้ใช้" };
+    user=readAuthUser_(user.docId);
+    if(user.Status!=="Active") return {success:false,message:"บัญชีถูกปิดใช้งาน"};
 
     if (isSamePassword_(user, newPassword)) {
       return { success: false, message: "รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม กรุณาตั้งรหัสผ่านใหม่ที่แตกต่างออกไป" };
@@ -4425,7 +4280,7 @@ function authResetPassword(resetToken, newPassword) {
       Must_Change_Password  : "false",
       Failed_Attempts : 0,
       Locked_Until    : ""
-    });
+    },user.updateTime);
 
     return ok ? { success: true, message: "ตั้งรหัสผ่านใหม่สำเร็จ กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่" }
               : { success: false, message: "บันทึกไม่สำเร็จ กรุณาลองใหม่" };
@@ -4557,9 +4412,7 @@ function getAllUsers_() {
       });
     });
     list.sort(function (a, b) { return (a.username || "").localeCompare(b.username || ""); });
-  } catch (e) {
-    console.error("getAllUsers error:", e);
-  }
+  } catch (e) { console.error("getAllUsers_ read failed", e); throw e; }
   return list;
 }
 
@@ -4586,7 +4439,8 @@ function updateUserAccount_(docId, fullName, email, role, callerUsername) {
     var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
     if (res.getResponseCode() !== 200) return { success: false, message: "ไม่พบบัญชีผู้ใช้นี้" };
 
-    var f = JSON.parse(res.getContentText()).fields || {};
+    var targetDoc = JSON.parse(res.getContentText());
+    var f = targetDoc.fields || {};
     var targetUsername = parseFirestoreValue_(f.Username) || "";
     var currentEmail   = parseFirestoreValue_(f.Email)    || "";
     var currentRole    = parseFirestoreValue_(f.Role)     || "";
@@ -4602,17 +4456,9 @@ function updateUserAccount_(docId, fullName, email, role, callerUsername) {
       }
     }
 
-    var ok = updateUserFields_(docId, {
-      Full_Name : cleanName,
-      Email     : cleanEmail,
-      Role      : cleanRole
-    });
-
-    // ★ เปลี่ยนสิทธิ์แล้วต้องบังคับ session เดิมของบัญชีนี้ให้หมดอายุทันที ไม่งั้นสิทธิ์เก่ายังใช้ได้ต่อ
-    //   จนกว่า session จะหมดอายุเอง (สูงสุด AUTH_SESSION_HOURS ชั่วโมง) — ไม่ต้องทำถ้าแก้แค่ชื่อ/อีเมล
-    if (ok && cleanRole !== currentRole) {
-      revokeUserSessions_(targetUsername);
-    }
+    var changes = {Full_Name:cleanName, Email:cleanEmail, Role:cleanRole};
+    if (cleanRole !== currentRole) changes.Session_Version = Utilities.getUuid();
+    var ok = updateUserFields_(docId, changes, targetDoc.updateTime);
 
     return ok ? { success: true, message: "บันทึกข้อมูลบัญชีผู้ใช้สำเร็จ" }
               : { success: false, message: "บันทึกไม่สำเร็จ กรุณาลองใหม่" };
@@ -4631,7 +4477,8 @@ function resetUserPassword_(docId, callerUsername) {
     var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
     if (res.getResponseCode() !== 200) return { success: false, message: "ไม่พบบัญชีผู้ใช้นี้" };
 
-    var f = JSON.parse(res.getContentText()).fields || {};
+    var targetDoc=JSON.parse(res.getContentText());
+    var f = targetDoc.fields || {};
     var targetUsername = parseFirestoreValue_(f.Username) || "";
     var targetEmail     = parseFirestoreValue_(f.Email)    || "";
     var targetFullName  = parseFirestoreValue_(f.Full_Name) || targetUsername;
@@ -4650,7 +4497,7 @@ function resetUserPassword_(docId, callerUsername) {
     // ★ รีเซ็ตรหัสผ่านแล้วต้องเพิกถอน session เดิมทั้งหมดทันที — เผื่อเหตุผลที่แอดมินรีเซ็ตให้คือ
     //   สงสัยว่าบัญชีนี้ถูกขโมยไปใช้ ถ้าไม่เพิกถอน คนที่ถือ session เดิมอยู่ (ผู้ไม่ประสงค์ดี) ยังใช้งาน
     //   ต่อได้จนกว่าจะหมดอายุเอง แม้เจ้าของบัญชีตัวจริงจะตั้งรหัสผ่านใหม่ไปแล้วก็ตาม
-    revokeUserSessions_(targetUsername);
+    if(!updateUserFields_(docId,{Session_Version:Utilities.getUuid()},targetDoc.updateTime)) return {success:false,message:"บัญชีเปลี่ยนแปลงแล้ว กรุณารีเฟรชแล้วลองใหม่"};
 
     var resetToken = Utilities.getUuid() + "-" + Utilities.getUuid();
     CacheService.getScriptCache().put(
@@ -4703,20 +4550,18 @@ function toggleUserStatus_(docId, newStatus, callerUsername) {
     var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
     if (res.getResponseCode() !== 200) return { success: false, message: "ไม่พบบัญชีผู้ใช้นี้" };
 
-    var f = JSON.parse(res.getContentText()).fields || {};
+    var targetDoc = JSON.parse(res.getContentText());
+    var f = targetDoc.fields || {};
     var targetUsername = parseFirestoreValue_(f.Username) || "";
 
     if (callerUsername && targetUsername.toLowerCase() === String(callerUsername).toLowerCase()) {
       return { success: false, message: "ไม่สามารถเปลี่ยนสถานะบัญชีตัวเองได้" };
     }
 
-    var ok = updateUserFields_(docId, { Status: newStatus });
-    if (!ok) return { success: false, message: "เปลี่ยนสถานะไม่สำเร็จ กรุณาลองใหม่" };
-
-    // ★ ปิดใช้งานบัญชีแล้วต้องตัด session เดิมทันที ไม่งั้นยังใช้งานได้ต่อจนกว่า session จะหมดอายุเอง
-    if (newStatus === "Inactive") {
-      revokeUserSessions_(targetUsername);
-    }
+    var changes = {Status:newStatus};
+    if (parseFirestoreValue_(f.Status) !== newStatus) changes.Session_Version = Utilities.getUuid();
+    var ok = updateUserFields_(docId, changes, targetDoc.updateTime);
+    if (!ok) return {success:false, message:"ข้อมูลบัญชีเปลี่ยนแปลงแล้ว กรุณารีเฟรชแล้วลองใหม่"};
 
     return {
       success: true,
@@ -4739,27 +4584,30 @@ function authChangePasswordForced(tempToken, newPassword, userAgent) {
     }
 
     var data = JSON.parse(raw);
-    var user = findUserByUsername_(data.username);
-    if (!user) return { success: false, message: "ไม่พบบัญชีผู้ใช้" };
+    var user=readAuthUser_(data.docId);
+    if(user.Status!=="Active" || user.Username!==data.username || user.Password_Hash!==data.passwordHash || user.Session_Version!==String(data.sessionVersion||"")) return {success:false,message:"บัญชีเปลี่ยนแปลงแล้ว กรุณาเข้าสู่ระบบใหม่"};
 
     if (isSamePassword_(user, newPassword)) {
       return { success: false, message: "รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม กรุณาตั้งรหัสผ่านใหม่ที่แตกต่างออกไป" };
     }
 
-    CacheService.getScriptCache().remove(cacheKey);
-
+    var sessionVersion=Utilities.getUuid();
     var newSalt = makeSalt_();
     var ok = updateUserFields_(user.docId, {
+      Session_Version      : sessionVersion,
       Password_Hash        : hashPassword_(newPassword, newSalt),
       Salt                 : newSalt,
       Must_Change_Password : "false",
       Password_Changed_At  : new Date().toISOString(),
       Failed_Attempts      : 0,
       Locked_Until         : ""
-    });
+    },user.updateTime);
 
     if (!ok) return { success: false, message: "บันทึกรหัสผ่านใหม่ไม่สำเร็จ กรุณาลองใหม่" };
 
+    CacheService.getScriptCache().remove(cacheKey);
+    user = readAuthUser_(user.docId);
+    if(user.Session_Version!==sessionVersion || user.Status!=="Active") return {success:false,message:"บัญชีเปลี่ยนแปลงแล้ว กรุณาเข้าสู่ระบบใหม่"};
     var sess = createSession_(user, userAgent);
     return {
       success : true,
@@ -4784,10 +4632,12 @@ var STOCK_MOVEMENT_COLLECTION = "Stock_Movements";
 var ISSUE_REASONS = ["ขายหน้าร้าน", "ขาย Online", "เบิกใช้ภายใน", "คืน Supplier", "สินค้าชำรุด", "สูญหาย"];
 
 function fsDocPath_(collection, docId) {
+  if(!validDocumentId_(String(docId || ""))) throw new Error("รหัสเอกสารไม่ถูกต้อง");
   return "projects/" + PROJECT_ID + "/databases/(default)/documents/" + collection + "/" + docId;
 }
 
 function fsCommit_(writes) {
+  writes.forEach(function(w){if(w.update && w.update.name.indexOf("/"+STOCK_MOVEMENT_COLLECTION+"/")>=0){w.updateTransforms=w.updateTransforms||[{fieldPath:"Committed_At",setToServerValue:"REQUEST_TIME"}];w.currentDocument=w.currentDocument||{exists:false};}});
   var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
           + "/databases/(default)/documents:commit";
   var res = UrlFetchApp.fetch(url, {
@@ -4828,13 +4678,14 @@ function getProductStockMap_(codes) {
   });
   if (res.getResponseCode() !== 200) {
     console.error("getProductStockMap_ HTTP " + res.getResponseCode() + ": " + res.getContentText());
-    return map;
+    throw new Error("โหลดสต๊อกปัจจุบันไม่สำเร็จ กรุณาลองใหม่");
   }
 
   (JSON.parse(res.getContentText()) || []).forEach(function (row) {
     if (!row.found) return;
     var f  = row.found.fields || {};
     var id = row.found.name.split("/").pop();
+    ["Current_Stock","Min_Stock","Cost_Price","Selling_Price"].forEach(function(k){if(f[k] && !isFinite(Number(parseFirestoreValue_(f[k]))))throw new Error("ข้อมูลสินค้าไม่ถูกต้อง: "+id);});
     map[id] = {
       name         : parseFirestoreValue_(f.Product_Name) || id,
       stock        : parseFloat(parseFirestoreValue_(f.Current_Stock)) || 0,
@@ -4862,12 +4713,14 @@ function issueStock_(d, callerUsername) {
     return o;
   }
 
+  var commitAttempted=false;
   try {
     d = d || {};
-    var items = (Array.isArray(d.items) ? d.items : []).filter(function (it) {
-      return it && it.productCode && parseFloat(it.qty || 0) > 0;
-    });
-    if (!items.length) return fail("ไม่มีรายการที่จะตัดสต๊อก");
+    var items = Array.isArray(d.items) ? d.items : [];
+    if (!items.length || items.length > 200 || items.some(function(it) {return !it || !validDocumentId_(it.productCode) || !validBusinessNumber_(it.qty,0,true);})) return fail("จำนวนสินค้าต้องมากกว่า 0 และไม่เกิน 200 รายการ");
+    var user = callerUsername || getCurrentUsername_();
+    var request = stockRequest_("SI",d,user), replay = replayStockRequest_(request);
+    if (replay) return replay;
 
     var reason = String(d.reason || "").trim();
     if (ISSUE_REASONS.indexOf(reason) === -1) return fail("กรุณาเลือกเหตุผลที่ตัดสต๊อกให้ถูกต้อง");
@@ -4875,44 +4728,28 @@ function issueStock_(d, callerUsername) {
     // รวมรายการซ้ำรหัสเดียวกันเข้าด้วยกัน กันตัดสองรอบ
     // ★ ไม่รับ unitPrice จาก client เลย — ราคาตัดสต๊อกต้องอ้างอิง Master_Products.Selling_Price เท่านั้น
     //   (ล็อกที่ฝั่ง server ไม่ใช่แค่ซ่อนช่องกรอกที่ UI เพราะ apiGateway ยังเรียกได้ตรงถ้ารู้ token)
-    var merged = {};
+    var merged = Object.create(null);
     items.forEach(function (it) {
       var code = String(it.productCode);
       if (!merged[code]) merged[code] = { productCode: code, productName: it.productName || "", qty: 0 };
-      merged[code].qty += parseFloat(it.qty || 0);
+      merged[code].qty += Number(it.qty);
     });
     var lines0 = Object.keys(merged).map(function (k) { return merged[k]; });
+
+    if(lines0.some(function(l){return !validBusinessNumber_(l.qty,0,true);}))return fail("จำนวนรวมสินค้าต้องถูกต้อง");
 
     // ★ ถ้าตัดสต๊อกจากใบเสนอราคาที่ "ปิดงาน-ขายสำเร็จ" แล้ว ใช้ราคาที่เสนอไปจริง (ผ่านการอนุมัติแล้ว)
     //   เฉพาะสินค้าที่อยู่ในใบเสนอราคานั้น แทนราคา Master Product — ตรวจสอบจากเอกสารจริงบน server
     //   เองเท่านั้น (ไม่เชื่อราคาที่ client ส่งมาตรงๆ) กันตั้งราคาปลอมโดยอ้างว่ามาจากใบเสนอราคา
-    var quotedPriceMap = {};
+    var quotedPriceMap = Object.create(null), quoteDoc = null;
     if (d.quoteId) {
-      try {
-        var qUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                 + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + d.quoteId;
-        var qRes = UrlFetchApp.fetch(qUrl, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
-        if (qRes.getResponseCode() === 200) {
-          var qf = JSON.parse(qRes.getContentText()).fields || {};
-          if (parseFirestoreValue_(qf.Status) === "ปิดงาน-ขายสำเร็จ") {
-            var qItems = JSON.parse(parseFirestoreValue_(qf.Items_JSON) || "[]");
-            qItems.forEach(function (it) {
-              if (it && it.productCode) quotedPriceMap[it.productCode] = parseFloat(it.unitPrice) || 0;
-            });
-          }
-        }
-      } catch (e) {
-        console.error("issueStock: ตรวจสอบใบเสนอราคาไม่สำเร็จ (จะใช้ราคา Master Product แทน):", e);
-      }
+      quoteDoc = readExistingDocument_(QUOTATION_COLLECTION,d.quoteId);
+      var qf = quoteDoc.fields || {};
+      if (!quoteDoc.updateTime || parseFirestoreValue_(qf.Status) !== "ปิดงาน-ขายสำเร็จ") return fail("ใบเสนอราคาต้องปิดงานขายสำเร็จก่อนตัดสต๊อก");
+      JSON.parse(parseFirestoreValue_(qf.Items_JSON) || "[]").forEach(function(it) {quotedPriceMap[it.productCode]=Number(it.unitPrice);});
+      if (lines0.some(function(l) {return !Object.prototype.hasOwnProperty.call(quotedPriceMap,l.productCode) || !isFinite(quotedPriceMap[l.productCode]) || quotedPriceMap[l.productCode] < 0;})) return fail("สินค้าหรือราคาไม่ตรงกับใบเสนอราคา");
     }
-
-    var user   = callerUsername || getCurrentUsername_();
-    var nowIso = new Date().toISOString();
-    // ★ FIX: เดิม docNo = "SI"+yyMMdd-HHmmss เท่านั้น — 2 บิลในวินาทีเดียวกันได้ docNo ซ้ำ แล้ว
-    //   document id ของ Stock_Movements (docNo+"-"+ลำดับ) ชนกัน เขียนทับประวัติบิลแรกเงียบๆ
-    //   (ยอดสต๊อกยังถูกเพราะ increment เป็น atomic แต่หลักฐานการตัดหาย) — เติมสุ่มท้ายกันชนแทน
-    var docNo = "SI" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyMMdd-HHmmss")
-              + "-" + Utilities.getUuid().replace(/-/g, "").slice(0, 4).toUpperCase();
+    var nowIso = new Date().toISOString(), docNo = request.docNo;
 
     // ★ FIX: เดิมอ่านสต๊อกมาตรวจ "พอไหม" ครั้งเดียวแล้วค่อยเขียน increment แยกจังหวะกัน — ถ้า 2 คำขอ
     //   ตัดสต๊อกสินค้าตัวเดียวกัน (เช่นชิ้นสุดท้าย) มาพร้อมกันพอดี ทั้งคู่จะอ่านเจอว่า "พอ" ก่อนที่อีกฝ่าย
@@ -4931,14 +4768,14 @@ function issueStock_(d, callerUsername) {
       });
       lines.forEach(function (l) {
         var info = stockMap[l.productCode];
-        if (!info) { notFound.push(l.productCode); return; }
+        if (!info || !info.updateTime) { notFound.push(l.productCode); return; }
         l.before     = info.stock;
         l.after      = info.stock - l.qty;
         l.minStock   = info.minStock;
         l.costPrice  = info.costPrice;
         l.updateTime = info.updateTime;
-        l.unitPrice  = quotedPriceMap.hasOwnProperty(l.productCode) ? quotedPriceMap[l.productCode] : info.sellingPrice;
-        if (!l.productName) l.productName = info.name;
+        l.unitPrice  = Object.prototype.hasOwnProperty.call(quotedPriceMap,l.productCode) ? quotedPriceMap[l.productCode] : info.sellingPrice;
+        l.productName = info.name;
         if (l.after < 0) insufficient.push({ productCode: l.productCode, productName: l.productName, stock: info.stock, need: l.qty });
       });
 
@@ -4976,6 +4813,7 @@ function issueStock_(d, callerUsername) {
               Unit_Price   : { doubleValue: parseFloat(l.unitPrice || 0) },
               Cost_Price   : { doubleValue: parseFloat(l.costPrice || 0) },
               Reason       : { stringValue: reason },
+              Quote_Id     : {stringValue:String(d.quoteId || "")},
               Ref_No       : { stringValue: String(d.refNo || "") },
               Note         : { stringValue: String(d.note  || "") },
               User         : { stringValue: user },
@@ -4985,8 +4823,16 @@ function issueStock_(d, callerUsername) {
         });
       });
 
+      var result = {success:true,title:"สำเร็จ",message:"ตัดสต๊อกเรียบร้อย",docNo:docNo,
+        results:lines.map(function(l) {return {productCode:l.productCode,productName:l.productName,qty:l.qty,before:l.before,after:l.after,belowMin:l.after <= l.minStock};})};
+      if (quoteDoc) writes.push({update:{name:fsDocPath_(QUOTATION_COLLECTION,d.quoteId),fields:mapToFirestoreFields_({Stock_Issued:"true",Stock_Issue_Doc:docNo,Stock_Issued_By:user,Stock_Issued_At:nowIso})},
+        updateMask:{fieldPaths:["Stock_Issued","Stock_Issue_Doc","Stock_Issued_By","Stock_Issued_At"]},currentDocument:{updateTime:quoteDoc.updateTime}});
+      sealStockRequest_(writes,request,result);
+      commitAttempted=true;
       commit = fsCommit_(writes);
       if (commit.ok) break;
+      replay = replayStockRequest_(request);
+      if (replay) return replay;
       if (!isPreconditionFailure_(commit.message) || attempt === MAX_ATTEMPTS) {
         return { success: false, title: "ล้มเหลว", message: "บันทึกไม่สำเร็จ: " + commit.message };
       }
@@ -4995,17 +4841,9 @@ function issueStock_(d, callerUsername) {
     }
 
     clearCollectionCache_("Master_Products");
-    return {
-      success : true,
-      title   : "สำเร็จ",
-      message : "ตัดสต๊อกเรียบร้อย",
-      docNo   : docNo,
-      results : lines.map(function (l) {
-        return { productCode: l.productCode, productName: l.productName, qty: l.qty, before: l.before, after: l.after, belowMin: l.after <= l.minStock };
-      })
-    };
+    return result;
   } catch (e) {
-    return { success: false, title: "ข้อผิดพลาด", message: e.message };
+    return {success:false,title:"ข้อผิดพลาด",message:e.message,uncertain:commitAttempted || /ตรวจสอบรายการเดิม|network|timeout/i.test(e.message)};
   }
 }
 
@@ -5082,6 +4920,7 @@ function getStockMovements_(limit, productCode) {
       payload           : JSON.stringify({ structuredQuery: q }),
       muteHttpExceptions: true
     });
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
     if (res.getResponseCode() !== 200) {
       console.error("getStockMovements HTTP " + res.getResponseCode() + ": " + res.getContentText());
       return out;
@@ -5107,9 +4946,7 @@ function getStockMovements_(limit, productCode) {
         timestamp   : parseFirestoreValue_(f.Timestamp)
       });
     });
-  } catch (e) {
-    console.error("getStockMovements error:", e);
-  }
+  } catch (e) { console.error("getStockMovements_ read failed", e); throw e; }
   return out;
 }
 
@@ -5167,7 +5004,8 @@ function mapDashboardMovementRow_(row) {
     qty         : parseFloat(parseFirestoreValue_(f.Qty)) || 0,
     stockAfter  : parseFloat(parseFirestoreValue_(f.Stock_After)) || 0,
     unitPrice   : parseFloat(parseFirestoreValue_(f.Unit_Price)) || 0,
-    costPrice   : parseFloat(parseFirestoreValue_(f.Cost_Price)) || 0,
+    costPrice   : f.Cost_Price ? Number(parseFirestoreValue_(f.Cost_Price)) : null,
+    committedAt : parseFirestoreValue_(f.Committed_At) || "",
     reason      : parseFirestoreValue_(f.Reason) || "",
     refNo       : parseFirestoreValue_(f.Ref_No) || "",
     note        : parseFirestoreValue_(f.Note) || "",
@@ -5176,28 +5014,27 @@ function mapDashboardMovementRow_(row) {
   };
 }
 
-function queryDashboardMovementsRange_(fromIso, toIso, exclusiveStart) {
-  var out = [];
-  try {
-    var filters = [];
-    if (fromIso) filters.push({ fieldFilter:{ field:{fieldPath:"Timestamp"}, op:exclusiveStart ? "GREATER_THAN" : "GREATER_THAN_OR_EQUAL", value:{stringValue:fromIso} } });
-    if (toIso) filters.push({ fieldFilter:{ field:{fieldPath:"Timestamp"}, op:"LESS_THAN_OR_EQUAL", value:{stringValue:toIso} } });
-    var q = {
-      from:[{collectionId:STOCK_MOVEMENT_COLLECTION}],
-      orderBy:[{field:{fieldPath:"Timestamp"}, direction:"DESCENDING"}]
-    };
-    if (filters.length === 1) q.where = filters[0];
-    else if (filters.length > 1) q.where = { compositeFilter:{op:"AND", filters:filters} };
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
-    var res = UrlFetchApp.fetch(url, {method:"post", headers:getAuthHeader_(), payload:JSON.stringify({structuredQuery:q}), muteHttpExceptions:true});
-    if (res.getResponseCode() !== 200) {
-      console.error("queryDashboardMovementsRange_ HTTP " + res.getResponseCode() + ": " + res.getContentText());
-      return out;
-    }
-    (JSON.parse(res.getContentText()) || []).forEach(function(row) {
-      var m = mapDashboardMovementRow_(row); if (m) out.push(m);
-    });
-  } catch (e) { console.error("queryDashboardMovementsRange_ error:", e); }
+function queryDashboardMovementsRange_(fromIso, toIso, committedCursor) {
+  var field = committedCursor ? "Committed_At" : "Timestamp", filters = [], out = [];
+  if (fromIso) {
+    var start = committedCursor ? new Date(new Date(fromIso).getTime()-60000).toISOString() : fromIso;
+    var value = committedCursor ? {timestampValue:start} : {stringValue:start};
+    filters.push({fieldFilter:{field:{fieldPath:field},op:"GREATER_THAN_OR_EQUAL",value:value}});
+  }
+  if (toIso && !committedCursor) filters.push({fieldFilter:{field:{fieldPath:field},op:"LESS_THAN_OR_EQUAL",value:{stringValue:toIso}}});
+  var q = {from:[{collectionId:STOCK_MOVEMENT_COLLECTION}],orderBy:[{field:{fieldPath:field},direction:"DESCENDING"}]};
+  if (filters.length === 1) q.where=filters[0];
+  else if (filters.length) q.where={compositeFilter:{op:"AND",filters:filters}};
+  var url="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents:runQuery";
+  var res=UrlFetchApp.fetch(url,{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({structuredQuery:q}),muteHttpExceptions:true});
+  if(res.getResponseCode()!==200) throw new Error("โหลดการเคลื่อนไหวไม่สำเร็จ กรุณาลองใหม่");
+  var readTime="";
+  JSON.parse(res.getContentText()).forEach(function(row) {
+    if(row.readTime && (!readTime || row.readTime > readTime)) readTime=row.readTime;
+    var m=mapDashboardMovementRow_(row); if(m) out.push(m);
+  });
+  if(!readTime) throw new Error("ไม่พบเวลายืนยันข้อมูลจาก Firestore");
+  out.readTime=readTime;
   return out;
 }
 
@@ -5216,12 +5053,15 @@ function buildPoVendorMapForMovements_(movements) {
       method:"post", headers:getAuthHeader_(), muteHttpExceptions:true,
       payload:JSON.stringify({documents:batch.map(function(id){ return fsDocPath_("Purchase_Orders", id); })})
     });
-    if (res.getResponseCode() !== 200) continue;
+    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลใบสั่งซื้อไม่สำเร็จ");
     (JSON.parse(res.getContentText()) || []).forEach(function(row) {
       if (!row.found) return;
       var id = row.found.name.split('/').pop(), f = row.found.fields || {};
       var vendorId = parseFirestoreValue_(f.Vendor_ID) || "", v = vendorMap[vendorId] || {};
       out[id] = v.Vendor_name || vendorId;
+      var items=JSON.parse(parseFirestoreValue_(f.Items_JSON)||"[]"), costs={};
+      items.forEach(function(it) {if(it.costPrice!=null && isFinite(Number(it.costPrice)) && Number(it.costPrice)>=0) costs[it.productCode]=Number(it.costPrice);});
+      movements.forEach(function(m) {if(m.type === "IN" && m.refNo === id && m.costPrice === null && Object.prototype.hasOwnProperty.call(costs,m.productCode)) m.costPrice=costs[m.productCode];});
     });
   }
   return out;
@@ -5234,7 +5074,7 @@ function getDashboardBootstrap_() {
   return {
     products:getAllProducts_(), movements:movements,
     poVendorMap:buildPoVendorMapForMovements_(movements),
-    bounded:true, rangeStart:rangeStart, serverTime:serverTime
+    bounded:true, rangeStart:rangeStart, serverTime:movements.readTime
   };
 }
 
@@ -5242,7 +5082,7 @@ function getDashboardDelta_(sinceIso) {
   var since = String(sinceIso || "").trim();
   if (!since || isNaN(new Date(since).getTime())) return { success:false, fullRefresh:true, message:"sync watermark ไม่ถูกต้อง" };
   var serverTime = new Date().toISOString();
-  var movements = queryDashboardMovementsRange_(since, serverTime, false);
+  var movements = queryDashboardMovementsRange_(since, null, true);
   var codes = [], seen = {};
   movements.forEach(function(m) { if (m.productCode && !seen[m.productCode]) { seen[m.productCode]=true; codes.push(m.productCode); } });
   var stocks = getProductStockMap_(codes), productStocks = [];
@@ -5252,7 +5092,7 @@ function getDashboardDelta_(sinceIso) {
   });
   return {
     success:true, movements:movements, productStocks:productStocks,
-    poVendorMap:buildPoVendorMapForMovements_(movements), serverTime:serverTime
+    poVendorMap:buildPoVendorMapForMovements_(movements), serverTime:movements.readTime
   };
 }
 
@@ -5266,4 +5106,165 @@ function getCurrentUsername_() {
   } catch (e) {
     return "system";
   }
+}
+
+
+// Fresh targeted reads keep authentication independent of evictable collection caches.
+function readAuthUser_(docId) {
+  var doc = readExistingDocument_(AUTH_USERS_COLLECTION, docId), f = doc.fields || {}, user = {docId:docId, updateTime:doc.updateTime};
+  Object.keys(f).forEach(function(k) { user[k] = parseFirestoreValue_(f[k]); });
+  user.Totp_Enabled = String(user.Totp_Enabled) === "true";
+  user.Must_Change_Password = String(user.Must_Change_Password) === "true";
+  user.Session_Version = String(user.Session_Version || "");
+  return user;
+}
+var validatedGatewaySession_ = null;
+
+
+function validDateOnly_(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !isNaN(new Date(value + "T00:00:00Z").getTime()) && new Date(value + "T00:00:00Z").toISOString().slice(0,10) === value;
+}
+function appendYearMeta_(id, yearBE) {
+  yearBE = Number(yearBE);
+  if (!Number.isInteger(yearBE) || yearBE < 2400 || yearBE > 3000) throw new Error("ปีเอกสารไม่ถูกต้อง");
+  var url = "https://firestore.googleapis.com/v1/" + fsDocPath_(META_COLLECTION, id);
+  var res = UrlFetchApp.fetch(url, {method:"get",headers:getAuthHeader_(),muteHttpExceptions:true});
+  if (res.getResponseCode() !== 200 && res.getResponseCode() !== 404) throw new Error("อ่านข้อมูลปีเอกสารไม่สำเร็จ");
+  if(res.getResponseCode()===200){var existing=parseFirestoreValue_((JSON.parse(res.getContentText()).fields||{}).Years)||[];if(!Array.isArray(existing))throw new Error("ข้อมูลปีเอกสารไม่ถูกต้อง");if(existing.map(Number).indexOf(yearBE)>=0)return;}
+  var result;
+  if (res.getResponseCode() === 404) {
+    result = fsCommit_([{update:{name:fsDocPath_(META_COLLECTION,id),fields:{Years:{arrayValue:{values:[{integerValue:String(yearBE)}]}}}},currentDocument:{exists:false}}]);
+    if (result.ok) return;
+    if (!isPreconditionFailure_(result.message) && !/ALREADY_EXISTS/i.test(result.message)) throw new Error(result.message);
+  }
+  result = fsCommit_([{transform:{document:fsDocPath_(META_COLLECTION,id),fieldTransforms:[{fieldPath:"Years",appendMissingElements:{values:[{integerValue:String(yearBE)}]}}]},currentDocument:{exists:true}}]);
+  if (!result.ok) throw new Error("บันทึกปีเอกสารไม่สำเร็จ: " + result.message);
+}
+
+
+function canonicalRequest_(value) {
+  if (Array.isArray(value)) return value.map(canonicalRequest_);
+  if (value && typeof value === "object") {
+    var out = {}; Object.keys(value).sort().forEach(function(k) {if (k !== "requestId") out[k]=canonicalRequest_(value[k]);}); return out;
+  }
+  return value;
+}
+function stockRequest_(kind, data, username) {
+  var id = String(data.requestId || "");
+  if (!/^[A-Za-z0-9-]{8,80}$/.test(id)) throw new Error("กรุณารีเฟรชหน้าเพื่อส่งรายการพร้อมรหัสคำขอ");
+  return {docNo:kind + "-" + id, fingerprint:hashPassword_(JSON.stringify(canonicalRequest_(data)), String(username) + ":" + kind)};
+}
+function replayStockRequest_(request) {
+  var url = "https://firestore.googleapis.com/v1/" + fsDocPath_(STOCK_MOVEMENT_COLLECTION,request.docNo + "-1");
+  var res = UrlFetchApp.fetch(url,{method:"get",headers:getAuthHeader_(),muteHttpExceptions:true});
+  if (res.getResponseCode() === 404) return null;
+  if (res.getResponseCode() !== 200) throw new Error("ตรวจสอบรายการเดิมไม่สำเร็จ กรุณาลองใหม่ด้วยรายการเดิม");
+  var f = JSON.parse(res.getContentText()).fields || {};
+  if (parseFirestoreValue_(f.Request_Fingerprint) !== request.fingerprint) throw new Error("รหัสคำขอนี้ถูกใช้กับรายการอื่นแล้ว");
+  var result = JSON.parse(parseFirestoreValue_(f.Request_Result_JSON));
+  result.replayed = true;
+  try{
+    if(result.poId){var po=readExistingDocument_("Purchase_Orders",result.poId),pf=po.fields||{};
+      result.po={poId:result.poId,status:parseFirestoreValue_(pf.Status),items:JSON.parse(parseFirestoreValue_(pf.Items_JSON)||"[]"),receipts:JSON.parse(parseFirestoreValue_(pf.Receipts_JSON)||"[]")};result.status=result.po.status;}
+    var codes=(result.results||result.productStocks||[]).map(function(x){return x.productCode;}),stock=getProductStockMap_(codes);
+    result.productStocks=Object.keys(stock).map(function(code){var s=stock[code];return {productCode:code,currentStock:s.stock,minStock:s.minStock,costPrice:s.costPrice,sellingPrice:s.sellingPrice};});
+  }catch(e){result.productStocks=[];result.refreshWarning="รายการเดิมบันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณารีเฟรช";}
+  return result;
+}
+function sealStockRequest_(writes, request, result) {
+  var first = true;
+  writes.forEach(function(w) {
+    if (!w.update || w.update.name.indexOf("/" + STOCK_MOVEMENT_COLLECTION + "/") < 0) return;
+    w.currentDocument = {exists:false};
+    w.updateTransforms = [{fieldPath:"Committed_At",setToServerValue:"REQUEST_TIME"}];
+    if (first) {
+      w.update.fields.Request_Fingerprint = {stringValue:request.fingerprint};
+      var replayResult=Object.assign({},result);
+      if(result.po){replayResult.poId=result.po.poId;delete replayResult.po;}
+      w.update.fields.Request_Result_JSON = {stringValue:JSON.stringify(replayResult)};
+      first = false;
+    }
+  });
+  if (first) throw new Error("ไม่พบประวัติการเคลื่อนไหวสินค้า");
+}
+
+
+function imageDataFromFields_(f) {
+  f=f||{};
+  var gallery = f.Images_JSON ? JSON.parse(parseFirestoreValue_(f.Images_JSON)||"[]") : null;
+  return normalizeProductImageData_(parseFirestoreValue_(f.Image_Url),parseFirestoreValue_(f.Drive_File_Id),
+    gallery ? gallery.map(function(x){return x.url;}) : parseFirestoreValue_(f.Image_Urls),
+    gallery ? gallery.map(function(x){return x.fileId;}) : parseFirestoreValue_(f.Drive_File_Ids),parseFirestoreValue_(f.Primary_Index));
+}
+// On an uncertain write outcome, retain files until a fresh metadata read confirms they are unused.
+function trashUnreferencedImageFiles_(productCode, ids) {
+  try {
+    var current=getProductImageDocData_(productCode);
+    ids.forEach(function(id){if(id && current.ids.indexOf(id)<0) {try{DriveApp.getFileById(id).setTrashed(true);}catch(e){console.error("Image cleanup deferred",id);}}});
+  } catch(e) {console.error("Image cleanup deferred: metadata unavailable");}
+}
+
+
+function backupDigest_(bytes) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,bytes).map(function(b){return ("0"+(b&255).toString(16)).slice(-2);}).join("");
+}
+function backupJsonDigest_(value) {return backupDigest_(Utilities.newBlob(JSON.stringify(canonicalBackupValue_(value))).getBytes());}
+function assertPrivateBackupItem_(item) {
+  var owner=item.getOwner(),email=Session.getEffectiveUser().getEmail();
+  if(!email || !owner || owner.getEmail()!==email || item.getSharingAccess()!==DriveApp.Access.PRIVATE ||
+     item.getEditors().concat(item.getViewers()).some(function(u){return u.getEmail()!==email;})) throw new Error("Backup ต้องอยู่ใน Drive ส่วนตัวของเจ้าของสคริปต์และไม่แชร์กับผู้อื่น");
+}
+function assertPrivateBackupFolder_(folder) {
+  var queue=[folder],seen={};
+  while(queue.length){var f=queue.shift();if(seen[f.getId()])continue;seen[f.getId()]=true;assertPrivateBackupItem_(f);
+    var parents=f.getParents();while(parents.hasNext())queue.push(parents.next());}
+}
+function fetchBackupSnapshotCollection_(collectionName, transaction) {
+  var docs=[],pageToken="",seen={};
+  do {
+    var url="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents/"+collectionName+"?pageSize=300&transaction="+encodeURIComponent(transaction)+(pageToken?"&pageToken="+encodeURIComponent(pageToken):"");
+    var res=UrlFetchApp.fetch(url,{method:"get",headers:getAuthHeader_(),muteHttpExceptions:true});
+    if(res.getResponseCode()!==200) throw new Error("Backup อ่าน "+collectionName+" ไม่สำเร็จ");
+    var body=JSON.parse(res.getContentText());
+    (body.documents||[]).forEach(function(doc){docs.push({id:doc.name.split('/').pop(),fields:doc.fields||{},updateTime:doc.updateTime||""});});
+    pageToken=body.nextPageToken||"";
+    if(pageToken && seen[pageToken]) throw new Error("Backup pagination ไม่สมบูรณ์");
+    seen[pageToken]=true;
+  }while(pageToken);
+  return docs;
+}
+function validateBackupBundle_(bundle, sourceProjectId) {
+  if(!bundle || bundle.schemaVersion!==2 || bundle.complete!==true || bundle.projectId!==(sourceProjectId||PROJECT_ID) || !bundle.collections || !bundle.scriptProperties || !Array.isArray(bundle.assets)) throw new Error("ไฟล์นี้ไม่ใช่ Backup v2 ที่ครบถ้วนของโปรเจกต์นี้");
+  if(backupJsonDigest_({collections:bundle.collections,scriptProperties:bundle.scriptProperties,assets:bundle.assets,assetFolderId:bundle.assetFolderId})!==bundle.digest) throw new Error("Backup checksum ไม่ตรง");
+  var names=Object.keys(bundle.collections);
+  if(names.length!==BACKUP_COLLECTIONS.length || names.some(function(n){return BACKUP_COLLECTIONS.indexOf(n)<0;})) throw new Error("Backup มีชุดข้อมูลไม่ครบหรือมีชุดข้อมูลที่ไม่อนุญาต");
+  BACKUP_COLLECTIONS.forEach(function(n){
+    var docs=bundle.collections[n],seen={};
+    if(!Array.isArray(docs)) throw new Error("Backup collection ไม่ถูกต้อง");
+    docs.forEach(function(doc){if(!doc||typeof doc.id!=="string"||!doc.id||doc.id.indexOf('/')>=0||seen[doc.id]||!doc.fields||typeof doc.fields!=="object"||Array.isArray(doc.fields)) throw new Error("Backup document ไม่ถูกต้อง");seen[doc.id]=true;});
+  });
+  var assets={};bundle.assets.forEach(function(asset){
+    if(!asset || typeof asset.originalId!=="string" || typeof asset.backupId!=="string" || !/^[a-f0-9]{64}$/.test(asset.digest)||assets[asset.originalId])throw new Error("Backup asset ไม่ถูกต้อง");
+    var file=DriveApp.getFileById(asset.backupId);assertPrivateBackupItem_(file);
+    if(backupDigest_(file.getBlob().getBytes())!==asset.digest)throw new Error("รูปใน Backup checksum ไม่ตรง");
+    assets[asset.originalId]=asset;
+  });
+  bundle.collections.Product_Images.forEach(function(doc){imageDataFromFields_(doc.fields).ids.forEach(function(id){if(!id||!assets[id])throw new Error("Backup รูปสินค้าไม่ครบ");});});
+  if(bundle.collections.Master_Users.some(function(doc){return String(parseFirestoreValue_(doc.fields.Totp_Enabled))==="true";})&&!bundle.scriptProperties.AUTH_MASTER_KEY)throw new Error("Backup ไม่มีคีย์สำหรับกู้คืน TOTP");
+  return assets;
+}
+
+
+function validDocumentId_(id) {return typeof id === "string" && id.length>0 && id.length<=500 && id.indexOf("/")<0 && id!=="." && id!==".." && !/^__.*__$/.test(id);}
+
+function validBusinessNumber_(value, minimum, strictlyPositive) {
+  if(typeof value!=="number" && typeof value!=="string")return false;
+  if(typeof value==="string" && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim()))return false;
+  var number=Number(value);return isFinite(number) && number<=Number.MAX_SAFE_INTEGER && (strictlyPositive ? number>minimum : number>=minimum);
+}
+
+function canonicalBackupValue_(value) {
+  if(Array.isArray(value))return value.map(canonicalBackupValue_);
+  if(value && typeof value === "object"){var out=Object.create(null);Object.keys(value).sort().forEach(function(k){out[k]=canonicalBackupValue_(value[k]);});return out;}
+  return value;
 }

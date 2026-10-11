@@ -6,6 +6,56 @@
   <meta charset="UTF-8">
    ═══════════════════════════════════════════════════════════ */
 
+
+/* Frame messages are scoped to a random per-frame channel, an Apps Script origin and a known window. */
+function syyMessageOriginAllowed(origin){
+  if(origin===location.origin && origin!=='null') return true;
+  try{var u=new URL(origin);return u.protocol==='https:' && (u.hostname==='script.google.com'||u.hostname==='script.googleusercontent.com'||u.hostname.endsWith('-script.googleusercontent.com'));}catch(e){return false;}
+}
+function syyFrameChannel(){var el=document.querySelector('meta[name="syy-frame-channel"]');return el ? el.content : '';}
+function syyIsAncestor(source){var p=window;for(var i=0;i<8;i++){try{if(p.parent===p)break;p=p.parent;if(p===source)return true;}catch(e){break;}}return false;}
+function syyValidMessageData(d){
+  if(!d || typeof d!=='object' || Array.isArray(d) || typeof d.action!=='string')return false;
+  if(['PREFILL_BASKET','PREFILL_INVOICE','OPEN_STOCK_ISSUE','OPEN_TAX_INVOICE'].indexOf(d.action)>=0){
+    return Array.isArray(d.items) && d.items.length<=200 && d.items.every(function(it){return it && typeof it==='object' && isFinite(Number(it.qty)) && Number(it.qty)>0 && (typeof it.productCode==='string'||typeof it.name==='string'||typeof it.productName==='string');});
+  }
+  if(d.action==='STOCK_DELTA')return Array.isArray(d.productStocks)&&d.productStocks.length<=200&&d.productStocks.every(function(x){return x&&typeof x.productCode==='string'&&isFinite(Number(x.currentStock));});
+  if(d.action==='PRODUCT_DELTA')return d.product && typeof d.product==='object' && typeof (d.product.productCode||d.product.id)==='string';
+  if(d.action==='MASTER_DELTA')return ['brands','categories','vendors','zones','cars','customers'].indexOf(d.kind)>=0 && d.item && typeof d.item==='object' && typeof d.item.id==='string';
+  if(d.action==='OPEN_PRODUCT_ADD')return typeof d.barcode==='string' && d.barcode.length<=200;
+  return ['REFRESH_DROPDOWNS','REFRESH_PRODUCTS','REFRESH_STOCK_FULL','STOCKISSUE_READY','PRODUCTS_READY','TAXINVOICE_READY'].indexOf(d.action)>=0;
+}
+function syyTrustedParentMessage(e){return syyFrameChannel() && e.data && e.data.channel===syyFrameChannel() && syyMessageOriginAllowed(e.origin) && syyIsAncestor(e.source) && syyValidMessageData(e.data);}
+function syyPostParent(data){
+  var channel=syyFrameChannel();if(!channel||window.parent===window)return;
+  data=Object.assign({},data,{channel:channel});
+  var origins=[location.origin];
+  [document.referrer,typeof WEB_APP_URL!=='undefined'?WEB_APP_URL:''].forEach(function(url){try{var origin=new URL(url).origin;if(syyMessageOriginAllowed(origin)&&origins.indexOf(origin)<0)origins.push(origin);}catch(e){}});
+  var p=window;
+  for(var i=0;i<8;i++){try{if(p.parent===p)break;p=p.parent;origins.forEach(function(origin){p.postMessage(data,origin);});}catch(e){break;}}
+}
+function syyPostFrame(frame,data){
+  if(!frame||!frame.contentWindow||!frame.dataset.channel)return;
+  var target=frame.syyReceiver||frame.contentWindow, origin=frame.syyOrigin||new URL(frame.src||frame.dataset.src,location.href).origin;
+  target.postMessage(Object.assign({},data,{channel:frame.dataset.channel}),origin);
+}
+function syyFrameOwnsSource(frame,source){
+  var queue=[frame.contentWindow],depth=0;
+  while(queue.length&&depth++<30){var win=queue.shift();if(win===source)return true;try{for(var i=0;i<Math.min(win.length,8);i++)queue.push(win[i]);}catch(e){}}
+  return false;
+}
+function syyTrustedChildMessage(e){
+  if(!syyMessageOriginAllowed(e.origin)||!syyValidMessageData(e.data)||!e.source)return false;
+  var frames=Array.from(document.querySelectorAll('iframe[data-channel]'));
+  var frame=frames.find(function(f){return f.dataset.channel===e.data.channel&&syyFrameOwnsSource(f,e.source);});
+  if(!frame)return false;
+  var page=frame.id.replace('iframe-',''),allowed={stockissue:['STOCKISSUE_READY','OPEN_PRODUCT_ADD','OPEN_TAX_INVOICE','STOCK_DELTA','REFRESH_STOCK_FULL'],products:['PRODUCTS_READY','PRODUCT_DELTA','REFRESH_PRODUCTS'],orders:['STOCK_DELTA','REFRESH_STOCK_FULL'],quotation:['OPEN_STOCK_ISSUE'],taxinvoice:['TAXINVOICE_READY']};
+  var actions=allowed[page]||['MASTER_DELTA','REFRESH_DROPDOWNS'];
+  if(actions.indexOf(e.data.action)<0)return false;
+  if(e.data.action==='MASTER_DELTA' && e.data.kind!==page)return false;
+  frame.syyReceiver=e.source;frame.syyOrigin=e.origin;
+  return true;
+}
 /* ── escape / format ── */
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 // ★ ใช้แทน esc() เฉพาะตอนฝังค่าไว้ในสตริง JS ที่ครอบด้วย ' อยู่แล้ว (เช่น onclick="fn('...')")
@@ -206,19 +256,19 @@ function toggleDensity(){
         Stock_Movements/Purchase_Orders เพราะบันทึกสินค้าไม่ได้สร้างรายการเคลื่อนไหวสต๊อก
      3) REFRESH_STOCK_FULL — สต๊อกเคลื่อนไหวจริง (ตัดสต๊อก) → ต้องรีโหลด dashboard เต็มเท่านั้น */
 function notifyParentProductDelta(product,deleted){
-  try{ window.parent.postMessage({action:'PRODUCT_DELTA',product:product||null,deleted:!!deleted},'*'); }catch(e){}
+  try{ syyPostParent({action:'PRODUCT_DELTA',product:product||null,deleted:!!deleted}); }catch(e){}
 }
 function notifyParentMasterDelta(kind,item,deleted){
-  try{ window.parent.postMessage({action:'MASTER_DELTA',kind:kind,item:item||null,deleted:!!deleted},'*'); }catch(e){}
+  try{ syyPostParent({action:'MASTER_DELTA',kind:kind,item:item||null,deleted:!!deleted}); }catch(e){}
 }
 function notifyParentRefreshDropdowns(){
-  try{ window.parent.postMessage({action:'REFRESH_DROPDOWNS'},'*'); }catch(e){}
+  try{ syyPostParent({action:'REFRESH_DROPDOWNS'}); }catch(e){}
 }
 function notifyParentRefreshProducts(){
-  try{ window.parent.postMessage({action:'REFRESH_PRODUCTS'},'*'); }catch(e){}
+  try{ syyPostParent({action:'REFRESH_PRODUCTS'}); }catch(e){}
 }
 function notifyParentRefreshStockFull(){
-  try{ window.parent.postMessage({action:'REFRESH_STOCK_FULL'},'*'); }catch(e){}
+  try{ syyPostParent({action:'REFRESH_STOCK_FULL'}); }catch(e){}
 }
 
 /* ── SweetAlert2 helper (เหลือใช้เฉพาะยืนยัน / error) ── */
@@ -270,6 +320,11 @@ function callApi(fnName,args,onSuccess,onFailure){
         swyError('เซสชันหมดอายุ','กรุณาเข้าสู่ระบบใหม่').then(function(){
           if(typeof WEB_APP_URL!=='undefined') window.top.location.href=WEB_APP_URL+'?page=login';
         });
+        return;
+      }
+      if(res && res.success===false && /^(get|fetch)/.test(fnName)) {
+        if(onFailure) onFailure({message:res.message});
+        else swyError('โหลดข้อมูลไม่สำเร็จ',esc(res.message||'กรุณาลองใหม่'));
         return;
       }
       if(onSuccess) onSuccess(res);

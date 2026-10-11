@@ -32,7 +32,7 @@ function setup() {
   Object.assign(c, {getAuthHeader_:()=>({}), clearCollectionCache_:()=>{}, queryByEqualityField_:()=>[], peekCollectionDocsCache_:()=>null,
     getFirestoreRawList_:()=>[], updateTaxInvoiceYearsMeta_:()=>{}, updateQuotationYearsMeta_:()=>{}, logActivity_:()=>{},
     getProductById_:id=>({id, productCode:id, currentStock:c.parseFirestoreValue_(docs.get('Master_Products/'+id).fields.Current_Stock)}),
-    getCurrentUsername_:()=> 'staff'});
+    hashPassword_:(value,salt)=>require('node:crypto').createHash('sha256').update(String(value)+salt).digest('hex'),getCurrentUsername_:()=> 'staff'});
   function put(key, fields) { docs.set(key, {fields:c.mapToFirestoreFields_(fields), updateTime:'v1'}); }
   return {c, calls, docs, put, value:(key,field)=>c.parseFirestoreValue_(docs.get(key).fields[field])};
 }
@@ -155,8 +155,8 @@ test('stock issue retains atomic movement+stock and approved quotation price, ma
   const s=setup();putQuote(s);s.docs.get('Quotations/QT1').fields.Items_JSON={stringValue:JSON.stringify([{productCode:'P1',unitPrice:125}])};
   s.c.getProductStockMap_=()=>({P1:{name:'Part',stock:10,minStock:2,costPrice:100,sellingPrice:200,updateTime:'v1'}});
   let writes;s.c.fsCommit_=w=>{writes=w;return {ok:true};};
-  const r=s.c.issueStock_({quoteId:'QT1',items:[{productCode:'P1',qty:2,unitPrice:1}],reason:'ขายหน้าร้าน'},'staff');
-  assert.equal(r.success,true);assert.equal(r.results[0].after,8);assert.equal(writes.length,2);
+  const r=s.c.issueStock_({requestId:'request-issue-001',quoteId:'QT1',items:[{productCode:'P1',qty:2,unitPrice:1}],reason:'ขายหน้าร้าน'},'staff');
+  assert.equal(r.success,true);assert.equal(r.results[0].after,8);assert.equal(writes.length,3);
   assert.equal(writes[0].currentDocument.updateTime,'v1');assert.equal(writes[0].transform.fieldTransforms[0].increment.doubleValue,-2);
   assert.equal(writes[1].update.fields.Unit_Price.doubleValue,125);
   assert.equal(writes.some(w=>w.update?.fields.Selling_Price),false);
@@ -164,13 +164,13 @@ test('stock issue retains atomic movement+stock and approved quotation price, ma
 test('stock issue refuses insufficient stock and does not commit',()=>{
   const s=setup();s.c.getProductStockMap_=()=>({P1:{name:'Part',stock:1,minStock:2,costPrice:100,sellingPrice:200,updateTime:'v1'}});
   s.c.fsCommit_=()=>{throw new Error('Must not commit');};
-  assert.equal(s.c.issueStock_({items:[{productCode:'P1',qty:2}],reason:'ขายหน้าร้าน'},'staff').success,false);
+  assert.equal(s.c.issueStock_({requestId:'request-issue-001',items:[{productCode:'P1',qty:2}],reason:'ขายหน้าร้าน'},'staff').success,false);
 });
 test('receive goods keeps stock, movement and receipt/status in a single preconditioned commit',()=>{
   const s=setup();s.put('Purchase_Orders/PO1',{Status:'Pending',Items_JSON:JSON.stringify([{productCode:'P1',productName:'Part',qty:2,receivedQty:0}]),Receipts_JSON:'[]'});
   s.c.getProductStockMap_=()=>({P1:{name:'Part',stock:10,minStock:2,costPrice:100,sellingPrice:200,updateTime:'v1'}});
   let writes;s.c.fsCommit_=w=>{writes=w;return {ok:true};};
-  const r=s.c.receiveGoods_({poId:'PO1',invoiceNo:'INV1',receiptDate:'2026-10-11',receiverName:'Staff',items:[{productCode:'P1',qtyReceivedNow:2}]},'staff');
+  const r=s.c.receiveGoods_({requestId:'request-receive-001',poId:'PO1',invoiceNo:'INV1',receiptDate:'2026-10-11',receiverName:'Staff',items:[{productCode:'P1',qtyReceivedNow:2}]},'staff');
   assert.equal(r.success,true);assert.equal(r.productStocks[0].currentStock,12);assert.equal(r.po.status,'Received');assert.equal(writes.length,3);
   assert.equal(writes[0].currentDocument.updateTime,'v1');assert.equal(writes[2].currentDocument.updateTime,'v1');
   assert.equal(writes[1].update.fields.Type.stringValue,'IN');assert.equal(writes[2].update.fields.Status.stringValue,'Received');

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta name="syy-frame-channel" content="<?= frameChannel ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -301,12 +302,14 @@
 
   window.onload = function () {
     initDensity();
+    restorePendingIssue();
     loadProducts();
     focusScanInput();
   };
 
   // ★ รับรายการจากใบเสนอราคา (ผ่านเชลล์ index.html ที่ forward ต่อมา) มาเติมตะกร้าอัตโนมัติ
   window.addEventListener('message', function (e) {
+    if(!syyTrustedParentMessage(e))return;
     var d = e.data || {};
     if (d.action === 'PREFILL_BASKET') applyPrefillBasket(d);
   });
@@ -314,10 +317,11 @@
   // ★ ยิงบาร์โค้ด/พิมพ์รหัสแล้วหาไม่เจอ → ส่งต่อให้เชลล์เปิดหน้าจัดการสินค้าพร้อมเติมรหัสนี้ให้เลย
   //   ไม่ต้องให้พนักงานจำรหัสแล้วไปพิมพ์ซ้ำเอง
   function goAddProductWithCode(code) {
-    try { window.parent.postMessage({ action: 'OPEN_PRODUCT_ADD', barcode: code }, '*'); } catch (e) {}
+    try { syyPostParent({ action: 'OPEN_PRODUCT_ADD', barcode: code }); } catch (e) {}
   }
 
   function applyPrefillBasket(d) {
+    if(issueBusy||issueUncertain())return;
     switchTab('issue');
     var items = Array.isArray(d.items) ? d.items : [];
     var notFound = [];
@@ -393,7 +397,7 @@
       updateCounts();
       renderResults();
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดสินค้าเสร็จแล้ว พร้อมรับรายการจากใบเสนอราคามาเติมตะกร้า
-      try { window.parent.postMessage({ action: 'STOCKISSUE_READY' }, '*'); } catch (e) {}
+      try { syyPostParent({ action: 'STOCKISSUE_READY' }); } catch (e) {}
     }, function (err) {
       document.getElementById('resultCount').innerText = 'โหลดข้อมูลสินค้าไม่สำเร็จ';
       document.getElementById('resultList').innerHTML = '<div class="empty-box">' + esc(JSON.stringify(err)) + '</div>';
@@ -613,6 +617,7 @@
 
   /* ═══ ตะกร้า ═══ */
   function addToBasket(code) {
+    if(issueBusy||issueUncertain())return;
     var p = products.find(function (x) { return x.productCode === code; });
     if (!p) return;
     if (num(p.currentStock) <= 0) { swyWarning('สินค้าหมด', esc(p.productName) + ' ไม่มีของในสต๊อก — ไปที่เมนู “สั่งซื้อสินค้า” เพื่อสั่งเพิ่ม'); return; }
@@ -638,34 +643,38 @@
   }
 
   function removeLine(code) {
+    if(issueBusy||issueUncertain())return;
     basket = basket.filter(function (b) { return b.productCode !== code; });
     renderBasket();
     focusScanInput();
   }
 
   function changeQty(code, delta) {
+    if(issueBusy||issueUncertain())return;
     var line = basket.find(function (b) { return b.productCode === code; });
     if (!line) return;
     var next = line.qty + delta;
     if (next < 1) { removeLine(code); return; }
-    if (next > line.stock) { swyWarning('เกินจำนวนคงเหลือ', line.productName + ' คงเหลือ ' + line.stock + ' ชิ้น'); return; }
+    if (next > line.stock) { swyWarning('เกินจำนวนคงเหลือ', esc(line.productName) + ' คงเหลือ ' + line.stock + ' ชิ้น'); return; }
     line.qty = next;
     renderBasket();
     focusScanInput();
   }
 
   function setQty(code, val) {
+    if(issueBusy||issueUncertain())return;
     var line = basket.find(function (b) { return b.productCode === code; });
     if (!line) return;
     var n = parseFloat(val);
     if (!n || n < 1) n = 1;
-    if (n > line.stock) { n = line.stock; swyWarning('เกินจำนวนคงเหลือ', line.productName + ' คงเหลือ ' + line.stock + ' ชิ้น'); }
+    if (n > line.stock) { n = line.stock; swyWarning('เกินจำนวนคงเหลือ', esc(line.productName) + ' คงเหลือ ' + line.stock + ' ชิ้น'); }
     line.qty = n;
     renderBasket();
     focusScanInput();
   }
 
   function clearBasket() {
+    if(issueBusy||issueUncertain())return;
     if (!basket.length) return;
     basket = [];
     pendingQuoteId = null;
@@ -733,7 +742,22 @@
   }
 
   /* ═══ ยืนยันตัดสต๊อก ═══ */
+  var issueBusy = false, issueRetry = null;
+  var issueStorageKey='syy_pending_issue_<?= username ?>';
+  function rememberIssue(){try{sessionStorage.setItem(issueStorageKey,JSON.stringify({request:issueRetry,basket:basket}));}catch(e){}}
+  function clearRememberedIssue(){try{sessionStorage.removeItem(issueStorageKey);}catch(e){}}
+  function issueUncertain(){return !!(issueRetry&&issueRetry.uncertain);}
+  function lockIssueInputs(locked){['inpReason','inpRefNo','inpNote'].forEach(function(id){document.getElementById(id).disabled=locked;});}
+  function restorePendingIssue(){
+    try{var raw=sessionStorage.getItem(issueStorageKey);if(!raw)return;var saved=JSON.parse(raw);
+      if(!saved.request||!saved.request.payload||!Array.isArray(saved.basket))return;
+      issueRetry=saved.request;issueRetry.uncertain=true;basket=saved.basket;
+      document.getElementById('inpReason').value=issueRetry.payload.reason;document.getElementById('inpRefNo').value=issueRetry.payload.refNo;document.getElementById('inpNote').value=issueRetry.payload.note;pendingQuoteId=issueRetry.payload.quoteId;
+      lockIssueInputs(true);renderBasket();toast('มีรายการที่ยังไม่ยืนยันผล กดยืนยันเพื่อตรวจสอบรายการเดิม','warn');
+    }catch(e){clearRememberedIssue();}
+  }
   function confirmIssue(alsoInvoice) {
+    if (issueBusy) return;
     if (!basket.length) { swyWarning('ยังไม่มีรายการ', 'ค้นหาสินค้าแล้วกด “+ เพิ่มสินค้า” ก่อน'); return; }
 
     var payload = {
@@ -746,24 +770,34 @@
       })
     };
 
-    var listHtml = basket.map(function (b) { return b.productName + ' × ' + b.qty; }).join('<br>');
+    var signature = JSON.stringify(payload);
+    if (!issueUncertain() && (!issueRetry || issueRetry.signature !== signature)) issueRetry = {signature:signature,id:crypto.randomUUID()};
+    if(issueUncertain()) payload=JSON.parse(JSON.stringify(issueRetry.payload));
+    payload.requestId = issueRetry.id;
+    issueRetry.payload=JSON.parse(JSON.stringify(payload));
+    issueBusy = true;
+    var listHtml = basket.map(function (b) { return esc(b.productName) + ' × ' + b.qty; }).join('<br>');
     swyConfirm({
       icon: 'question',
       title: 'ยืนยันตัดสต๊อก?',
       html: listHtml + '<br><br>เหตุผล: <b>' + esc(payload.reason) + '</b>' + (payload.refNo ? '<br>อ้างอิง: ' + esc(payload.refNo) : ''),
       confirmText: 'ตัดสต๊อก'
     }).then(function (ok) {
-      if (!ok) { focusScanInput(); return; }
+      if (!ok) { issueBusy = false; focusScanInput(); return; }
 
       var btn = document.getElementById('btnConfirm');
+      issueRetry.uncertain=true;rememberIssue();lockIssueInputs(true);
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span>กำลังบันทึก...';
 
       callApi('issueStock', [payload], function (res) {
+        issueBusy = false;
         btn.disabled = false;
         btn.innerHTML = '💾 ยืนยันตัดสต๊อก (F4)';
         if (res && res.success) {
-          var summary = (res.results || []).map(function (r) { return r.productCode + ': ' + r.before + ' → ' + r.after; }).join('<br>');
+          issueRetry = null;clearRememberedIssue();lockIssueInputs(false);
+          var summary = (res.results || []).map(function (r) { return esc(r.productCode) + ': ' + r.before + ' → ' + r.after; }).join('<br>');
+          if(res.refreshWarning)toast(res.refreshWarning,'warn');
           swySuccess('ตัดสต๊อกสำเร็จ', 'เลขที่รายการ <b>' + esc(res.docNo || '-') + '</b><br>' + summary);
           if (alsoInvoice) {
             // ★ payload.items ไม่มีราคา (ราคาที่ issueStock ใช้จริงคำนวณฝั่ง server ทั้งหมด) —
@@ -772,43 +806,39 @@
             var invoiceItems = basket.map(function (b) {
               return { name: b.productName, qty: b.qty, unit: 'ชิ้น', unitPrice: b.unitPrice };
             });
-            try { window.parent.postMessage({ action: 'OPEN_TAX_INVOICE', items: invoiceItems, note: payload.refNo }, '*'); } catch (e) {}
+            try { syyPostParent({ action: 'OPEN_TAX_INVOICE', items: invoiceItems, note: payload.refNo }); } catch (e) {}
           }
-          // ★ ถ้าตะกร้านี้มาจากใบเสนอราคา ทำเครื่องหมายในใบเสนอราคาว่าตัดสต๊อกแล้ว กันตัดซ้ำ/ลืมตัด
-          //   เป็นแค่บันทึกอ้างอิง ไม่กระทบผลตัดสต๊อกที่สำเร็จไปแล้ว จึงไม่โชว์ error ให้ผู้ใช้เห็นถ้าล้มเหลว
-          if (pendingQuoteId) {
-            var quoteIdDone = pendingQuoteId;
-            pendingQuoteId = null;
-            callApi('markQuotationStockIssued', [quoteIdDone, res.docNo], function () {}, function (err) {
-              console.error('markQuotationStockIssued ล้มเหลว:', err);
-            });
-          }
+          pendingQuoteId = null;
           basket = [];
           document.getElementById('inpRefNo').value = '';
           document.getElementById('inpNote').value  = '';
           renderBasket();
-          (res.results || []).forEach(function(r) {
+          var currentStocks=res.productStocks || (res.results||[]).map(function(r){return {productCode:r.productCode,currentStock:r.after};});
+          currentStocks.forEach(function(r) {
             var p = products.find(function(x) { return x.productCode === r.productCode; });
-            if (p) p.currentStock = num(r.after);
+            if (p) p.currentStock = num(r.currentStock);
           });
           updateCounts();
           renderResults();
           movements = [];
           // ส่งค่าคงเหลือที่ server ยืนยันแล้วไปยังหน้าจัดการสินค้าโดยไม่อ่าน Firestore ซ้ำ
-          var stockDelta = (res.results || []).map(function(r) {
-            return { productCode: r.productCode, currentStock: num(r.after) };
+          var stockDelta = currentStocks.map(function(r) {
+            return { productCode: r.productCode, currentStock: num(r.currentStock) };
           });
-          try { window.parent.postMessage({ action: 'STOCK_DELTA', productStocks: stockDelta }, '*'); } catch (e) {}
-          try { window.parent.postMessage({ action: 'REFRESH_STOCK_FULL' }, '*'); } catch (e) {}
+          try { syyPostParent({ action: 'STOCK_DELTA', productStocks: stockDelta }); } catch (e) {}
+          try { syyPostParent({ action: 'REFRESH_STOCK_FULL' }); } catch (e) {}
           focusScanInput(); // ★ พร้อมยิงบิลถัดไปได้ทันที
         } else {
+          if(res && !res.uncertain){issueRetry=null;clearRememberedIssue();lockIssueInputs(false);}else rememberIssue();
           swyError('ตัดสต๊อกไม่สำเร็จ', esc((res && res.message) || 'ไม่ทราบสาเหตุ'));
           focusScanInput();
         }
       }, function (err) {
+        issueBusy = false;
         btn.disabled = false;
         btn.innerHTML = '💾 ยืนยันตัดสต๊อก (F4)';
-        swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+        rememberIssue();
+        swyError('ยังไม่ยืนยันผลรายการ', 'กดยืนยันซ้ำเพื่อตรวจสอบรายการเดิม · '+esc(JSON.stringify(err)));
         focusScanInput();
       });
     });

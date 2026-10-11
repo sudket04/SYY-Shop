@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta name="syy-frame-channel" content="<?= frameChannel ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -860,6 +861,7 @@
   // Receive Goods Modal (รับสินค้า — รองรับรับครบ/รับบางส่วน)
   // ==========================================
   function openReceiveModal(poId) {
+    if(receiveBusy || (receiveRetry && receiveRetry.uncertain))return;
     var po = purchaseOrders.find(function(p) { return p.poId === poId; });
     if (!po) return;
     pendingReceivePO = po;
@@ -900,6 +902,7 @@
   }
 
   function closeReceiveModal() {
+    if(receiveBusy || (receiveRetry && receiveRetry.uncertain))return;
     closeModal('receiveModal');
     pendingReceivePO = null;
   }
@@ -952,8 +955,10 @@
     }
   }
 
+  var receiveBusy = false, receiveRetry = null;
+  function lockReceiveInputs(locked){document.querySelectorAll('#receiveModal input').forEach(function(input){input.disabled=locked;});}
   function submitReceiveGoods() {
-    if (!pendingReceivePO) return;
+    if (receiveBusy || !pendingReceivePO) return;
 
     var invoiceNo    = document.getElementById('recvInvoiceNo').value.trim();
     var receiptDate  = document.getElementById('recvDate').value;
@@ -993,36 +998,51 @@
       return;
     }
 
+    var requestPayload = {poId:pendingReceivePO.poId,invoiceNo:invoiceNo,receiptDate:receiptDate,receiverName:receiverName,deliveryNoteNo:deliveryNote,items:items};
+    if(receiveRetry&&receiveRetry.uncertain) requestPayload=JSON.parse(JSON.stringify(receiveRetry.payload));
+    var signature = JSON.stringify(requestPayload);
+    if (!receiveRetry || receiveRetry.signature !== signature) receiveRetry = {signature:signature,id:crypto.randomUUID()};
+    receiveRetry.payload=JSON.parse(JSON.stringify(requestPayload));
+    receiveBusy = true;
     swyConfirm({title:'ยืนยันว่าได้รับสินค้าตามรายการนี้แล้ว?', html:'ระบบจะบวกจำนวนเข้าสต็อกทันที และไม่สามารถย้อนกลับอัตโนมัติได้'}).then(function(ok){
-      if (!ok) return;
+      if (!ok) {receiveBusy = false; return;}
 
       var payload = {
-        poId          : pendingReceivePO.poId,
-        invoiceNo     : invoiceNo,
-        receiptDate   : receiptDate,
-        receiverName  : receiverName,
-        deliveryNoteNo: deliveryNote,
-        items         : items
+        requestId     : receiveRetry.id,
+        poId          : requestPayload.poId,
+        invoiceNo     : requestPayload.invoiceNo,
+        receiptDate   : requestPayload.receiptDate,
+        receiverName  : requestPayload.receiverName,
+        deliveryNoteNo: requestPayload.deliveryNoteNo,
+        items         : requestPayload.items
       };
 
       var btn = document.getElementById('btnReceiveSave');
       btn.disabled = true; btn.innerText = '⏳ กำลังบันทึก...';
 
+      receiveRetry.uncertain=true;
+      lockReceiveInputs(true);
       callApi('receiveGoods', [payload], function(res) {
+          receiveBusy = false;
           btn.disabled = false; btn.innerText = '💾 บันทึกการรับสินค้า';
           alertEl.style.display = 'block';
           if (res.success) {
             alertEl.className = 'modal-alert success';
             alertEl.innerText = '' + res.message;
+            if(res.refreshWarning)toast(res.refreshWarning,'warn');
+            receiveRetry = null;
+            lockReceiveInputs(false);
             applyReceiveGoodsDelta(res);
-            try { window.parent.postMessage({ action:'STOCK_DELTA', productStocks:(res.productStocks||[]) }, '*'); } catch (e) {}
-            try { window.parent.postMessage({ action:'REFRESH_STOCK_FULL' }, '*'); } catch (e) {}
+            try { syyPostParent({ action:'STOCK_DELTA', productStocks:(res.productStocks||[]) }); } catch (e) {}
+            try { syyPostParent({ action:'REFRESH_STOCK_FULL' }); } catch (e) {}
             setTimeout(function() { closeReceiveModal(); }, 700);
           } else {
+            if(!res.uncertain){receiveRetry=null;lockReceiveInputs(false);}
             alertEl.className = 'modal-alert error';
             alertEl.innerText = '' + res.message;
           }
         }, function(err) {
+          receiveBusy = false;
           btn.disabled = false; btn.innerText = '💾 บันทึกการรับสินค้า';
           alertEl.style.display = 'block';
           alertEl.className = 'modal-alert error';

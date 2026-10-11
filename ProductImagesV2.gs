@@ -30,6 +30,10 @@ function normalizeProductImagesV2_(productCode, fields) {
     }
   }
 
+  if (!images.length && fields.Image_Urls) {
+    var urls=parseFirestoreValue_(fields.Image_Urls)||[],ids=parseFirestoreValue_(fields.Drive_File_Ids)||[];
+    images=urls.map(function(url,i){return {url:url,fileId:ids[i]||""};});
+  }
   if (!images.length) {
     var legacyUrl = String(parseFirestoreValue_(fields.Image_Url) || "");
     var legacyId  = String(parseFirestoreValue_(fields.Drive_File_Id) || "");
@@ -70,18 +74,21 @@ function readProductImagesV2_(productCode, bypassCache) {
     if (res.getResponseCode() === 200) {
       var doc = JSON.parse(res.getContentText());
       state = normalizeProductImagesV2_(productCode, doc.fields || {});
+      state.updateTime=doc.updateTime;
+      if(!state.updateTime) throw new Error("ไม่พบเวอร์ชันรูปสินค้า");
     } else if (res.getResponseCode() !== 404) {
-      console.error("readProductImagesV2_ HTTP " + res.getResponseCode() + ": " + res.getContentText());
+      throw new Error("อ่านรูปสินค้าไม่สำเร็จ");
     }
   } catch (e) {
-    console.error("readProductImagesV2_ error:", e);
+    throw e;
   }
 
+  state.updateTime=state.updateTime||"";
   try { cache.put(key, JSON.stringify(state), PRODUCT_IMAGE_V2_CACHE_SECONDS); } catch (e2) {}
   return state;
 }
 
-function saveProductImagesV2_(productCode, images, primaryIndex) {
+function saveProductImagesV2_(productCode, images, primaryIndex, expectedUpdateTime) {
   productCode = String(productCode || "").trim();
   images = (images || []).filter(function (it) { return it && it.url; }).slice(0, PRODUCT_IMAGE_V2_MAX);
   primaryIndex = parseInt(primaryIndex, 10);
@@ -92,14 +99,19 @@ function saveProductImagesV2_(productCode, images, primaryIndex) {
   var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
           + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
 
+  if(expectedUpdateTime===undefined) throw new Error("ต้องระบุเวอร์ชันรูปสินค้า");
+  url += expectedUpdateTime ? "?currentDocument.updateTime="+encodeURIComponent(expectedUpdateTime) : "?currentDocument.exists=false";
   if (!images.length) {
+    if(!expectedUpdateTime) return normalizeProductImagesV2_(productCode,{});
     var del = UrlFetchApp.fetch(url, { method: "delete", headers: getAuthHeader_(), muteHttpExceptions: true });
-    if (del.getResponseCode() !== 200 && del.getResponseCode() !== 204 && del.getResponseCode() !== 404) {
+    if (del.getResponseCode() !== 200 && del.getResponseCode() !== 204) {
       throw new Error("ลบข้อมูลรูปจาก Firestore ไม่สำเร็จ: " + del.getContentText());
     }
   } else {
     var payload = {
       fields: mapToFirestoreFields_({
+        Image_Urls: images.map(function(it){return it.url;}),
+        Drive_File_Ids: images.map(function(it){return it.fileId||"";}),
         Images_JSON   : JSON.stringify(images),
         Primary_Index : primaryIndex,
         Image_Url     : primary ? primary.url : "",
@@ -151,6 +163,7 @@ function trashDriveImageV2_(productCode, image, slotIndex) {
 function uploadProductImageV2_(productCode, base64Data, slotIndex) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { success: false, message: "ระบบกำลังบันทึกรูปสินค้าอื่นอยู่ กรุณาลองใหม่" };
+  var createdId="";
   try {
     productCode = String(productCode || "").trim();
     if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า — กรุณาบันทึกสินค้าก่อน" };
@@ -164,6 +177,7 @@ function uploadProductImageV2_(productCode, base64Data, slotIndex) {
       return { success: false, message: "รูปที่ส่งขึ้นระบบไม่ใช่ไฟล์ JPEG ที่ถูกต้อง" };
     }
 
+    readExistingDocument_("Master_Products",productCode);
     var state = readProductImagesV2_(productCode, true);
     var images = state.images.slice();
     var idx = parseInt(slotIndex, 10);
@@ -176,10 +190,11 @@ function uploadProductImageV2_(productCode, base64Data, slotIndex) {
       return { success: false, message: "เพิ่มรูปได้สูงสุด " + PRODUCT_IMAGE_V2_MAX + " รูปต่อสินค้า" };
     }
 
-    if (replacing) trashDriveImageV2_(productCode, images[idx], idx);
+    var oldId = replacing ? images[idx].fileId : "";
 
     var fileName = productCode + "_" + (idx + 1) + "_" + Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMddHHmmss") + ".jpg";
     var file = getProductImageFolder_().createFile(Utilities.newBlob(bytes, "image/jpeg", fileName));
+    createdId=file.getId();
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     var entry = { url: "https://lh3.googleusercontent.com/d/" + file.getId(), fileId: file.getId() };
 
@@ -188,7 +203,8 @@ function uploadProductImageV2_(productCode, base64Data, slotIndex) {
 
     var primaryIndex = state.primaryIndex;
     if (primaryIndex < 0) primaryIndex = 0;
-    var saved = saveProductImagesV2_(productCode, images, primaryIndex);
+    var saved = saveProductImagesV2_(productCode, images, primaryIndex,state.updateTime);
+    trashUnreferencedImageFiles_(productCode,[oldId]);
     return {
       success: true,
       message: replacing ? "เปลี่ยนรูปสำเร็จ" : "อัปโหลดรูปสำเร็จ",
@@ -197,6 +213,7 @@ function uploadProductImageV2_(productCode, base64Data, slotIndex) {
       imageUrl: saved.imageUrl
     };
   } catch (e) {
+    if(createdId) trashUnreferencedImageFiles_(productCode,[createdId]);
     return { success: false, message: e.message };
   } finally {
     try { lock.releaseLock(); } catch (ignore) {}
@@ -213,7 +230,7 @@ function deleteProductImageV2_(productCode, slotIndex) {
     var idx = parseInt(slotIndex, 10);
     if (isNaN(idx) || idx < 0 || idx >= images.length) return { success: false, message: "ไม่พบรูปที่ต้องการลบ" };
 
-    trashDriveImageV2_(productCode, images[idx], idx);
+    var oldId=images[idx].fileId;
     images.splice(idx, 1);
 
     var primaryIndex = state.primaryIndex;
@@ -221,7 +238,8 @@ function deleteProductImageV2_(productCode, slotIndex) {
     else if (idx === primaryIndex) primaryIndex = 0;
     else if (idx < primaryIndex) primaryIndex--;
 
-    var saved = saveProductImagesV2_(productCode, images, primaryIndex);
+    var saved = saveProductImagesV2_(productCode, images, primaryIndex,state.updateTime);
+    trashUnreferencedImageFiles_(productCode,[oldId]);
     return { success: true, message: "ลบรูปเรียบร้อย", imageUrls: saved.imageUrls, primaryIndex: saved.primaryIndex, imageUrl: saved.imageUrl };
   } catch (e) {
     return { success: false, message: e.message };
@@ -238,7 +256,7 @@ function setPrimaryProductImageV2_(productCode, slotIndex) {
     var state = readProductImagesV2_(productCode, true);
     var idx = parseInt(slotIndex, 10);
     if (isNaN(idx) || idx < 0 || idx >= state.images.length) return { success: false, message: "ไม่พบรูปที่ต้องการตั้งเป็นรูปหลัก" };
-    var saved = saveProductImagesV2_(productCode, state.images, idx);
+    var saved = saveProductImagesV2_(productCode, state.images, idx,state.updateTime);
     return { success: true, message: "ตั้งรูปหลักเรียบร้อย", imageUrls: saved.imageUrls, primaryIndex: saved.primaryIndex, imageUrl: saved.imageUrl };
   } catch (e) {
     return { success: false, message: e.message };
@@ -248,9 +266,13 @@ function setPrimaryProductImageV2_(productCode, slotIndex) {
 }
 
 function deleteAllProductImagesV2_(productCode) {
-  var state = readProductImagesV2_(productCode, true);
-  state.images.forEach(function (img, i) { trashDriveImageV2_(productCode, img, i); });
-  return saveProductImagesV2_(productCode, [], -1);
+  var lock=LockService.getScriptLock();if(!lock.tryLock(10000)) throw new Error("ระบบกำลังบันทึกรูป กรุณาลองใหม่");
+  try{
+    var state=readProductImagesV2_(productCode,true);
+    var result=saveProductImagesV2_(productCode,[],-1,state.updateTime);
+    trashUnreferencedImageFiles_(productCode,state.images.map(function(it){return it.fileId;}));
+    return result;
+  }finally{lock.releaseLock();}
 }
 
 function deleteProductWithImagesV2_(productCode) {
@@ -258,7 +280,7 @@ function deleteProductWithImagesV2_(productCode) {
   if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
   var result = deleteProduct_(productCode);
   if (!result || result.success === false) return result;
-  try { deleteAllProductImagesV2_(productCode); } catch (e) { console.error("cleanup product images after delete:", e); }
+  try { deleteAllProductImagesV2_(productCode); } catch (e) { result.cleanupWarning="ลบสินค้าแล้ว แต่รูปยังรอเก็บกวาด: "+e.message; }
   return result;
 }
 

@@ -14,7 +14,7 @@ const imageRoles = {getProductImagesV2:'viewer',uploadProductImageV2:'staff',del
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 function setup() {
   const cache = new Map(), network = [], mail = [], writes = [], logs = [], created = [], removed = [];
-  let sequence = 0;
+  let sequence = 0; const authDocs = new Map();
   const c = vm.createContext({
     console:{error(){},log(){}},
     CacheService:{getScriptCache:()=>({get:key=>cache.get(key)||null,put:(key,value)=>cache.set(key,value),remove:key=>cache.delete(key)})},
@@ -25,20 +25,20 @@ function setup() {
         timeBased(){return builder;},onWeekDay(day){config.day=day;return builder;},
         atHour(hour){config.hour=hour;return builder;},everyDays(days){config.days=days;return builder;},
         create(){created.push(config);return config;}};return builder;}},
-    UrlFetchApp:{fetch(url,options){network.push({url,options});throw new Error('Unmocked service request');}},
+    UrlFetchApp:{fetch(url,options){network.push({url,options});var id=url.split('/Master_Users/')[1];if(options.method==='get' && id && authDocs.has(id)){var body={fields:c.mapToFirestoreFields_(authDocs.get(id)),updateTime:'v1'};return {getResponseCode:()=>200,getContentText:()=>JSON.stringify(body)};}throw new Error('Unmocked service request');}},
     DriveApp:{getFileById(){throw new Error('Unmocked Drive request');}},
     MailApp:{sendEmail(...args){mail.push(args);}}
   });
   sources.forEach(source=>vm.runInContext(source,c));
   c.logActivity_=(...args)=>logs.push(args);
   c.logActivityV2_=(...args)=>logs.push(args);
-  c.updateUserFields_=(id,data)=>{writes.push({id,data:plain(data)});return true;};
-  function session(role='staff') {return {username:role,role,fullName:role,issuedAt:Date.now()};}
+  c.updateUserFields_=(id,data)=>{writes.push({id,data:plain(data)});if(authDocs.has(id))Object.assign(authDocs.get(id),data);return true;};
+  function session(role='staff') {authDocs.set('U-'+role,{Username:role,Role:role,Status:'Active',Full_Name:role});return {username:role,role,fullName:role,docId:'U-'+role,issuedAt:Date.now()};}
   function loginUser(overrides={}) {
     const user={docId:'U1',Username:'staff',Full_Name:'Staff',Email:'staff@example.invalid',Role:'staff',Status:'Active',
       Password_Hash:'hash:password',Salt:'salt',Totp_Enabled:false,Must_Change_Password:false,Failed_Attempts:0,
       Password_Changed_At:new Date().toISOString(),...overrides};
-    c.findUserByUsername_=()=>user;c.findUserByEmail_=()=>user;
+    authDocs.set('U1',user);c.findUserByUsername_=()=>user;c.findUserByEmail_=()=>user;
     c.hashPassword_=password=>'hash:'+password;c.makeSalt_=()=> 'new-salt';
     return user;
   }
@@ -156,7 +156,7 @@ test('login and OTP pre-login endpoint still issue existing sessions',()=>{
   user.Totp_Enabled=true;s.c.decryptSecret_=()=> 'dummy-secret';s.c.verifyTotp_=(_,otp)=>otp==='123456';
   assert.equal(s.rpc('authLogin',['staff','password',undefined,'ua']).needOtp,true);
   result=s.rpc('authLogin',['staff','password','123456','ua']);assert.equal(result.success,true);
-  assert.equal(s.c.getSession_(result.token).username,'staff');assert.equal(s.network.length,0);
+  assert.equal(s.c.getSession_(result.token).username,'staff');assert(s.network.every(x=>x.options.method==='get'));
 });
 test('forgot, verify and reset endpoints retain valid reset flow without a session',()=>{
   const s=setup();s.loginUser();
@@ -166,20 +166,20 @@ test('forgot, verify and reset endpoints retain valid reset flow without a sessi
   assert.equal(s.rpc('authVerifyResetToken',[token]).success,true);
   assert.equal(s.rpc('authResetPassword',[token,'new-password']).success,true);
   assert.equal(s.writes.length,1);assert.equal(s.writes[0].data.Password_Hash,'hash:new-password');
-  assert.equal(s.rpc('authVerifyResetToken',[token]).success,false);assert.equal(s.network.length,0);
+  assert.equal(s.rpc('authVerifyResetToken',[token]).success,false);assert(s.network.every(x=>x.options.method==='get'));
 });
 test('forced password change remains available before login and creates a session',()=>{
   const s=setup();s.loginUser({Must_Change_Password:true});
   const start=s.rpc('authLogin',['staff','password']);assert.equal(start.needPasswordChange,true);
   const result=s.rpc('authChangePasswordForced',[start.tempToken,'new-password','ua']);
   assert.equal(result.success,true);assert.equal(s.c.getSession_(result.token).username,'staff');
-  assert.equal(s.writes.length,1);assert.equal(s.network.length,0);
+  assert.equal(s.writes.length,1);assert(s.network.every(x=>x.options.method==='get'));
 });
 test('logout and admin-only TOTP cannot bypass the gateway',()=>{
   const s=setup();s.cache.set('sess_dummy',JSON.stringify(s.session('staff')));
   assert.equal(s.rpc('apiGateway',['dummy','authStartTotpSetup',['dummy']]).success,false);
   assert.equal(s.rpc('apiGateway',['dummy','authLogout',['dummy']]).success,true);
-  assert.equal(s.c.getSession_('dummy'),null);assert.equal(s.network.length+s.writes.length,0);
+  assert.equal(s.c.getSession_('dummy'),null);assert.equal(s.writes.length,0);assert(s.network.every(x=>x.options.method==='get'));
 });
 test('trigger setup replaces legacy/private handlers once and preserves unrelated schedules',()=>{
   const s=setup();let triggers=['weeklyBackupJob','weeklyBackupJob_','cleanupOldActivityLogs','cleanupOldActivityLogs_','unrelated']

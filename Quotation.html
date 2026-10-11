@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta name="syy-frame-channel" content="<?= frameChannel ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1136,13 +1137,13 @@ function issueStockFromQuote(docId) {
       return { productCode: it.productCode, productName: it.productName, qty: it.qty, unitPrice: it.unitPrice };
     });
     try {
-      window.parent.postMessage({
+      syyPostParent({
         action  : 'OPEN_STOCK_ISSUE',
         items   : items,
         refNo   : q.quoteNo,
         note    : 'ตามใบเสนอราคา ' + q.quoteNo + (q.customerName ? ' · ลูกค้า ' + q.customerName : ''),
         quoteId : q.id
-      }, '*');
+      });
     } catch (e) {}
   }
 

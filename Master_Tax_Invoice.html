@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta name="syy-frame-channel" content="<?= frameChannel ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -691,7 +692,7 @@ function loadAll(yearParam, onDone, onError) {
       renderDashboard();
 
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดข้อมูลเสร็จแล้ว พร้อมรับรายการจากหน้าตัดสต๊อกมาเติมใบกำกับภาษี
-      try { window.parent.postMessage({ action: 'TAXINVOICE_READY' }, '*'); } catch (e) {}
+      try { syyPostParent({ action: 'TAXINVOICE_READY' }); } catch (e) {}
 
       if (typeof onDone === 'function') onDone();
     }, failedLoad);
@@ -1123,6 +1124,7 @@ function validateForm() {
 //   มาเติมรายการในฟอร์มเพิ่มใบกำกับภาษีให้อัตโนมัติ — ไม่ผูกกับสต๊อกเลย (ตามที่ตั้งใจไว้แต่แรกว่า
 //   หน้านี้เป็นเอกสารอิสระ ไม่กระทบสต๊อก) แค่ช่วยพิมพ์ชื่อ/จำนวน/ราคาให้แทนการพิมพ์ซ้ำเอง
 window.addEventListener('message', function (e) {
+    if(!syyTrustedParentMessage(e))return;
   var d = e.data || {};
   if (d.action === 'PREFILL_INVOICE') applyInvoicePrefill(d);
 });

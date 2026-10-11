@@ -407,6 +407,7 @@ function doChangePassword() {
       alertEl.className = 'alert show ' + (res.success ? 'success' : 'error');
       alertEl.innerText = res.message;
       if (res.success) {
+        if (res.requiresLogin) setTimeout(function() {window.top.location.href=WEB_APP_URL+'?page=login';},1200);
         ['inpOldPassword', 'inpNewPassword', 'inpConfirmPassword'].forEach(function(id) {
           document.getElementById(id).value = '';
         });

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta name="syy-frame-channel" content="<?= frameChannel ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -613,7 +614,7 @@
     loadDropdowns(function() {
       loadTable();
       // ★ แจ้งเชลล์ (index.html) ว่า dropdown พร้อมแล้ว รับคำขอเปิดฟอร์มเพิ่มสินค้าจากหน้าอื่นได้
-      try { window.parent.postMessage({ action: 'PRODUCTS_READY' }, '*'); } catch (e) {}
+      try { syyPostParent({ action: 'PRODUCTS_READY' }); } catch (e) {}
     });
     document.addEventListener('click',function(e){if(!e.target.closest('.column-picker'))closeColumnPicker();});
     document.addEventListener('keydown',function(e){if(e.key==='Escape')closeColumnPicker();});
@@ -677,6 +678,7 @@
   }
 
   window.addEventListener('message', function(e) {
+    if(!syyTrustedParentMessage(e))return;
     var d = e.data || {};
     if (d.action === 'OPEN_PRODUCT_ADD') openAddModal(d.barcode || '');
     else if (d.action === 'STOCK_DELTA') applyStockDeltaToProductPage(d.productStocks);
@@ -998,7 +1000,7 @@
     selectedCarIds = Array.isArray(item.carIds) ? item.carIds : (item.carIds ? String(item.carIds).split(',') : []);
     renderCarChips();
     renderCarDropdownList('');
-    updateImageSectionForEdit(editingDocId, item.imageUrl, item.imageUrls, item.primaryImageIndex);
+    updateImageSectionForEdit(editingDocId, item.imageUrl, item.imageUrls, item.primaryImageIndex,item.imageUpdateTime);
     updateBarcodeGenButton();
 
     document.getElementById('modalTitle').innerText   = '✏️ แก้ไขข้อมูลสินค้า (' + editingDocId + ')';
@@ -1100,9 +1102,10 @@
   // รูปสินค้า — สูงสุด 3 รูป, แสดงเต็มภาพโดยไม่ crop
   // ==========================================
   var PROD_IMG_MAX_DIM=1600,PROD_IMG_QUALITY=0.82;
-  var productImageUrls=[],productImageDraftBase64=[],productPrimaryImageIndex=0,pendingImageSlot=0,productImageDraftDirty=false;
+  var productImageUrls=[],productImageDraftBase64=[],productPrimaryImageIndex=0,pendingImageSlot=0,productImageDraftDirty=false,productImageUpdateTime="";
   function getEditingProductLocal(){return productsCache.find(function(p){return (p.id||p.productCode)===editingDocId;})||null;}
-  function updateImageSectionForEdit(docId,imageUrl,imageUrls,primaryIndex){
+  function updateImageSectionForEdit(docId,imageUrl,imageUrls,primaryIndex,imageUpdateTime){
+    productImageUpdateTime=imageUpdateTime||"";
     productImageUrls=Array.isArray(imageUrls)&&imageUrls.length?imageUrls.slice(0,3):(imageUrl?[imageUrl]:[]);
     productImageDraftBase64=productImageUrls.map(function(){return null;});
     productPrimaryImageIndex=Math.max(0,Math.min(parseInt(primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));
@@ -1151,8 +1154,10 @@
     if(oldPrimary===fromSlot)productPrimaryImageIndex=toSlot;else if(fromSlot<oldPrimary&&toSlot>=oldPrimary)productPrimaryImageIndex=oldPrimary-1;else if(fromSlot>oldPrimary&&toSlot<=oldPrimary)productPrimaryImageIndex=oldPrimary+1;
     productImageDraftDirty=true;renderProductImageSlots(editingDocId);toast('ปรับตำแหน่งรูปแล้ว — กดบันทึกเพื่อยืนยัน');
   }
-  function buildProductImageDraftPayload(){var items=[];productImageUrls.slice(0,3).forEach(function(url,i){var b=productImageDraftBase64[i];items.push(b?{base64:b}:{url:url});});return {items:items,primaryIndex:productPrimaryImageIndex};}
+  function buildProductImageDraftPayload(){var items=[];productImageUrls.slice(0,3).forEach(function(url,i){var b=productImageDraftBase64[i];items.push(b?{base64:b}:{url:url});});return {items:items,primaryIndex:productPrimaryImageIndex,expectedUpdateTime:productImageUpdateTime};}
   function applyCommittedImageResult(product,res){
+    productImageUpdateTime=res.imageUpdateTime||"";
+    if(product) product.imageUpdateTime=productImageUpdateTime;
     productImageUrls=Array.isArray(res.imageUrls)?res.imageUrls.slice(0,3):[];productImageDraftBase64=productImageUrls.map(function(){return null;});productPrimaryImageIndex=Math.max(0,Math.min(parseInt(res.primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));productImageDraftDirty=false;
     if(product){product.imageUrls=productImageUrls.slice();product.primaryImageIndex=productPrimaryImageIndex;product.imageUrl=res.imageUrl||productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';}renderProductImageSlots(editingDocId);
   }
