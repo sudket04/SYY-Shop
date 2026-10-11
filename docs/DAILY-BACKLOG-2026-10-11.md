@@ -86,7 +86,7 @@ API contract additions: `saveProduct` รับ optional `originalStock`; `saveT
 | Passed | ตรวจภาพ local mobile Quick Add และ Login ว่า form/toggle อยู่ภายใน viewport |
 | Failed | ไม่มี failures คงเหลือในรอบตรวจสุดท้าย |
 | Not Tested | Apps Script runtime integration, Firestore/Drive จริง, live invoice print/PDF generation, actual login/OTP/reset credentials และ Production Browser UAT |
-| Approved | ผู้ใช้อนุมัติ Push Branch ไป GitHub สาธารณะและสร้าง Draft PR สำหรับ Review แล้ว ไม่รวม merge หรือ Production deployment |
+| Passed | Push Branch ไป GitHub สาธารณะและสร้าง [Draft PR #2](https://github.com/sudket04/SYY-Shop/pull/2) ตามการอนุมัติของผู้ใช้แล้ว ไม่รวม merge หรือ Production deployment |
 | Blocked | Production sync/deploy/verification ยังไม่ได้ดำเนินการ ต้องมี target Apps Script/deployment และการอนุมัติ Production deployment ตาม Master Instructions §10 Step 5 |
 
 คำสั่งทดสอบ:
@@ -127,7 +127,8 @@ Schema: เพิ่ม `Master_Zones.Rack_Level` แบบ optional string (1�
 - Branch: `codex/daily-backlog-20261011`
 - Base: `6210f7418b6e69d21d876a9fd6a68b1d06fcb76b`
 - Commit แยกเอกสารส่งมอบจาก Implementation
-- Remote push / Draft PR: ได้รับอนุมัติจากผู้ใช้แล้ว กำลังดำเนินการเผยแพร่ Branch สำหรับ Review
+- Remote push: สำเร็จ Branch `codex/daily-backlog-20261011` บน `sudket04/SYY-Shop`
+- Draft PR: [#2 — Fix document consistency, stock concurrency and customer/zone workflows](https://github.com/sudket04/SYY-Shop/pull/2) เปิดสำหรับ Review แล้ว
 - `main` ไม่ได้ merge การเปลี่ยนแปลงนี้
 - Apps Script Synced: ไม่ได้ดำเนินการ
 - Deployment Updated: ไม่ได้ดำเนินการ
