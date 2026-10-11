@@ -581,6 +581,17 @@
     dashUpdateSidebarBadges();
   }
 
+  // กระจายเฉพาะ stock delta ไปยัง iframe หน้าจัดการสินค้า ถ้าเคยโหลดไว้แล้ว
+  // ไม่อ่าน Firestore เพิ่ม และไม่เปลี่ยนโครงสร้างข้อมูลใน DB
+  function forwardStockDeltaToProducts(productStocks){
+    var list=Array.isArray(productStocks)?productStocks:[];
+    if(!list.length)return;
+    var frame=document.getElementById('iframe-products');
+    if(frame&&frame.contentWindow&&frame.src){
+      try{frame.contentWindow.postMessage({action:'STOCK_DELTA',productStocks:list},'*');}catch(e){}
+    }
+  }
+
   function shellMasterDeltaLabel(kind,item){
     if(!item)return '';
     if(kind==='brands')return item.Brand_Name||item.Name||item.id||'';
@@ -624,6 +635,7 @@
   window.addEventListener('message', function(e){
     var d = e.data || {};
     if(d.action==='PRODUCT_DELTA'){ applyDashboardProductDelta(d.product,d.deleted); }
+    else if(d.action==='STOCK_DELTA'){ forwardStockDeltaToProducts(d.productStocks); }
     else if(d.action==='MASTER_DELTA'){ applyMasterDelta(d.kind,d.item,d.deleted); }
     else if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
     else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }

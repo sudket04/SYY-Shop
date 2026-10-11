@@ -654,10 +654,25 @@
     if(pos>-1)productsCache[pos]=item;else productsCache.push(item);filterAndRenderTable();
   }
   function removeProductLocal(id){productsCache=productsCache.filter(function(p){return (p.id||p.productCode)!==id;});filterAndRenderTable();}
+  function applyStockDeltaToProductPage(productStocks){
+    var changed=false;
+    (Array.isArray(productStocks)?productStocks:[]).forEach(function(s){
+      var code=String((s&&s.productCode)||'');if(!code)return;
+      var stock=(s.currentStock!==undefined&&s.currentStock!==null)?num(s.currentStock):num(s.after);
+      var p=productsCache.find(function(x){return (x.id||x.productCode)===code;});
+      if(p&&num(p.currentStock)!==stock){p.currentStock=stock;changed=true;}
+      if(editingDocId===code){
+        var input=document.getElementById('inp_currentStock');
+        if(input)input.value=stock;
+      }
+    });
+    if(changed)filterAndRenderTable();
+  }
 
   window.addEventListener('message', function(e) {
     var d = e.data || {};
     if (d.action === 'OPEN_PRODUCT_ADD') openAddModal(d.barcode || '');
+    else if (d.action === 'STOCK_DELTA') applyStockDeltaToProductPage(d.productStocks);
     else if (d.action === 'MASTER_DELTA') applyMasterDeltaToProduct(d);
   });
 

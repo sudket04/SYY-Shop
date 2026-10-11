@@ -794,6 +794,11 @@
           updateCounts();
           renderResults();
           movements = [];
+          // ส่งค่าคงเหลือที่ server ยืนยันแล้วไปยังหน้าจัดการสินค้าโดยไม่อ่าน Firestore ซ้ำ
+          var stockDelta = (res.results || []).map(function(r) {
+            return { productCode: r.productCode, currentStock: num(r.after) };
+          });
+          try { window.parent.postMessage({ action: 'STOCK_DELTA', productStocks: stockDelta }, '*'); } catch (e) {}
           try { window.parent.postMessage({ action: 'REFRESH_STOCK_FULL' }, '*'); } catch (e) {}
           focusScanInput(); // ★ พร้อมยิงบิลถัดไปได้ทันที
         } else {

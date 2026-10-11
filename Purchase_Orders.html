@@ -1015,6 +1015,7 @@
             alertEl.className = 'modal-alert success';
             alertEl.innerText = '' + res.message;
             applyReceiveGoodsDelta(res);
+            try { window.parent.postMessage({ action:'STOCK_DELTA', productStocks:(res.productStocks||[]) }, '*'); } catch (e) {}
             try { window.parent.postMessage({ action:'REFRESH_STOCK_FULL' }, '*'); } catch (e) {}
             setTimeout(function() { closeReceiveModal(); }, 700);
           } else {
