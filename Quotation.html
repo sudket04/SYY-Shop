@@ -5,7 +5,7 @@
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <?!= include('Styles'); ?>
+  <?!= include_('Styles'); ?>
   <style>
   /* ─── เฉพาะหน้านี้: แท็บ, ตะกร้ารายการ, สรุปยอด, ใบพิมพ์ A4, ทะเบียน (ไม่ซ้ำหน้าอื่น) ─── */
   .tab-bar{display:flex;gap:6px;margin-bottom:16px;border-bottom:2px solid var(--line);flex-wrap:wrap}
@@ -335,8 +335,8 @@
   </div>
 </div>
 
-<?!= include('UiSystem'); ?>
-<?!= include('Shared'); ?>
+<?!= include_('UiSystem'); ?>
+<?!= include_('Shared'); ?>
 <script>
 var AUTH_TOKEN  = "<?= authToken ?>";
 var WEB_APP_URL = "<?= webAppUrl ?>";

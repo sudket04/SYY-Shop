@@ -5,7 +5,7 @@
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <?!= include('Styles'); ?>
+  <?!= include_('Styles'); ?>
 </head>
 <body>
 
@@ -138,9 +138,9 @@
   </div>
 </div>
 
-<?!= include('XLFilter'); ?>
-<?!= include('UiSystem'); ?>
-<?!= include('Shared'); ?>
+<?!= include_('XLFilter'); ?>
+<?!= include_('UiSystem'); ?>
+<?!= include_('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
   var WEB_APP_URL = "<?= webAppUrl ?>";

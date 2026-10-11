@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-  <?!= include('Styles'); ?>
+  <?!= include_('Styles'); ?>
   <style>
   /* ─── เฉพาะหน้านี้: ตะกร้ารายการ, ใบพิมพ์/PDF, แท็บ, แดชบอร์ด (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
   .modal-box{width:760px}
@@ -469,10 +469,10 @@
     </div>
   </div>
 
-<?!= include('ThaiAddressData'); ?>
-<?!= include('XLFilter'); ?>
-<?!= include('UiSystem'); ?>
-<?!= include('Shared'); ?>
+<?!= include_('ThaiAddressData'); ?>
+<?!= include_('XLFilter'); ?>
+<?!= include_('UiSystem'); ?>
+<?!= include_('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
   var WEB_APP_URL = "<?= webAppUrl ?>";

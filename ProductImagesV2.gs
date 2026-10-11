@@ -15,7 +15,7 @@ function productImageV2CacheKey_(productCode) {
 function normalizeProductImagesV2_(productCode, fields) {
   fields = fields || {};
   var images = [];
-  var rawJson = parseFirestoreValue(fields.Images_JSON) || "";
+  var rawJson = parseFirestoreValue_(fields.Images_JSON) || "";
   if (rawJson) {
     try {
       var parsed = JSON.parse(rawJson);
@@ -31,13 +31,13 @@ function normalizeProductImagesV2_(productCode, fields) {
   }
 
   if (!images.length) {
-    var legacyUrl = String(parseFirestoreValue(fields.Image_Url) || "");
-    var legacyId  = String(parseFirestoreValue(fields.Drive_File_Id) || "");
+    var legacyUrl = String(parseFirestoreValue_(fields.Image_Url) || "");
+    var legacyId  = String(parseFirestoreValue_(fields.Drive_File_Id) || "");
     if (legacyUrl) images.push({ url: legacyUrl, fileId: legacyId });
   }
 
   images = images.slice(0, PRODUCT_IMAGE_V2_MAX);
-  var primaryIndex = parseInt(parseFirestoreValue(fields.Primary_Index), 10);
+  var primaryIndex = parseInt(parseFirestoreValue_(fields.Primary_Index), 10);
   if (isNaN(primaryIndex) || primaryIndex < 0 || primaryIndex >= images.length) primaryIndex = images.length ? 0 : -1;
 
   return {
@@ -66,7 +66,7 @@ function readProductImagesV2_(productCode, bypassCache) {
   try {
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
             + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
-    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
+    var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
     if (res.getResponseCode() === 200) {
       var doc = JSON.parse(res.getContentText());
       state = normalizeProductImagesV2_(productCode, doc.fields || {});
@@ -93,13 +93,13 @@ function saveProductImagesV2_(productCode, images, primaryIndex) {
           + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
 
   if (!images.length) {
-    var del = UrlFetchApp.fetch(url, { method: "delete", headers: getAuthHeader(), muteHttpExceptions: true });
+    var del = UrlFetchApp.fetch(url, { method: "delete", headers: getAuthHeader_(), muteHttpExceptions: true });
     if (del.getResponseCode() !== 200 && del.getResponseCode() !== 204 && del.getResponseCode() !== 404) {
       throw new Error("ลบข้อมูลรูปจาก Firestore ไม่สำเร็จ: " + del.getContentText());
     }
   } else {
     var payload = {
-      fields: mapToFirestoreFields({
+      fields: mapToFirestoreFields_({
         Images_JSON   : JSON.stringify(images),
         Primary_Index : primaryIndex,
         Image_Url     : primary ? primary.url : "",
@@ -109,7 +109,7 @@ function saveProductImagesV2_(productCode, images, primaryIndex) {
     };
     var res = UrlFetchApp.fetch(url, {
       method: "patch",
-      headers: getAuthHeader(),
+      headers: getAuthHeader_(),
       payload: JSON.stringify(payload),
       muteHttpExceptions: true
     });
@@ -117,8 +117,8 @@ function saveProductImagesV2_(productCode, images, primaryIndex) {
   }
 
   try { CacheService.getScriptCache().remove(productImageV2CacheKey_(productCode)); } catch (e) {}
-  clearCollectionCache(PRODUCT_IMAGES_COLLECTION);
-  return normalizeProductImagesV2_(productCode, images.length ? mapToFirestoreFields({
+  clearCollectionCache_(PRODUCT_IMAGES_COLLECTION);
+  return normalizeProductImagesV2_(productCode, images.length ? mapToFirestoreFields_({
     Images_JSON: JSON.stringify(images), Primary_Index: primaryIndex,
     Image_Url: primary ? primary.url : "", Drive_File_Id: primary ? primary.fileId : ""
   }) : {});
@@ -256,7 +256,7 @@ function deleteAllProductImagesV2_(productCode) {
 function deleteProductWithImagesV2_(productCode) {
   productCode = String(productCode || "").trim();
   if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
-  var result = deleteProduct(productCode);
+  var result = deleteProduct_(productCode);
   if (!result || result.success === false) return result;
   try { deleteAllProductImagesV2_(productCode); } catch (e) { console.error("cleanup product images after delete:", e); }
   return result;
@@ -272,7 +272,7 @@ function logActivityV2_(username, fnName, args, result) {
     }[fnName];
     if (!meta) return;
     var docId = args && args.length ? String(args[0] || "") : "";
-    var payload = { fields: mapToFirestoreFields({
+    var payload = { fields: mapToFirestoreFields_({
       Username: username,
       Action: meta.action,
       Function: fnName,
@@ -283,7 +283,7 @@ function logActivityV2_(username, fnName, args, result) {
     }) };
     UrlFetchApp.fetch(
       "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents/Activity_Log",
-      { method: "post", headers: getAuthHeader(), payload: JSON.stringify(payload), muteHttpExceptions: true }
+      { method: "post", headers: getAuthHeader_(), payload: JSON.stringify(payload), muteHttpExceptions: true }
     );
   } catch (e) { console.error("logActivityV2_ error:", e); }
 }
@@ -308,10 +308,16 @@ function apiGatewayV2(token, fnName, args, userAgent) {
       deleteProductWithImagesV2: deleteProductWithImagesV2_
     };
 
+    if (typeof fnName !== "string" || !Object.prototype.hasOwnProperty.call(registry, fnName) ||
+        !Object.prototype.hasOwnProperty.call(functions, fnName)) {
+      return { success: false, message: "ไม่อนุญาตให้เรียกใช้งานฟังก์ชันนี้" };
+    }
     var required = registry[fnName];
-    if (!required) return { success: false, message: "ไม่อนุญาตให้เรียกใช้งานฟังก์ชันนี้" };
     var rank = { viewer: 1, staff: 2, admin: 3 };
-    if ((rank[session.role] || 0) < (rank[required] || 99)) return { success: false, message: "สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้" };
+    var userRank = Object.prototype.hasOwnProperty.call(rank, session.role) ? rank[session.role] : 0;
+    if (userRank < rank[required]) return { success: false, message: "สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้" };
+
+    if (args != null && !Array.isArray(args)) return { success: false, message: "รูปแบบข้อมูลคำขอไม่ถูกต้อง" };
 
     var fn = functions[fnName];
     var result = fn.apply(null, args || []);

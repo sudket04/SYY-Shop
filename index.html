@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <?!= include('Styles'); ?>
+  <?!= include_('Styles'); ?>
   <style>
     /* โครงเปลือกหน้า (เฉพาะ index) */
     body{display:flex;height:100vh;overflow:hidden}
@@ -460,9 +460,9 @@
   </div>
 </div>
 
-<?!= include('XLFilter'); ?>
-<?!= include('UiSystem'); ?>
-<?!= include('Shared'); ?>
+<?!= include_('XLFilter'); ?>
+<?!= include_('UiSystem'); ?>
+<?!= include_('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
   var USER_ROLE   = "<?= userRole ?>";

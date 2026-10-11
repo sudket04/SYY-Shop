@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-  <?!= include('Styles'); ?>
+  <?!= include_('Styles'); ?>
   <style>
   /* ─── เฉพาะหน้านี้: แท็บ, การ์ดโปรไฟล์, 2FA/QR, log แจ้งเตือนแบบฝังหน้า (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
   .tab-bar{display:flex;gap:6px;margin-bottom:18px;border-bottom:2px solid var(--line);flex-wrap:wrap}
@@ -233,8 +233,8 @@
   </div>
 </div>
 
-<?!= include('UiSystem'); ?>
-<?!= include('Shared'); ?>
+<?!= include_('UiSystem'); ?>
+<?!= include_('Shared'); ?>
 <script>
 /* ══════════════════════════════════════════════════════════════
    ★ API Gateway helper ของหน้านี้เอง (แบบ chainable .withSuccessHandler().run())
@@ -269,7 +269,7 @@ function callApi(fnName) {
       if (AUTH_TOKEN) {
         runner.apiGateway(AUTH_TOKEN, fnName, callArgs);
       } else {
-        runner[fnName].apply(runner, callArgs);
+        window.top.location.href = WEB_APP_URL + '?page=login';
       }
     }
   };

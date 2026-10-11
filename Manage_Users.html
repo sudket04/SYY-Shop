@@ -990,9 +990,9 @@ function execResetPassword() {
 function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 // ★ ใช้แทน esc() เฉพาะตอนฝังค่าไว้ในสตริง JS ที่ครอบด้วย ' อยู่แล้ว (เช่น onclick="fn('...')")
 //   esc() เพียงอย่างเดียวไม่ escape เครื่องหมาย ' — ถ้าค่านั้นมี ' ปนอยู่จะหลุดออกจากสตริงกลางทาง
-//   (หน้านี้ไม่ได้ include('Shared') จึงมี esc()/escJs() ของตัวเองแยกต่างหาก ไม่ใช้ตัวกลาง)
+//   (หน้านี้ไม่ได้ include_('Shared') จึงมี esc()/escJs() ของตัวเองแยกต่างหาก ไม่ใช้ตัวกลาง)
 function escJs(v) { return esc(v).replace(/'/g,"\\'"); }
 </script>
-<?!= include('UiSystem'); ?>
+<?!= include_('UiSystem'); ?>
 </body>
 </html>

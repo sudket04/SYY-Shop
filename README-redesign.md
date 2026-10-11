@@ -58,7 +58,7 @@
 ```html
 <head>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <?!= include('Styles'); ?>
+  <?!= include_('Styles'); ?>
   <style> /* CSS เฉพาะหน้านี้ ถ้ามี — widget ที่ไม่ซ้ำกับหน้าอื่น */ </style>
 </head>
 <body>
@@ -68,8 +68,8 @@
   </div>
   <div class="page-body"> …การ์ด/ตาราง/แท็บ… </div>
 
-  <?!= include('XLFilter'); ?>  <!-- เฉพาะหน้าที่มีตารางกรองได้ -->
-  <?!= include('Shared'); ?>
+  <?!= include_('XLFilter'); ?>  <!-- เฉพาะหน้าที่มีตารางกรองได้ -->
+  <?!= include_('Shared'); ?>
   <script>
     var AUTH_TOKEN  = "<?= authToken ?>";
     var WEB_APP_URL = "<?= webAppUrl ?>";

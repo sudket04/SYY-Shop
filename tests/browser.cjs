@@ -10,8 +10,8 @@ fs.mkdirSync(output, {recursive:true});
 function render(file, role, ancestors = []) {
   if (ancestors.includes(file)) return '';
   let html = fs.readFileSync(path.join(root, file), 'utf8');
-  // include() returns raw HtmlOutput in Code.gs; included fragments are not recursively evaluated.
-  if (!ancestors.length) html = html.replace(/<\?!= include\('([^']+)'\); \?>/g, (_, name)=>render(name+'.html', role, [file]));
+  // include_() returns raw HtmlOutput in Code.gs; included fragments are not recursively evaluated.
+  if (!ancestors.length) html = html.replace(/<\?!= include_\('([^']+)'\); \?>/g, (_, name)=>render(name+'.html', role, [file]));
   html = html.replace(/<\? if \(userRole === 'staff' \|\| userRole === 'admin'\) \{ \?>([\s\S]*?)<\? \} \?>/g, (_,content)=>role==='viewer'?'':content);
   html = html.replace(/<\?= userRole \?>/g, role).replace(/<\?= authToken \?>/g,'test-token')
     .replace(/<\?= webAppUrl \?>/g, 'http://localhost').replace(/<\?[\s\S]*?\?>/g,'fixture');
@@ -25,6 +25,11 @@ window.fixtureProduct={id:'P1',productCode:'P1',productName:'Test Part',partNumb
 window.fixtureCustomer={id:'C1',Customer_Name:'Buyer',Customer_Type:'ลูกค้าทั่วไป',Address:'Saved address',Branch:'สาขา 2',Tax_ID:'1234567890123'};
 window.fixtureInvoice={id:'TX1',invoiceNo:'SYY 0001/10/69',invoiceDate:'2026-10-11',buyerName:'Buyer',buyerAddress:'Saved address',buyerTaxId:'1234567890123',buyerBranch:'สาขา 2',items:[{name:'Test Part',qty:1,unit:'ชิ้น',unitPrice:100}],subtotal:100,vatAmount:7,grandTotal:107};
 window.respond=function(fn,args){
+ if(fn==='getDashboardBootstrap')return {products:[fixtureProduct],movements:[],poVendorMap:{},serverTime:'2026-10-11T05:00:00Z'};
+ if(fn==='getDashboardDelta')return {success:true,productStocks:[],movements:[],serverTime:'2026-10-11T05:01:00Z'};
+ if(['getBrands','getCategories','getVendorsFull','getCustomersFull','getCarsFull','getAllUsers','getActivityLog','getStockMovements'].includes(fn))return [];
+ if(fn==='getPurchaseOrderPageData')return {lowStockItems:[],purchaseOrders:[]};
+ if(fn==='saveMasterData')return {success:true,id:'NEW',data:args[3]};
  if(fn==='getQuotationPageData')return {products:[fixtureProduct],customers:[fixtureCustomer],quotations:[],availableYears:[2569],seller:{name:'Seller'},statuses:['ร่าง'],marginMin:15};
  if(fn==='getQuotationListData')return {quotations:window.savedQuote?[window.savedQuote]:[],availableYears:[2569,2568]};
  if(fn==='getTaxInvoicePageData')return {products:[fixtureProduct],customers:[fixtureCustomer],invoices:[fixtureInvoice],availableYears:[2569,2568],seller:{name:'Seller',branch:'สำนักงานใหญ่',address:'Address',taxId:'1234567890123'}};
@@ -35,7 +40,7 @@ window.respond=function(fn,args){
  if(fn==='getAllMasterDropdowns')return {brands:[{id:'B1',Name:'B'}],categories:[{id:'CAT1',Name:'CAT'}],vendors:[{id:'V1',Name:'V'}],zones:[{id:'Z1',Name:'A (Rack R1)'}],cars:[]};
  if(fn==='getAllProducts')return [fixtureProduct];
  if(fn==='saveZone')return {success:true,id:args[0].docId||'Z2',data:{Area:args[0].area,Build:args[0].build,Floor:args[0].floor,Rack_no:args[0].rackNo,Rack_Level:args[0].rackLevel}};
- if(fn==='authGetMyProfile')return {success:true,profile:{username:'staff',fullName:'Staff',role:'staff',totpEnabled:false},activity:[]};
+ if(fn==='authGetMyProfile')return {success:true,username:'staff',fullName:'Staff',role:'staff',totpEnabled:false,recoveryCodesLeft:0};
  return {success:true};
 };
 window.google={script:{run:{withSuccessHandler:function(ok){var runner={withFailureHandler:function(fail){runner.fail=fail;return runner;},apiGateway:function(token,fn,args){apiCalls.push({fn:fn,args:args});var done=function(){if(apiFailure===fn)runner.fail({message:'mock network failure'});else ok(respond(fn,args));};if(apiHold===fn)apiPending.push(done);else setTimeout(done,5);}};return runner;}}}};
@@ -63,6 +68,21 @@ async function main(){
     return page;
   }
   async function check(name,fn){await fn();cases++;console.log('PASS: '+name);}
+  await check('All 15 routed pages load after private include rename',async()=>{
+    for(const file of ['index.html','Master_Products.html','StockIssue.html','Purchase_Orders.html','Quotation.html',
+      'Master_Tax_Invoice.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html',
+      'Master_Zones.html','Master_Cars.html','Profile.html','Manage_Users.html','login.html']) {
+      const p=await pageFor(file);assert.deepEqual(p.errors,[],file);await p.close();
+    }
+  });
+  await check('Brands and Categories keep saveMasterData operation through gateway',async()=>{
+    for(const [file,collection] of [['Master_Brands.html','Master_Brands'],['Master_Categories.html','Master_Categories']]) {
+      const p=await pageFor(file);await p.evaluate(()=>openAddModal());await p.locator('#fName').fill('New master');
+      await p.evaluate(()=>handleSubmit({preventDefault(){}}));await p.waitForTimeout(40);
+      const calls=await p.evaluate(()=>apiCalls.filter(call=>call.fn==='saveMasterData'));
+      assert.equal(calls.length,1);assert.equal(calls[0].args[0],collection);assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
   await check('Quotation input keeps DOM, focus and decimal typing; totals/profit and master price',async()=>{
     const p=await pageFor('Quotation.html');await p.evaluate(()=>addToBasket('P1'));
     const price=p.locator('#itemBasket .price-input');await price.focus();await price.press('Control+A');

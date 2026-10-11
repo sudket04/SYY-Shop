@@ -2,7 +2,7 @@
   "name": "syy-shop-regression",
   "private": true,
   "scripts": {
-    "test": "node tests/backend.test.cjs",
+    "test": "node --test tests/backend.test.cjs tests/security.test.cjs",
     "test:browser": "node tests/browser.cjs",
     "check": "node tests/syntax.cjs"
   },
