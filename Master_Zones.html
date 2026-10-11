@@ -179,12 +179,16 @@
   }
 
   function loadTable(){
+    var revision=syyDataRevision();
     document.getElementById('recordCount').innerText='กำลังโหลด';
     document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
+      if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
+      syyDataLoaded();
       cache = data || [];
       renderRows();
     }, function(err){
+      syyDataFailed();
       document.getElementById('tbodyMain').innerHTML = emptyStateHtml(9,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]
@@ -388,5 +392,6 @@
     });
   }
 </script>
+<script>syyRegisterFreshness({reload:loadTable});</script>
 </body>
 </html>

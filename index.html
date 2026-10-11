@@ -517,7 +517,7 @@
   MENU.forEach(function(g){ g.items.forEach(function(it){ GROUP_OF[it.id]=g.group; LABEL_OF[it.id]=it.label; }); });
   GROUP_OF['profile']='บัญชี'; LABEL_OF['profile']='บัญชีของฉัน';
 
-  var allProducts=[], masters={};
+  var allProducts=[], masters={},mastersLoaded=false,mastersLoadedAt=0;
 
   /* ═══ Init ═══ */
   window.addEventListener('load', function(){
@@ -532,7 +532,6 @@
     if(poPicker) poPicker.style.display=['admin','staff'].indexOf(USER_ROLE)>-1?'flex':'none';
     hydrateIcons();
     document.querySelectorAll('iframe[data-src]').forEach(function(frame){frame.dataset.channel=crypto.randomUUID();frame.dataset.src+='&channel='+encodeURIComponent(frame.dataset.channel);});
-    loadMasters();
     dashLoad();
     setInterval(function(){if(!document.hidden && document.getElementById('homeScreen').style.display!=='none' && DASH.loaded && Date.now()-DASH.lastFullLoad>=300000 && Date.now()>=DASH.nextReconcile) dashLoad();},60000);
   });
@@ -586,14 +585,8 @@
 
   // กระจายเฉพาะ stock delta ไปยัง iframe หน้าจัดการสินค้า ถ้าเคยโหลดไว้แล้ว
   // ไม่อ่าน Firestore เพิ่ม และไม่เปลี่ยนโครงสร้างข้อมูลใน DB
-  function forwardStockDeltaToProducts(productStocks){
-    var list=Array.isArray(productStocks)?productStocks:[];
-    if(!list.length)return;
-    var frame=document.getElementById('iframe-products');
-    if(frame&&frame.contentWindow&&frame.src){
-      try{syyPostFrame(frame,{action:'STOCK_DELTA',productStocks:list});}catch(e){}
-    }
-  }
+  function broadcastDataDelta(data){document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)try{syyPostFrame(frame,data);}catch(e){}});}
+  function forwardStockDeltaToProducts(productStocks){if(Array.isArray(productStocks)&&productStocks.length)broadcastDataDelta({action:'STOCK_DELTA',productStocks:productStocks});}
 
   function shellMasterDeltaLabel(kind,item){
     if(!item)return '';
@@ -633,18 +626,16 @@
     }
     var selectId={brands:'mBrandId',categories:'mCategoryId',vendors:'mVendorId',zones:'mZoneId'}[kind];
     if(selectId)fillSelect(selectId,list);
-    var frame=document.getElementById('iframe-products');
-    if(frame&&frame.contentWindow&&frame.src){
-      try{syyPostFrame(frame,{action:'MASTER_DELTA',kind:kind,item:item,deleted:!!deleted});}catch(e){}
-    }
+
   }
 
   window.addEventListener('message', function(e){
     if(!syyTrustedChildMessage(e))return;
     var d = e.data || {};
-    if(d.action==='PRODUCT_DELTA'){ applyDashboardProductDelta(d.product,d.deleted); }
+    if(/_READY$/.test(d.action)){var readyFrame=Array.from(document.querySelectorAll('iframe')).find(function(f){return f.contentWindow===e.source||f.dataset.channel===d.channel;});if(readyFrame&&readyFrame.parentElement?.classList.contains('active'))syyPostFrame(readyFrame,{action:'PAGE_ACTIVATED'});}
+    if(d.action==='PRODUCT_DELTA'){ applyDashboardProductDelta(d.product,d.deleted);broadcastDataDelta(d); }
     else if(d.action==='STOCK_DELTA'){ forwardStockDeltaToProducts(d.productStocks); }
-    else if(d.action==='MASTER_DELTA'){ applyMasterDelta(d.kind,d.item,d.deleted); }
+    else if(d.action==='MASTER_DELTA'){ applyMasterDelta(d.kind,d.item,d.deleted);broadcastDataDelta(d); }
     else if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
     else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }
     else if(d.action==='REFRESH_STOCK_FULL'){ dashRefreshDelta(); }
@@ -735,6 +726,7 @@
   }
 
   function switchPage(id){
+    document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'PAGE_HIDDEN'});});
     var target=null;
     MENU.some(function(g){ return g.items.some(function(it){ if(it.id===id){target=it;return true;} return false; }); });
     if(target && !canSee(target)) return;
@@ -761,6 +753,7 @@
     if(frame && !frame.src && frame.dataset.src) frame.src=frame.dataset.src;
     var wrap=document.getElementById(id+'Form');
     if(wrap) wrap.classList.add('active');
+    if(frame) {syyPostFrame(frame,{action:'PAGE_ACTIVATED'});frame.addEventListener('load',function(){if(wrap&&wrap.classList.contains('active'))syyPostFrame(frame,{action:'PAGE_ACTIVATED'});},{once:true});}
   }
 
   /* ═══ ⌘K ═══ */
@@ -802,13 +795,13 @@
   /* ═══ ข้อมูล ═══ */
   function loadMasters(done){
     callApi('getAllMasterDropdowns', [], function(res){
-      masters=res||{};
+      masters=res||{};mastersLoaded=true;mastersLoadedAt=Date.now();
       fillSelect('mBrandId',    masters.brands);
       fillSelect('mCategoryId', masters.categories);
       fillSelect('mVendorId',   masters.vendors);
       fillSelect('mZoneId',     masters.zones);
       if(done) done();
-    }, function(){ if(done) done(); });
+    }, function(){toast('โหลดข้อมูลตัวเลือกไม่สำเร็จ กรุณาลองใหม่','err');});
   }
   function fillSelect(id,items){
     var sel=document.getElementById(id);
@@ -822,7 +815,7 @@
   var DASH = {
     loaded:false, loading:false, pendingDelta:false, lastLoad:0, lastFullLoad:0, nextReconcile:0, lastSync:'', products:[], movements:[], poVendorMap:{},
     byDay:{}, byMonth:{}, byYear:{}, byProductMonth:{}, lastOut:{}, lastSale:{}, qty6mo:{}, health:null,
-    gran:'m', year:(new Date()).getFullYear(), month:(new Date()).getMonth(), day:(new Date()).getDate(),
+    gran:'m', year:Number(businessDate().slice(0,4)), month:Number(businessDate().slice(5,7))-1, day:Number(businessDate().slice(8,10)),
     tab:'low', deadRule:90, search:'', fCat:'', fBrand:'', fPart:'',
     sortKey:'value', sortDir:'desc', openCode:null, docType:null
   };
@@ -832,15 +825,18 @@
   var DASH_CAT_PALETTE=['#005088','#0a6fb8','#2a8fd4','#5ba9de','#7cb3d4','#93c5fd','#b6d7ef'];
 
   function dashLoad(){
-    if(DASH.loading) return;
+    if(DASH.loading){DASH.reloadRequested=true;return;}
     DASH.loading=true;DASH.nextReconcile=Date.now()+300000;
     var btn=document.getElementById('btnRefresh');
     btnBusy(btn,'กำลังโหลด...');
     if(!DASH.loaded) document.getElementById('dashHealthBody').innerHTML = skeletonRows(9,6);
-    callApi('getDashboardBootstrap', [], function(data){
+    var requestedYear=DASH.year;
+    callApi('getDashboardBootstrap', [{year:requestedYear}], function(data){
       btnDone(btn);
       DASH.loading=false;
       data = data||{};
+      if(requestedYear!==DASH.year){DASH.reloadRequested=false;dashLoad();return;}
+      DASH.loadedYear=requestedYear;DASH.rangeStart=data.rangeStart;DASH.healthRangeStart=data.healthRangeStart;
       DASH.products = data.products||[];
       DASH.movements = (data.movements||[]).map(function(m){ m.ts=new Date(m.timestamp); return m; });
       DASH.poVendorMap = data.poVendorMap||{};
@@ -851,12 +847,12 @@
       dashBuildAggregates();
       dashUpdateSidebarBadges();
       dashRenderAll();
-      if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
+      if(DASH.reloadRequested){DASH.reloadRequested=false;setTimeout(dashLoad,0);}else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
     }, function(err){
       btnDone(btn);
       DASH.loading=false;
       document.getElementById('lastUpdated').innerText='โหลดไม่สำเร็จ · แสดงข้อมูลล่าสุดที่โหลดสำเร็จ';
-      if(DASH.loaded) {dashRenderAll();return;}
+      if(DASH.loaded) {DASH.year=DASH.loadedYear||DASH.year;dashRenderAll();return;}
       document.getElementById('dashHealthBody').innerHTML=emptyStateHtml(9,{
         icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'dashLoad()'}]
@@ -914,7 +910,8 @@
   function dashDaysBetween(now,then){ return Math.floor((now-then)/86400000); }
   function dashDim(y,m){ return new Date(y,m+1,0).getDate(); }
   function dashTh(y){ return y+543; }
-  function dashKeys(d){ var y=d.getFullYear(),m=d.getMonth(),day=d.getDate(); return {dayKey:y+'-'+m+'-'+day, monthKey:y+'-'+m, yearKey:String(y)}; }
+  function dashBusinessNow(){var parts=businessDate().split('-').map(Number);return new Date(parts[0],parts[1]-1,parts[2],12);}
+  function dashKeys(d){ var date=new Date(d.getTime()+7*3600000),y=date.getUTCFullYear(),m=date.getUTCMonth(),day=date.getUTCDate(); return {dayKey:y+'-'+m+'-'+day, monthKey:y+'-'+m, yearKey:String(y)}; }
   function dashNewBucket(){ return {salesQty:0,salesValue:0,salesBills:{},issueQty:0,issueValue:0,recvQty:0,recvValue:0,recvUnknown:0,recvDocs:{},rows:[]}; }
   function dashFinalize(b){
     b=b||dashNewBucket();
@@ -972,7 +969,7 @@
       var qty=num(p.currentStock), rop=num(p.minStock);
       var tag='ปกติ', tone='ok';
       if(qty<=0){ tag='หมดสต๊อก'; tone='danger'; }
-      else if(idle===null){ tag='ไม่เคยเคลื่อนไหว'; tone='dark'; }
+      else if(idle===null){ tag='ไม่พบในช่วงที่โหลด'; tone='dark'; }
       else if(idle>=365){ tag='ค้างเกิน 1 ปี'; tone='dark'; }
       else if(dSale!==null && dSale>=90 && dIssue!==null && dIssue>=180){ tag='ค้างนาน'; tone='dark'; }
       else if(rate>0 && cover!==null && cover>overM){ tag='เกินจำเป็น'; tone='info'; }
@@ -1007,13 +1004,13 @@
 
   /* ── ช่วงเวลาปัจจุบัน / ก่อนหน้า / ปีก่อน (จากข้อมูลจริง ไม่มี MTD clip เพราะข้อมูลจริงไม่มีอนาคต) ── */
   function dashPeriod(){
-    var S=DASH, now=new Date(), cur,prev,yoy,periodLabel,chartTitle,hideYoy=false;
+    var S=DASH, now=dashBusinessNow(), cur,prev,yoy,periodLabel,chartTitle,hideYoy=false;
     if(S.gran==='y'){
       cur = dashFinalize(S.byYear[String(S.year)]);
       prev = dashFinalize(S.byYear[String(S.year-1)]);
       yoy = prev; hideYoy=true;
       periodLabel='ปี '+dashTh(S.year)+(S.year===now.getFullYear()?' (YTD)':'');
-      chartTitle='แนวโน้มรายปี '+dashTh(now.getFullYear()-DASH_YEARS_BACK)+' – '+dashTh(now.getFullYear());
+      chartTitle='แนวโน้มรายปี '+dashTh(S.year-1)+' – '+dashTh(S.year);
     } else if(S.gran==='m'){
       var pm=S.month===0?11:S.month-1, py=S.month===0?S.year-1:S.year;
       cur = dashFinalize(S.byMonth[S.year+'-'+S.month]);
@@ -1040,11 +1037,11 @@
   }
 
   function dashSeries(){
-    var S=DASH, now=new Date(), series=[];
+    var S=DASH, now=dashBusinessNow(), series=[];
     if(S.gran==='y'){
-      for(var k=DASH_YEARS_BACK;k>=0;k--){
-        var y=now.getFullYear()-k, v=dashFinalize(S.byYear[String(y)]);
-        series.push({label:String(dashTh(y)).slice(-2), sales:v.salesValue, qty:v.issueQty, on:y===S.year, pick:(function(yy){return function(){ DASH.year=yy; dashRenderAll(); };})(y)});
+      for(var k=1;k>=0;k--){
+        var y=S.year-k, v=dashFinalize(S.byYear[String(y)]);
+        series.push({label:String(dashTh(y)).slice(-2), sales:v.salesValue, qty:v.issueQty, on:y===S.year, pick:(function(yy){return function(){ dashOnYearSel(yy); };})(y)});
       }
     } else if(S.gran==='m'){
       var upto = S.year===now.getFullYear() ? now.getMonth()+1 : 12;
@@ -1065,7 +1062,7 @@
 
   /* ── render: กรอบเวลา (gran/year/ctx) ── */
   function dashRenderPeriodControls(){
-    var S=DASH, now=new Date();
+    var S=DASH, now=dashBusinessNow();
     var granHtml=['d','m','y'].map(function(id){
       var label=id==='d'?'วัน':id==='m'?'เดือน':'ปี';
       return '<button type="button" class="'+(S.gran===id?'on':'')+'" onclick="dashSetGran(\''+id+'\')">'+label+'</button>';
@@ -1091,7 +1088,7 @@
     }
   }
   function dashSetGran(g){ DASH.gran=g; dashRenderAll(); }
-  function dashOnYearSel(v){ DASH.year=parseInt(v,10); dashRenderAll(); }
+  function dashOnYearSel(v){ DASH.year=parseInt(v,10); if(DASH.year!==DASH.loadedYear)dashLoad();else dashRenderAll(); }
   function dashOnCtxSel(v){
     if(DASH.gran==='m') DASH.month=parseInt(v,10);
     else if(DASH.gran==='d'){ var parts=v.split('-'); DASH.month=parseInt(parts[0],10); DASH.day=parseInt(parts[1],10); }
@@ -1099,7 +1096,7 @@
   }
   function dashJumpNow(){
     var now=new Date();
-    DASH.year=now.getFullYear(); DASH.month=now.getMonth(); DASH.day=now.getDate();
+    var changed=DASH.year!==now.getFullYear();DASH.year=now.getFullYear(); DASH.month=now.getMonth(); DASH.day=now.getDate();if(changed){dashLoad();return;}
     dashRenderAll();
   }
 
@@ -1257,7 +1254,7 @@
 
     var slow=all.filter(function(r){return r.qty>0;}).sort(function(a,b){ var ai=a.idle===null?Infinity:a.idle, bi=b.idle===null?Infinity:b.idle; return bi-ai; }).slice(0,5);
     document.getElementById('dashSlowMovers').innerHTML = slow.length ? slow.map(function(r,i){
-      var idleTxt = r.idle===null?'ไม่เคยเคลื่อนไหว':(r.idle+' วัน');
+      var idleTxt = r.idle===null?'ไม่พบในช่วงที่โหลด':(r.idle+' วัน');
       return '<div class="dash-mover-row" ondblclick="dashOpenProduct(\''+escJs(r.code)+'\')"><span class="dash-mover-rank" style="background:#fef2f2;color:var(--danger)">'+(i+1)+'</span>'+
         '<div style="min-width:0;flex:1"><div style="font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.p.productName)+'</div>'+
         '<div class="dash-mono" style="font-size:11px;color:var(--faint)">'+esc(r.code)+' · จม ฿'+Math.round(r.value).toLocaleString()+'</div></div>'+
@@ -1515,7 +1512,7 @@
       {label:'เฉลี่ยใช้/เดือน', value:r.rate>0?r.rate.toFixed(1):'0', unit:'ชิ้น/เดือน', color:'var(--ink)'},
       {label:'ของพอขาย (Days of Cover)', value:coverDays===null?'∞':coverDays, unit:coverDays===null?'ไม่มีการใช้':'วัน', color:coverDays!==null&&coverDays<30?'var(--danger)':(coverDays!==null&&coverDays>180?'var(--info)':'var(--ok)')}
     ];
-    var idleText = r.idle===null?'ไม่เคยเคลื่อนไหว':(r.idle+' วัน (ขายล่าสุด '+(r.dSale===null?'ไม่เคย':r.dSale+' ว.')+' · เบิกล่าสุด '+(r.dIssue===null?'ไม่เคย':r.dIssue+' ว.')+')');
+    var idleText = r.idle===null?'ไม่พบในช่วงที่โหลด':(r.idle+' วัน (ขายล่าสุด '+(r.dSale===null?'ไม่พบในช่วงที่โหลด':r.dSale+' ว.')+' · เบิกล่าสุด '+(r.dIssue===null?'ไม่พบในช่วงที่โหลด':r.dIssue+' ว.')+')');
     var fields=[
       {label:'รหัสผู้ผลิต (P/N)', value:p.partNumber||'—', mono:true},
       {label:'บาร์โค้ด', value:p.barcode?(p.barcode+(p.barcodeGenerated?' (ระบบสร้าง)':'')):'ยังไม่มี', mono:true},
@@ -1646,6 +1643,7 @@
   }
 
   function openEdit(code){
+    if(!mastersLoaded || Date.now()-mastersLoadedAt>120000){loadMasters(function(){openEdit(code);});return;}
     var p=findProduct(code);
     if(!p){ toast('ไม่พบข้อมูลสินค้า','err'); return; }
     document.getElementById('editAlert').className='modal-alert';

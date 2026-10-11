@@ -1,0 +1,43 @@
+{
+  "label": "Synthetic fixtures only; query document results, not total billed reads or writes",
+  "assumptions": [
+    "No production access, network latency, OAuth/session reads or index-entry billing measured",
+    "Before values describe the audited pre-fix behavior on the same synthetic row counts",
+    "Projection reduces bytes, not billed document reads; pagination rereads one lookahead row per boundary"
+  ],
+  "dashboard": {
+    "beforeDocuments": 5000,
+    "afterDocuments": 2000,
+    "reductionPercent": 60,
+    "afterPayloadBytes": 518398,
+    "note": "Uniform 1,000 movements/year fixture; current-year and previous-year default, no lifetime-history claim"
+  },
+  "invoicePages": {
+    "beforeYearCapDocuments": 1000,
+    "initialDocuments": 51,
+    "initialReductionPercent": 94.9,
+    "completeRows": 1207,
+    "loadAllDocumentResults": 1213,
+    "comparedWithCompleteSingleReadExtraDocuments": 6,
+    "note": "Old 1,000 cap was incomplete. New initial list is 50 + 1 lookahead; explicit load-all returns all 1,207 rows"
+  },
+  "cleanup": {
+    "beforeDocuments": 10000,
+    "afterDocuments": 300,
+    "reductionPercent": 97,
+    "deletesBefore": 300,
+    "deletesAfter": 300,
+    "afterCommitRequests": 1,
+    "note": "Same retention policy and successful delete count; batching reduces HTTP requests, not delete billing"
+  },
+  "products": {
+    "rows": 500,
+    "beforeGasRoundTrips": 2,
+    "afterGasRoundTrips": 1,
+    "roundTripReductionPercent": 50,
+    "productPayloadBytes": 229171,
+    "masterPayloadBytes": 233,
+    "combinedPayloadBytes": 229428,
+    "note": "Small fixture image/master data. Production payload and GAS serialization must be measured in staging"
+  }
+}

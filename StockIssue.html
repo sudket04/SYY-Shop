@@ -320,40 +320,30 @@
     try { syyPostParent({ action: 'OPEN_PRODUCT_ADD', barcode: code }); } catch (e) {}
   }
 
-  function applyPrefillBasket(d) {
-    if(issueBusy||issueUncertain())return;
-    switchTab('issue');
-    var items = Array.isArray(d.items) ? d.items : [];
-    var notFound = [];
-    items.forEach(function (it) {
-      var p = products.find(function (x) { return x.productCode === it.productCode; });
-      if (!p) { notFound.push(it.productName || it.productCode); return; }
-      var qty = Math.max(1, parseFloat(it.qty) || 1);
-      var existing = basket.find(function (b) { return b.productCode === p.productCode; });
-      if (existing) {
-        existing.qty += qty;
-      } else {
-        basket.push({
-          productCode : p.productCode,
-          productName : p.productName,
-          barcode     : p.barcode || '',
-          qty         : qty,
-          unitPrice   : parseFloat(it.unitPrice) || num(p.sellingPrice),
-          costPrice   : num(p.costPrice),
-          stock       : num(p.currentStock),
-          minStock    : num(p.minStock)
-        });
+  var prefillBusy=false;
+  async function applyPrefillBasket(d) {
+    if(issueBusy||issueUncertain()||prefillBusy)return;
+    prefillBusy=true;
+    try {
+      if(basket.length && !await swyConfirm({title:'แทนที่ตะกร้าปัจจุบัน?',html:'รายการเดิมจะถูกแทนที่ด้วยใบเสนอราคานี้ เพื่อรักษาราคาและที่มาของรายการ',confirmText:'แทนที่ตะกร้า',cancelText:'เก็บตะกร้าเดิม'}))return;
+      if(issueBusy||issueUncertain())return;
+      var items=Array.isArray(d.items)?d.items:[],next=[],missing=[];
+      for(var i=0;i<items.length;i++){
+        var it=items[i],p=products.find(function(x){return x.productCode===it.productCode;});
+        var qty=Number(it.qty),price=Number(it.unitPrice);
+        if(!p){missing.push(it.productName||it.productCode);continue;}
+        if(!isFinite(qty)||qty<=0||it.unitPrice==null||it.unitPrice===''||!isFinite(price)||price<0){swyError('รายการไม่ถูกต้อง','จำนวนต้องมากกว่า 0 และราคาต้องตั้งแต่ 0 ขึ้นไป');return;}
+        var existing=next.find(function(x){return x.productCode===p.productCode;});
+        if(existing){if(existing.unitPrice!==price){swyError('ราคาต่างกันในสินค้าเดียวกัน','กรุณาตรวจใบเสนอราคาก่อนนำเข้า');return;}existing.qty+=qty;continue;}
+        next.push({productCode:p.productCode,productName:p.productName,barcode:p.barcode||'',qty:qty,unitPrice:price,
+          costPrice:num(p.costPrice),stock:num(p.currentStock),minStock:num(p.minStock)});
       }
-    });
-    if (d.refNo) document.getElementById('inpRefNo').value = d.refNo;
-    if (d.note)  document.getElementById('inpNote').value  = d.note;
-    pendingQuoteId = d.quoteId || null;
-    renderBasket();
-    if (notFound.length) {
-      swyWarning('บางรายการไม่พบในระบบสินค้า', esc(notFound.join(', ')) + ' — กรุณาตรวจสอบและเพิ่มรายการนี้ด้วยตนเอง');
-    } else {
-      swySuccess('ดึงรายการจากใบเสนอราคาแล้ว', 'ตรวจสอบจำนวน/ราคาให้ตรงก่อนกดยืนยันตัดสต๊อก');
-    }
+      if(missing.length){swyWarning('บางรายการไม่พบในระบบสินค้า',esc(missing.join(', '))+' — ตะกร้าเดิมยังอยู่ กรุณาตรวจสอบก่อนนำเข้า');return;}
+      if(!next.length)return;
+      basket=next;issueRetry=null;clearRememberedIssue();pendingQuoteId=d.quoteId||null;
+      document.getElementById('inpRefNo').value=d.refNo||'';document.getElementById('inpNote').value=d.note||'';
+      switchTab('issue');renderBasket();swySuccess('ดึงรายการจากใบเสนอราคาแล้ว','ตรวจสอบจำนวนและราคาก่อนยืนยัน');
+    } finally {prefillBusy=false;}
   }
 
   document.addEventListener('keydown', function (e) {
@@ -391,14 +381,19 @@
 
   /* ═══ โหลดสินค้า ═══ */
   function loadProducts() {
+    var revision=syyDataRevision();
     callApi('getAllProducts', [], function (data) {
+      if(revision!==syyDataRevision()){syyDataFailed();return;}
+      syyDataLoaded();
       products = (data || []).filter(function (p) { return (p.status || 'Active') === 'Active'; });
+      basket.forEach(function(item){var fresh=products.find(function(p){return p.productCode===item.productCode;});item.stock=fresh?num(fresh.currentStock):0;if(fresh){item.productName=fresh.productName;item.costPrice=num(fresh.costPrice);item.minStock=num(fresh.minStock);}});renderBasket();
       buildCategoryFilter();
       updateCounts();
       renderResults();
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดสินค้าเสร็จแล้ว พร้อมรับรายการจากใบเสนอราคามาเติมตะกร้า
       try { syyPostParent({ action: 'STOCKISSUE_READY' }); } catch (e) {}
     }, function (err) {
+      syyDataFailed();
       document.getElementById('resultCount').innerText = 'โหลดข้อมูลสินค้าไม่สำเร็จ';
       document.getElementById('resultList').innerHTML = '<div class="empty-box">' + esc(JSON.stringify(err)) + '</div>';
     });
@@ -654,7 +649,7 @@
     var line = basket.find(function (b) { return b.productCode === code; });
     if (!line) return;
     var next = line.qty + delta;
-    if (next < 1) { removeLine(code); return; }
+    if (next <= 0) { removeLine(code); return; }
     if (next > line.stock) { swyWarning('เกินจำนวนคงเหลือ', esc(line.productName) + ' คงเหลือ ' + line.stock + ' ชิ้น'); return; }
     line.qty = next;
     renderBasket();
@@ -666,7 +661,7 @@
     var line = basket.find(function (b) { return b.productCode === code; });
     if (!line) return;
     var n = parseFloat(val);
-    if (!n || n < 1) n = 1;
+    if (!isFinite(n) || n <= 0) {swyWarning("จำนวนไม่ถูกต้อง","จำนวนต้องมากกว่า 0");renderBasket();return;}
     if (n > line.stock) { n = line.stock; swyWarning('เกินจำนวนคงเหลือ', esc(line.productName) + ' คงเหลือ ' + line.stock + ' ชิ้น'); }
     line.qty = n;
     renderBasket();
@@ -701,7 +696,7 @@
           '<div style="display:flex;align-items:center;gap:10px;margin-top:9px;flex-wrap:wrap">' +
             '<div class="qty-box">' +
               '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',-1)">−</button>' +
-              '<input type="number" min="1" max="' + b.stock + '" value="' + b.qty + '" onchange="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
+              '<input type="number" min="0.000001" step="any" max="' + b.stock + '" value="' + b.qty + '" onchange="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
               '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',1)">+</button>' +
             '</div>' +
             '<span style="font-size:11.5px;color:var(--faint)">ชิ้น ×</span>' +
@@ -757,7 +752,7 @@
     }catch(e){clearRememberedIssue();}
   }
   function confirmIssue(alsoInvoice) {
-    if (issueBusy) return;
+    if (issueBusy || prefillBusy) return;
     if (!basket.length) { swyWarning('ยังไม่มีรายการ', 'ค้นหาสินค้าแล้วกด “+ เพิ่มสินค้า” ก่อน'); return; }
 
     var payload = {
@@ -911,6 +906,11 @@
       '</tr>';
     }).join('');
   }
+</script>
+<script>
+function reconcileStockBasket(){basket.forEach(function(line){var product=products.find(function(p){return p.productCode===line.productCode;});if(product){line.stock=num(product.currentStock);line.productName=product.productName;line.minStock=num(product.minStock);}});updateCounts();renderResults();renderBasket();}
+syyRegisterFreshness({reload:loadProducts,canRefresh:function(){return !issueBusy&&!issueUncertain()&&!prefillBusy;},
+  stock:function(stocks){syyApplyStockRows(products,stocks);reconcileStockBasket();},product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();reconcileStockBasket();}});
 </script>
 </body>
 </html>

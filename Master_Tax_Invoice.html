@@ -657,18 +657,27 @@ function switchTab(which) {
 
 /* ═══ โหลดข้อมูล ═══ */
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
-function loadAll(yearParam, onDone, onError) {
+var documentPager;
+window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},render:function(){renderRows();renderDashboard();}});});
+var invoiceLoadGeneration=0;
+function loadAll(yearParam, onDone, onError, forceFull) {
+  var requestGeneration=++invoiceLoadGeneration,revision=syyDataRevision();
+  if(taxInvoiceBootstrapped && yearParam==null){yearParam=currentPageYear;forceFull=true;}
+  if(documentPager)documentPager.cancel();
   var tbody = document.getElementById('taxBody');
   tbody.innerHTML = skeletonRows(9,5);
   document.getElementById('recordCount').innerText = 'กำลังโหลด';
   document.getElementById('pageYearLoadingBadge').style.display = 'inline';
 
-  var apiName = taxInvoiceBootstrapped ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
+  var apiName = taxInvoiceBootstrapped && !forceFull ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
   callApi(apiName, [yearParam || ''], function(data) {
+      if(requestGeneration!==invoiceLoadGeneration)return;
+      if(revision!==syyDataRevision()){syyDataFailed();document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
       if (!data || data.success === false || !Array.isArray(data.invoices)) {
         failedLoad({message:data && data.message || 'ข้อมูลใบกำกับภาษีไม่ถูกต้อง'}); return;
       }
       invoicesCache = (data && data.invoices) || [];
+    if(documentPager)documentPager.reset(data.pageInfo);
       if (data && data.seller) sellerInfo = data.seller;
       if (data && data.customers) customersCache = data.customers;
       if (data && data.products) productsCache = data.products;
@@ -676,7 +685,7 @@ function loadAll(yearParam, onDone, onError) {
       taxInvoiceBootstrapped = true;
 
       // ★ บันทึกว่าตอนนี้กำลังดูปีไหนอยู่ (ใช้ทั้งใน dashboard และ drill-down)
-      currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || availableYearsCache[0]);
+      currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || Number(data.pageInfo&&data.pageInfo.year) || availableYearsCache[0]);
       if (currentPageYear !== 'all' && availableYearsCache.indexOf(Number(currentPageYear)) < 0) {
         availableYearsCache.push(Number(currentPageYear)); availableYearsCache.sort(function(a,b){return b-a;});
       }
@@ -694,13 +703,17 @@ function loadAll(yearParam, onDone, onError) {
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดข้อมูลเสร็จแล้ว พร้อมรับรายการจากหน้าตัดสต๊อกมาเติมใบกำกับภาษี
       try { syyPostParent({ action: 'TAXINVOICE_READY' }); } catch (e) {}
 
+      syyDataLoaded();
       if (typeof onDone === 'function') onDone();
     }, failedLoad);
   function failedLoad(err) {
+      if(requestGeneration!==invoiceLoadGeneration)return;
+      syyDataFailed();
       tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
       document.getElementById('recordCount').innerText = 'ผิดพลาด';
       document.getElementById('pageYearLoadingBadge').style.display = 'none';
+      if(taxInvoiceBootstrapped){populatePageYearDropdown();renderRows();toast('โหลดปีที่เลือกไม่สำเร็จ ยังคงข้อมูลเดิม','err');}
       if (typeof onError === 'function') onError(err);
   }
 }
@@ -869,6 +882,7 @@ function submitQuickAddCustomer() {
         customersCache.push(customer);
         populateCustomerDropdown();
         document.getElementById('modalCustomerSelect').value = res.id;
+        notifyParentMasterDelta('customers',customer,false);
         if(window.SYYSelect)SYYSelect.refresh(document.getElementById('modalCustomerSelect'));
         onCustomerSelect();
         closeQuickAddCustomer();
@@ -888,6 +902,7 @@ function submitQuickAddCustomer() {
 
 /* ═══ ตาราง ═══ */
 function renderRows() {
+  if(documentPager)documentPager.render();
   var thead = document.getElementById('taxThead');
   thead.innerHTML =
     '<tr>' +
@@ -1146,7 +1161,7 @@ function openAddModal() {
   editingDocId = null;
   document.getElementById('modalDocId').value = '';
   document.getElementById('modalInvoiceNo').value = '';
-  document.getElementById('modalInvoiceDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('modalInvoiceDate').value = businessDate();
   document.getElementById('modalCustomerSelect').value = '';
   document.getElementById('modalBuyerName').value = '';
   document.getElementById('modalBuyerAddress').value = '';
@@ -1234,12 +1249,12 @@ function handleSubmit() {
           openViewModal(savedId, res.invoice);
         }
         toast('บันทึกใบกำกับภาษีเรียบร้อย');
-        loadAll(currentPageYear === 'all' ? 'all' : savedYearBE, function() {
-          // Saved response remains available even if a bounded list omits the record.
-          if (savedId) openViewModal(savedId, res.invoice);
-        }, function() {
-          toast('บันทึกสำเร็จแล้ว แต่รีเฟรชทะเบียนไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ', 'warn');
-        });
+        if(availableYearsCache.indexOf(savedYearBE)<0)availableYearsCache.push(savedYearBE);
+        availableYearsCache.sort(function(a,b){return b-a;});populatePageYearDropdown();
+        if(currentPageYear!=='all' && Number(currentPageYear)!==savedYearBE)loadAll(savedYearBE,function(){openViewModal(savedId,res.invoice);},function(){toast('บันทึกแล้ว แต่โหลดปีใหม่ไม่สำเร็จ','warn');});
+        else {renderRows();renderDashboard();}
+        if(res.refreshWarning)toast(res.refreshWarning,'warn');
+
       } else {
         invoiceSaving = false;
         btn.disabled = false;
@@ -1436,6 +1451,7 @@ function getInvoiceYearBE(item) {
 }
 
 function renderDashboard() {
+  if(documentPager&&documentPager.hasMore()){document.getElementById('dashRangeInfo').textContent='ยังโหลดไม่ครบปี กรุณากลับไปทะเบียนแล้วกดโหลดทั้งหมดเพื่อสรุป';document.getElementById('dashStats').innerHTML='';['chartMonthly','topCustomers','topItems'].forEach(function(id){document.getElementById(id).innerHTML='';});return;}
   var yearBE = currentPageYear || (new Date().getFullYear() + 543);
   // ★ invoicesCache ถูกกรองมาจาก backend แล้วตามปีที่เลือก ไม่ต้อง filter ซ้ำฝั่ง client อีก
   var yearItems = invoicesCache;
@@ -1700,6 +1716,10 @@ function drillItemInvoices(yearBE, itemName) {
     matched
   );
 }
+</script>
+<script>
+syyRegisterFreshness({reload:function(){loadAll(currentPageYear,null,null,true);},canRefresh:function(){return !invoiceSaving && !document.getElementById('qcBtnSave')?.disabled && !(documentPager&&documentPager.busy());},
+  stock:function(stocks){syyApplyStockRows(productsCache,stocks);},product:function(product,deleted){syyApplyProductRows(productsCache,product,deleted);}});
 </script>
 </body>
 </html>

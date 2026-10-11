@@ -399,9 +399,7 @@ function cacheTtlForCollection_(collectionName) {
   return CACHE_TTL_SECONDS;
 }
 
-function collectionCacheBaseKey_(collectionName) {
-  return "docs_v2_" + collectionName;
-}
+function collectionCacheBaseKey_(collectionName) {return 'docs_v3_'+collectionName;}
 
 function splitCollectionCacheChunks_(docs) {
   docs = docs || [];
@@ -424,49 +422,30 @@ function splitCollectionCacheChunks_(docs) {
 }
 
 function readCollectionCache_(collectionName) {
-  if (CACHEABLE_COLLECTIONS.indexOf(collectionName) === -1) return null;
+  if(CACHEABLE_COLLECTIONS.indexOf(collectionName)<0)return null;
   try {
-    var cache = CacheService.getScriptCache();
-    var base = collectionCacheBaseKey_(collectionName);
-    var manifest = cache.get(base + "__manifest");
-    if (manifest) {
-      var count = parseInt(manifest, 10);
-      if (count > 0 && count < 500) {
-        var keys = [];
-        for (var i = 0; i < count; i++) keys.push(base + "__" + i);
-        var found = cache.getAll(keys), docs = [];
-        for (var j = 0; j < keys.length; j++) {
-          if (!found[keys[j]]) return null;
-          docs = docs.concat(JSON.parse(found[keys[j]]));
-        }
-        return docs;
-      }
-    }
-    // backward compatibility กับ cache key แบบเดิม
-    var legacy = cache.get(base);
-    return legacy ? JSON.parse(legacy) : null;
-  } catch (e) {
-    console.error("readCollectionCache_ error (ข้ามได้):", e);
-    return null;
-  }
+    var generation=collectionGeneration_(collectionName),cache=CacheService.getScriptCache(),base=collectionCacheBaseKey_(collectionName);
+    if(cache.get(base+'__disabled'))return null;var raw=cache.get(base+'__manifest');if(!raw)return null;
+    var manifest=JSON.parse(raw);if(manifest.generation!==generation || !manifest.id || manifest.count<1 || manifest.count>=500)return null;
+    var keys=[];for(var i=0;i<manifest.count;i++)keys.push(base+'__'+manifest.id+'__'+i);
+    var chunks=cache.getAll(keys),docs=[];
+    for(var j=0;j<keys.length;j++){if(!chunks[keys[j]])return null;docs=docs.concat(JSON.parse(chunks[keys[j]]));}
+    return collectionGeneration_(collectionName)===generation?docs:null;
+  }catch(e){return null;}
 }
 
-function writeCollectionCache_(collectionName, docs) {
-  if (CACHEABLE_COLLECTIONS.indexOf(collectionName) === -1) return;
+function writeCollectionCache_(collectionName,docs,expectedGeneration) {
+  if(CACHEABLE_COLLECTIONS.indexOf(collectionName)<0)return false;
   try {
-    var chunks = splitCollectionCacheChunks_(docs || []);
-    if (!chunks) return;
-    clearCollectionCache_(collectionName);
-    var cache = CacheService.getScriptCache();
-    var base = collectionCacheBaseKey_(collectionName);
-    var ttl = cacheTtlForCollection_(collectionName);
-    var values = {};
-    chunks.forEach(function(chunk, i) { values[base + "__" + i] = chunk; });
-    cache.putAll(values, ttl);
-    cache.put(base + "__manifest", String(chunks.length), ttl);
-  } catch (e) {
-    console.error("writeCollectionCache_ error (ข้ามได้):", e);
-  }
+    var generation=expectedGeneration===undefined?collectionGeneration_(collectionName):expectedGeneration;
+    var chunks=splitCollectionCacheChunks_(docs||[]);if(!chunks || chunks.length>=500 || collectionGeneration_(collectionName)!==generation)return false;
+    var cache=CacheService.getScriptCache(),base=collectionCacheBaseKey_(collectionName),id=Utilities.getUuid(),values={},ttl=cacheTtlForCollection_(collectionName);
+    if(cache.get(base+'__disabled'))return false;chunks.forEach(function(chunk,i){values[base+'__'+id+'__'+i]=chunk;});
+    cache.putAll(values,ttl);
+    if(cache.get(base+'__disabled')||collectionGeneration_(collectionName)!==generation)return false;
+    cache.put(base+'__manifest',JSON.stringify({generation:generation,id:id,count:chunks.length}),ttl);
+    return !cache.get(base+'__disabled')&&collectionGeneration_(collectionName)===generation;
+  }catch(e){return false;}
 }
 
 function peekCollectionDocsCache_(collectionName) {
@@ -490,7 +469,7 @@ function queryByEqualityField_(collectionName, fieldPath, value) {
     if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
     if (res.getResponseCode() === 200) {
       (JSON.parse(res.getContentText()) || []).forEach(function(row) {
-        if (row.document) docs.push({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} });
+        if (row.document) docs.push({ id: row.document.name.split('/').pop(), fields: row.document.fields || {},updateTime:row.document.updateTime||"" });
       });
     } else {
       console.error("queryByEqualityField_ " + collectionName + "." + fieldPath + " HTTP " + res.getResponseCode());
@@ -529,10 +508,11 @@ function fetchAllPagesRaw_(collectionName, firstPageJson) {
 }
 
 function fetchCollectionsParallel_(collectionNames) {
-  var result = {}, toFetch = [], requests = [];
+  var result = {}, toFetch = [], requests = [], generations = {};
   collectionNames.forEach(function(name) {
     var cached = readCollectionCache_(name);
     if (cached !== null) { result[name] = cached; return; }
+    generations[name]=collectionGeneration_(name);
     toFetch.push(name);
     requests.push({
       url: "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
@@ -550,9 +530,11 @@ function fetchCollectionsParallel_(collectionNames) {
       // ใช้ first page เดิมต่อทันที ไม่อ่าน 300 docs หน้าแรกซ้ำเมื่อมี pagination
       var fetched = fetchAllPagesRaw_(name, first);
       if (!fetched.ok) throw new Error("โหลด " + name + " ไม่ครบ");
+      if(collectionGeneration_(name)!==generations[name]){result[name]=fetchCollectionDocsCached_(name);return;}
       var docs = fetched.docs;
       result[name] = docs;
-      if (fetched.ok) writeCollectionCache_(name, docs);
+      if (fetched.ok) writeCollectionCache_(name, docs, generations[name]);
+      if(collectionGeneration_(name)!==generations[name])result[name]=fetchCollectionDocsCached_(name);
     });
   } catch (e) {
     console.error("fetchCollectionsParallel error:", e);
@@ -562,27 +544,25 @@ function fetchCollectionsParallel_(collectionNames) {
 }
 
 function fetchCollectionDocsCached_(collectionName) {
-  var cached = readCollectionCache_(collectionName);
-  if (cached !== null) return cached;
-  var fetched = fetchAllPagesRaw_(collectionName);
-  if (!fetched.ok) throw new Error("โหลด " + collectionName + " ไม่สำเร็จ กรุณาลองใหม่");
-  if (fetched.ok) writeCollectionCache_(collectionName, fetched.docs);
-  return fetched.docs;
+  var cached=readCollectionCache_(collectionName);if(cached!==null)return cached;
+  for(var attempt=0;attempt<2;attempt++){
+    var generation=collectionGeneration_(collectionName),fetched=fetchAllPagesRaw_(collectionName);
+    if(!fetched.ok)throw new Error('โหลด '+collectionName+' ไม่สำเร็จ กรุณาลองใหม่');
+    if(collectionGeneration_(collectionName)!==generation)continue;
+    writeCollectionCache_(collectionName,fetched.docs,generation);
+    if(collectionGeneration_(collectionName)===generation)return fetched.docs;
+  }
+  throw new Error('ข้อมูลกำลังเปลี่ยนแปลง กรุณารีเฟรชอีกครั้ง');
 }
 
-function clearCollectionCache_(collectionName) {
-  if (CACHEABLE_COLLECTIONS.indexOf(collectionName) === -1) return;
-  try {
-    var cache = CacheService.getScriptCache();
-    var base = collectionCacheBaseKey_(collectionName);
-    var manifest = cache.get(base + "__manifest");
-    var keys = [base, base + "__manifest"];
-    var count = parseInt(manifest, 10) || 0;
-    for (var i = 0; i < count && i < 500; i++) keys.push(base + "__" + i);
-    cache.removeAll(keys);
-  } catch (e) {
-    console.error("clearCollectionCache error:", e);
-  }
+function clearCollectionCache_(collectionName){
+ if(CACHEABLE_COLLECTIONS.indexOf(collectionName)<0)return true;
+ var cache=CacheService.getScriptCache(),base=collectionCacheBaseKey_(collectionName),disabled=base+'__disabled';
+ try{cache.put(disabled,'1',21600);}catch(e){}
+ var changed=false;try{PropertiesService.getScriptProperties().setProperty('cache_gen_'+collectionName,Utilities.getUuid());changed=true;}catch(e){console.error('Cache generation unavailable; bypass collection cache',collectionName);}
+ try{var raw=cache.get(base+'__manifest'),keys=[base,base+'__manifest'];if(raw){var m=JSON.parse(raw);for(var i=0;i<m.count&&i<500;i++)keys.push(base+'__'+m.id+'__'+i);}cache.removeAll(keys);if(changed)cache.remove(disabled);}catch(e){}
+ // Business write already succeeded; never tell the caller to repeat it after a cache failure.
+ return changed;
 }
 
 // ==========================================
@@ -613,7 +593,9 @@ function reserveDocNo_(docType, docNoValue) {
     }),
     muteHttpExceptions: true
   });
-  return res.getResponseCode() === 200;
+  if(res.getResponseCode()===200)return true;
+  if(res.getResponseCode()===409)return false;
+  throw new Error('จองเลขเอกสารไม่สำเร็จ กรุณาลองใหม่ภายหลัง');
 }
 
 // ★ FIX (โควตา Firestore Reads): ก่อนหน้านี้ "เลขถัดไปของเดือนนี้" (getNextInvoiceRunningNumber/
@@ -654,7 +636,7 @@ function nextRunningNumber_(docType, periodKey, seedFn) {
       if (commit.ok) return next;
       if (!isPreconditionFailure_(commit.message)) {
         console.error("nextRunningNumber_ commit error:", commit.message);
-        return next; // เขียนไม่สำเร็จด้วยเหตุผลอื่น (ไม่ใช่ชนกัน) — คืนเลขที่คำนวณได้ไปก่อน เดี๋ยว reserveDocNo_ เป็นตัวกันชนสุดท้ายอยู่ดี
+        return null; // Do not reserve a number after a failed counter write.
       }
       continue; // ชนกับคนอื่นที่ increment พร้อมกันพอดี — วนอ่าน-เขียนใหม่
     }
@@ -672,11 +654,12 @@ function nextRunningNumber_(docType, periodKey, seedFn) {
         }
       );
       if (createRes.getResponseCode() === 200) return seeded;
+      if(createRes.getResponseCode()!==409)return null;
       continue; // สร้างไม่สำเร็จ (409 = มีคนสร้างตัวนับของเดือนนี้ไปพร้อมกันพอดี) — วนไปอ่าน/increment ใหม่จากบนสุด
     }
 
     console.error("nextRunningNumber_ GET HTTP " + getRes.getResponseCode() + ": " + getRes.getContentText());
-    return null; // ให้ caller fallback ไปใช้วิธีสแกนแบบเดิม
+    return null; // Caller fails safely without rescanning history.
   }
   return null;
 }
@@ -708,7 +691,7 @@ function autoIdSequenceKey_(collectionName, prefix) {
 
 function allocateNextAutoId_(collectionName, prefix, forceReseed) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  var ownsLock=!referenceMutationLocked_;if(ownsLock)lock.waitLock(10000);
   try {
     var props = PropertiesService.getScriptProperties();
     var key = autoIdSequenceKey_(collectionName, prefix);
@@ -722,7 +705,7 @@ function allocateNextAutoId_(collectionName, prefix, forceReseed) {
     props.setProperty(key, String(current));
     return prefix + String(current).padStart(4, '0');
   } finally {
-    try { lock.releaseLock(); } catch (e) {}
+    try { if(ownsLock)lock.releaseLock(); } catch (e) {}
   }
 }
 
@@ -798,6 +781,7 @@ function getFirestoreRawList_(collectionName) {
     docs.forEach(function(doc) {
       var f = doc.fields || {};
       var displayName =
+          (f.Customer_Name ? f.Customer_Name.stringValue : null) ||
           (f.Brand_Name    ? f.Brand_Name.stringValue    : null) ||
           (f.Category_Name ? f.Category_Name.stringValue : null) ||
           (f.Vendor_name   ? f.Vendor_name.stringValue   : null) ||
@@ -806,8 +790,9 @@ function getFirestoreRawList_(collectionName) {
 
       list.push({
         id        : doc.id,
+        updateTime:doc.updateTime||"",
         Name      : displayName.trim(),
-        name      : displayName.trim().toLowerCase()
+        name      : normalizedDuplicateKey_(displayName)
       });
     });
   } catch (e) { console.error("getFirestoreRawList_ read failed", e); throw e; }
@@ -817,23 +802,15 @@ function getFirestoreRawList_(collectionName) {
 // ==========================================
 // 7. ลบเอกสาร
 // ==========================================
-function deleteFirestoreDocument_(collectionName, docId) {
+function deleteFirestoreDocument_(collectionName,docId) {
+  if(!referenceMutationLocked_)return withReferenceMutationLock_(function(){return deleteFirestoreDocument_(collectionName,docId);});
   try {
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + collectionName + "/" + docId;
-    var res = UrlFetchApp.fetch(url, {
-      method: "delete",
-      headers: getAuthHeader_(),
-      muteHttpExceptions: true
-    });
-    if (res.getResponseCode() === 200) {
-      clearCollectionCache_(collectionName);
-      return { success: true, title: "สำเร็จ", message: "ลบข้อมูลเรียบร้อย" };
-    }
-    return { success: false, title: "ล้มเหลว", message: res.getContentText() };
-  } catch (e) {
-    return { success: false, title: "ข้อผิดพลาด", message: e.message };
-  }
+    var document=readExistingDocument_(collectionName,docId);assertDeleteAllowed_(collectionName,docId,document);
+    var url='https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents/'+collectionName+'/'+encodeURIComponent(docId)+'?currentDocument.updateTime='+encodeURIComponent(document.updateTime);
+    var res=UrlFetchApp.fetch(url,{method:'delete',headers:getAuthHeader_(),muteHttpExceptions:true});
+    if(res.getResponseCode()!==200)return {success:false,message:'ลบไม่สำเร็จหรือข้อมูลเปลี่ยนแปลงแล้ว กรุณารีเฟรชก่อนลองใหม่'};
+    clearCollectionCache_(collectionName);return {success:true,title:'สำเร็จ',message:'ลบข้อมูลเรียบร้อย'};
+  }catch(e){return {success:false,title:'ลบไม่ได้',message:e.message};}
 }
 
 // ==========================================
@@ -841,9 +818,18 @@ function deleteFirestoreDocument_(collectionName, docId) {
 // ==========================================
 function saveMasterData_(collectionName, prefix, docId, dataObject, checkDuplicateName, editOptions) {
   try {
+    dataObject=Object.assign({},dataObject);
+    var expected=dataObject._expectedUpdateTime;delete dataObject._expectedUpdateTime;
+    if(docId && !editOptions){
+      var existing=readExistingDocument_(collectionName,docId);
+      if(expected && expected!==existing.updateTime)return {success:false,title:'ข้อมูลเปลี่ยนแปลง',message:'ข้อมูลถูกแก้ไขแล้ว กรุณารีเฟรชก่อนบันทึก'};
+      editOptions={updateTime:existing.updateTime};
+    }
     if (checkDuplicateName) {
-      var list        = getFirestoreRawList_(collectionName);
-      var compareName = checkDuplicateName.toString().trim().toLowerCase();
+      var field={Master_Brands:'Brand_Name',Master_Categories:'Category_Name',Master_Vendors:'Vendor_name',Master_Customers:'Customer_Name'}[collectionName];
+      if(field && hasNormalizedDuplicate_(collectionName,field,checkDuplicateName,docId))return {success:false,title:'ข้อมูลซ้ำ!',message:'ชื่อนี้มีในระบบแล้ว'};
+      var list        = field ? [] : getFirestoreRawList_(collectionName);
+      var compareName = normalizedDuplicateKey_(checkDuplicateName);
       var isDuplicate = list.some(function(item) {
         return item.name === compareName && item.id !== docId;
       });
@@ -872,7 +858,8 @@ function saveMasterData_(collectionName, prefix, docId, dataObject, checkDuplica
         var code = createRes.getResponseCode();
         if (code === 200) {
           clearCollectionCache_(collectionName);
-          return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: newId, data: dataObject };
+          if(collectionName===AUTH_USERS_COLLECTION)CacheService.getScriptCache().remove("auth_legacy_index_"+PROJECT_ID);
+          return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: newId, data: dataObject, updateTime:JSON.parse(createRes.getContentText()).updateTime||"" };
         }
         if (code === 409) {
           newId = allocateNextAutoId_(collectionName, prefix, attempt === 0);
@@ -907,7 +894,7 @@ function saveMasterData_(collectionName, prefix, docId, dataObject, checkDuplica
 
     if (res.getResponseCode() === 200) {
       clearCollectionCache_(collectionName);
-      return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: id, data: dataObject };
+      return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: id, data: dataObject, updateTime:JSON.parse(res.getContentText()).updateTime||"" };
     }
     if (editOptions && /FAILED_PRECONDITION|NOT_FOUND/.test(res.getContentText())) {
       return { success: false, title: "ข้อมูลเปลี่ยนแปลง", message: "ข้อมูลถูกแก้ไขหรือลบโดยผู้ใช้อื่น กรุณารีเฟรชและตรวจสอบก่อนบันทึกอีกครั้ง" };
@@ -975,7 +962,7 @@ function buildCarMapFromDocs_(docs) {
 // ==========================================
 // 10. ★ getAllProducts
 // ==========================================
-function getAllProducts_() {
+function getAllProducts_(options) {
   var products = [];
   try {
     var masters = fetchCollectionsParallel_(
@@ -1039,7 +1026,7 @@ function getAllProducts_() {
       });
     });
   } catch (e) { console.error("getAllProducts_ read failed", e); throw e; }
-  return products;
+  return options && options.includeMasters ? {products:products,masters:getAllMasterDropdowns_(masters)} : products;
 }
 
 // ==========================================
@@ -1072,9 +1059,7 @@ function getProductById_(productCode) {
         carIds = [carIds];
       }
 
-      var masters   = fetchCollectionsParallel_(
-        ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars"]
-      );
+      var masters   = readProductReferenceDocs_({Master_Brands:[brandId],Master_Categories:[catId],Master_Vendors:[vendorId],Master_Zones:zoneId==='PENDING'?[]:[zoneId],Master_Cars:carIds});
       var brandMap  = buildMapFromDocs_(masters["Master_Brands"],     "Brand_Name");
       var catMap    = buildMapFromDocs_(masters["Master_Categories"], "Category_Name");
       var vendorMap = buildMapFromDocs_(masters["Master_Vendors"],    "Vendor_name");
@@ -1264,37 +1249,14 @@ function saveProduct_(d) {
     return { success:false, message:"จำนวนสต๊อกต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป" };
   }
 
-  var cleanProductName = String(dataObject.Product_Name || "").trim();
-  if (cleanProductName) {
-    var dupName = queryByEqualityField_("Master_Products", "Product_Name", cleanProductName)
-      .some(function(doc) { return doc.id !== docId; });
-    if (!dupName) {
-      var cachedProductDocs = peekCollectionDocsCache_("Master_Products");
-      if (cachedProductDocs) {
-        var lowerName = cleanProductName.toLowerCase();
-        dupName = cachedProductDocs.some(function(doc) {
-          if (doc.id === docId) return false;
-          return String(parseFirestoreValue_((doc.fields || {}).Product_Name) || "").trim().toLowerCase() === lowerName;
-        });
-      }
+  try {
+    var duplicateFields=[['Product_Name','ชื่อสินค้า'],['Part_Number','Part Number'],['Barcode','บาร์โค้ด']];
+    for(var i=0;i<duplicateFields.length;i++){
+      var key=duplicateFields[i][0];
+      if(dataObject[key] && hasNormalizedDuplicate_('Master_Products',key,dataObject[key],docId))
+        return {success:false,title:'ข้อมูลซ้ำ!',message:duplicateFields[i][1]+' มีอยู่ในระบบแล้ว'};
     }
-    if (dupName) return { success:false, title:"ข้อมูลซ้ำ!", message:'ชื่อสินค้า "' + cleanProductName + '" มีอยู่ในระบบแล้ว' };
-  }
-
-  if (dataObject.Part_Number) {
-    var dupPn = queryByEqualityField_("Master_Products", "Part_Number", dataObject.Part_Number)
-      .some(function(doc) { return doc.id !== docId; });
-    if (dupPn) {
-      return { success: false, title: "ข้อมูลซ้ำ!", message: 'รหัสจากผู้ผลิต (Part Number) "' + dataObject.Part_Number + '" มีอยู่ในระบบแล้ว' };
-    }
-  }
-  if (dataObject.Barcode) {
-    var dupBc = queryByEqualityField_("Master_Products", "Barcode", dataObject.Barcode)
-      .some(function(doc) { return doc.id !== docId; });
-    if (dupBc) {
-      return { success: false, title: "ข้อมูลซ้ำ!", message: 'บาร์โค้ด "' + dataObject.Barcode + '" มีอยู่ในระบบแล้ว' };
-    }
-  }
+  }catch(e){return {success:false,message:'ตรวจสอบข้อมูลซ้ำไม่สำเร็จ กรุณาลองใหม่'};}
 
   // ★ Barcode_Generated ไม่ได้อยู่ในฟอร์มแก้ไขสินค้า (ตั้งค่าแยกผ่าน generateProductBarcode())
   //   แต่ saveProduct → saveMasterData เป็น PATCH แบบไม่มี updateMask (ทับทั้งเอกสาร) — ถ้าไม่จัดการ
@@ -1314,7 +1276,7 @@ function saveProduct_(d) {
   if (saveRes && saveRes.success) {
     try { saveRes.product = getProductById_(saveRes.id); }
     catch (e) {saveRes.refreshWarning = "บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณารีเฟรช";}
-    if (saveRes.product) saveRes.product.id = saveRes.id;
+    if (saveRes.product) saveRes.product.id = saveRes.id;else saveRes.refreshWarning="บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณารีเฟรช";
   }
   return saveRes;
 }
@@ -1447,6 +1409,7 @@ function deleteProduct_(docId) {
 // ==========================================
 function saveBrand_(d) {
   var dataObject = {
+    _expectedUpdateTime:d.expectedUpdateTime||"",
     Brand_Name  : String(d.brandName   || ""),
     Description : String(d.description || ""),
     Status      : String(d.status      || "Active")
@@ -1461,6 +1424,7 @@ function deleteBrand_(docId) { return deleteFirestoreDocument_("Master_Brands", 
 // ==========================================
 function saveCategory_(d) {
   var dataObject = {
+    _expectedUpdateTime:d.expectedUpdateTime||"",
     Category_Name: String(d.categoryName || ""),
     Description  : String(d.description  || ""),
     Status       : String(d.status       || "Active")
@@ -1497,6 +1461,7 @@ function saveVendor_(d) {
   }
 
   var dataObject = {
+    _expectedUpdateTime:d.expectedUpdateTime||"",
     Vendor_name  : String(d.vendorName  || ""),
     Contact_name : String(d.contact     || ""),
     Phone        : String(d.phone       || ""),
@@ -1524,6 +1489,7 @@ function getVendorsFull_() {
       var f = doc.fields || {};
       list.push({
         id           : doc.id,
+        updateTime:doc.updateTime||"",
         Vendor_name  : parseFirestoreValue_(f.Vendor_name)  || "",
         Contact_name : parseFirestoreValue_(f.Contact_name) || "",
         Phone        : parseFirestoreValue_(f.Phone)        || "",
@@ -1577,8 +1543,9 @@ function saveCustomer_(d) {
   //   targeted query (.where เทียบค่าตรงตัว) แทน — Tax_ID เป็นตัวเลขล้วนอยู่แล้ว (ตัดอักขระอื่นออกหมด
   //   ด้านบน) จึงเทียบตรงตัวได้ไม่มีปัญหาตัวพิมพ์เล็ก/ใหญ่เหมือน Part_Number ของสินค้า
   if (taxId) {
-    var dupTaxId = queryByEqualityField_("Master_Customers", "Tax_ID", taxId)
-      .some(function(doc) { return doc.id !== docId; });
+    var dupTaxId;
+    try{dupTaxId=hasNormalizedDuplicate_('Master_Customers','Tax_ID',taxId,docId);}
+    catch(e){return {success:false,message:'ตรวจสอบข้อมูลซ้ำไม่สำเร็จ กรุณาลองใหม่'};}
     if (dupTaxId) {
       return { success: false, title: "ข้อมูลซ้ำ!", message: 'เลขประจำตัวผู้เสียภาษีอากร "' + taxId + '" มีอยู่ในระบบแล้ว' };
     }
@@ -1595,6 +1562,7 @@ function saveCustomer_(d) {
   }
 
   var dataObject = {
+    _expectedUpdateTime:d.expectedUpdateTime||"",
     Customer_Name : customerName,
     Customer_Type : customerType,
     Address_No    : String(d.addressNo   || ""),
@@ -1621,6 +1589,7 @@ function getCustomersFull_() {
       var f = doc.fields || {};
       list.push({
         id            : doc.id,
+        updateTime:doc.updateTime||"",
         Customer_Name : parseFirestoreValue_(f.Customer_Name) || "",
         Customer_Type : parseFirestoreValue_(f.Customer_Type) || "",
         Address_No    : parseFirestoreValue_(f.Address_No)    || "",
@@ -1733,14 +1702,14 @@ function docPeriodKey_(dateStr) {
 
 function getNextInvoiceRunningNumber_(invoiceDateStr, excludeDocId) {
   var targetSuffix = buildInvoiceNoForMonth_(invoiceDateStr, 1).split('/').slice(1).join('/');
-  var fetched = fetchAllPagesRaw_("Master_Tax_Invoice");
+  var fetched = {ok:true,docs:readDocumentNumberSeeds_('Master_Tax_Invoice','Invoice_No')};
   var maxNum = 0;
   if (fetched.ok) {
     fetched.docs.forEach(function(doc) {
       if (doc.id === excludeDocId) return;
       var f = doc.fields || {};
       var no = String(parseFirestoreValue_(f.Invoice_No) || "");
-      var m = no.match(/^SYY\s+(\d{4})\/(\d{2}\/\d{2})$/);
+      var m = no.match(/^SYY\s+(\d+)\/(\d{2}\/\d{2})$/);
       if (m && m[2] === targetSuffix) {
         var num = parseInt(m[1], 10);
         if (num > maxNum) maxNum = num;
@@ -1786,7 +1755,7 @@ function saveTaxInvoice_(d) {
 
   var totals = calcTaxInvoiceTotals_(cleanItems);
 
-  var invoiceDate = String(d.invoiceDate || "").trim() || new Date().toISOString().slice(0, 10);
+  var invoiceDate = String(d.invoiceDate || "").trim() || businessDate_();
   if (!isValidBusinessDate_(invoiceDate)) {
     return { success:false, message:"วันที่ใบกำกับภาษีไม่ถูกต้อง" };
   }
@@ -1839,10 +1808,7 @@ function saveTaxInvoice_(d) {
     var runningNum = nextRunningNumber_("TaxInvoice", periodKey, function() {
       return getNextInvoiceRunningNumber_(invoiceDate, d.docId || null);
     });
-    if (runningNum === null) {
-      // ตัวนับขัดข้อง (error ชั่วคราว) — fallback กลับไปสแกนแบบเดิมเฉพาะรอบนี้ ไม่ปล่อยให้บันทึกไม่ได้เลย
-      runningNum = getNextInvoiceRunningNumber_(invoiceDate, d.docId || null) + attempt;
-    }
+    if(runningNum===null)return {success:false,message:'ระบบเลขเอกสารไม่พร้อม กรุณาลองใหม่ภายหลัง'};
     var candidateNo = buildInvoiceNoForMonth_(invoiceDate, runningNum);
 
     // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบกำกับภาษีพร้อมกัน (ดู reserveDocNo_)
@@ -1907,110 +1873,17 @@ function mapTaxInvoiceQueryDoc_(doc) {
   };
 }
 
-function getTaxInvoiceListByYear_(yearBE) {
-  var list = [];
-  try {
-    var yearAD = yearBE - 543;
-    var fromDate = yearAD + "-01-01";
-    var toDate   = yearAD + "-12-31";
-
-    var query = {
-      structuredQuery: {
-        from: [{ collectionId: "Master_Tax_Invoice" }],
-        where: {
-          compositeFilter: {
-            op: "AND",
-            filters: [
-              { fieldFilter: { field: { fieldPath: "Invoice_Date" }, op: "GREATER_THAN_OR_EQUAL", value: { stringValue: fromDate } } },
-              { fieldFilter: { field: { fieldPath: "Invoice_Date" }, op: "LESS_THAN_OR_EQUAL",    value: { stringValue: toDate   } } }
-            ]
-          }
-        },
-        limit: 1000
-      }
-    };
-
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
-    var res = UrlFetchApp.fetch(url, {
-      method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
-    });
-
-    if (res.getResponseCode() === 200) {
-      var rows = JSON.parse(res.getContentText());
-      rows.forEach(function(row) {
-        if (row.document) list.push(mapTaxInvoiceQueryDoc_(row.document));
-      });
-    } else {
-      console.error("getTaxInvoiceListByYear HTTP " + res.getResponseCode() + ": " + res.getContentText());
-      throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ");
-    }
-  } catch (e) {
-    console.error("getTaxInvoiceListByYear error:", e);
-    throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
-  }
-  list.sort(function(a, b) { return b.invoiceNo.localeCompare(a.invoiceNo); });
-  return list;
-}
+function getTaxInvoiceListByYear_(yearBE){var out=[],cursor='';do{var p=getTaxInvoiceListData_(yearBE,{pageSize:200,cursor:cursor});out=out.concat(p.invoices);cursor=p.pageInfo.nextCursor;}while(cursor);return out;}
 
 // ★ FIX (โควตา Firestore Reads): ใช้ตอนเลือกมุมมอง "ทั้งหมด" (ทุกปีรวมกัน) — เดิมสแกนทั้ง
 //   Master_Tax_Invoice โดยไม่จำกัด (โตไม่มีที่สิ้นสุดตามอายุร้าน) เปลี่ยนเป็น runQuery + orderBy +
 //   limit (เอาล่าสุดก่อน) เหมือน getActivityLog/getStockMovements — ครอบคลุมการใช้งานจริงเกือบทั้งหมด
 //   เพราะร้านที่ออกใบกำกับภาษีเกิน 1,500 ใบสะสม ปกติจะกรองดูทีละปีอยู่แล้วไม่ได้ใช้มุมมอง "ทั้งหมด" นี้
-function getTaxInvoiceList_() {
-  var list = [];
-  try {
-    var query = {
-      structuredQuery: {
-        from    : [{ collectionId: "Master_Tax_Invoice" }],
-        orderBy : [{ field: { fieldPath: "Invoice_Date" }, direction: "DESCENDING" }],
-        limit   : 1500
-      }
-    };
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
-    var res = UrlFetchApp.fetch(url, {
-      method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
-    });
-    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
-    if (res.getResponseCode() === 200) {
-      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
-        if (row.document) list.push(mapTaxInvoiceQueryDoc_(row.document));
-      });
-    } else {
-      console.error("getTaxInvoiceList HTTP " + res.getResponseCode() + ": " + res.getContentText());
-      throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ");
-    }
-  } catch (e) { console.error("getTaxInvoiceList_ read failed", e); throw e; }
-  list.sort(function(a, b) { return b.invoiceNo.localeCompare(a.invoiceNo); });
-  return list;
-}
+function getTaxInvoiceList_(){var out=[],cursor='';do{var p=getTaxInvoiceListData_('all',{pageSize:200,cursor:cursor});out=out.concat(p.invoices);cursor=p.pageInfo.nextCursor;}while(cursor);return out;}
 
-function getTaxInvoiceListData_(yearFilter) {
-  var invoices;
-  if (yearFilter === "all") {
-    invoices = getTaxInvoiceList_();
-  } else {
-    var yearBE = parseInt(yearFilter, 10) || (new Date().getFullYear() + 543);
-    invoices = getTaxInvoiceListByYear_(yearBE);
-  }
-  return { invoices: invoices, availableYears: getTaxInvoiceAvailableYears_() };
-}
+function getTaxInvoiceListData_(yearFilter,options){var page=queryDocumentPage_('Master_Tax_Invoice','Invoice_Date',yearFilter,options);return {invoices:page.docs.map(function(doc){return mapTaxInvoiceQueryDoc_(doc);}),pageInfo:page.pageInfo,availableYears:options&&options.cursor?undefined:getTaxInvoiceAvailableYears_()};}
 
-function getTaxInvoicePageData_(yearFilter) {
-  var invoices;
-  if (yearFilter === "all") {
-    invoices = getTaxInvoiceList_();
-  } else {
-    var yearBE = parseInt(yearFilter, 10) || (new Date().getFullYear() + 543);
-    invoices = getTaxInvoiceListByYear_(yearBE);
-  }
-  return {
-    invoices       : invoices,
-    seller         : TAX_INVOICE_SELLER,
-    customers      : getCustomersFull_(),
-    products       : getAllProducts_(),
-    availableYears : getTaxInvoiceAvailableYears_()
-  };
-}
+function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=getAllProducts_();result.seller=TAX_INVOICE_SELLER;return result;}
 
 function deleteTaxInvoice_(docId) { return deleteFirestoreDocument_("Master_Tax_Invoice", docId); }
 
@@ -2064,14 +1937,14 @@ function buildQuoteNoForMonth_(quoteDateStr, runningNumber) {
 
 function getNextQuoteRunningNumber_(quoteDateStr, excludeDocId) {
   var targetSuffix = buildQuoteNoForMonth_(quoteDateStr, 1).split('/').slice(1).join('/');
-  var fetched = fetchAllPagesRaw_(QUOTATION_COLLECTION);
+  var fetched = {ok:true,docs:readDocumentNumberSeeds_(QUOTATION_COLLECTION,'Quote_No')};
   var maxNum = 0;
   if (fetched.ok) {
     fetched.docs.forEach(function(doc) {
       if (doc.id === excludeDocId) return;
       var f = doc.fields || {};
       var no = String(parseFirestoreValue_(f.Quote_No) || "");
-      var m = no.match(/^QT\s+(\d{4})\/(\d{2}\/\d{2})$/);
+      var m = no.match(/^QT\s+(\d+)\/(\d{2}\/\d{2})$/);
       if (m && m[2] === targetSuffix) {
         var num = parseInt(m[1], 10);
         if (num > maxNum) maxNum = num;
@@ -2131,14 +2004,12 @@ function saveQuotation_(d, callerUsername) {
   } : getCustomerById_(d.customerId);
   if (!cust) return { success: false, title: "ไม่พบข้อมูล", message: "ไม่พบลูกค้ารายนี้ในระบบ — อาจถูกลบไปแล้ว" };
 
-  var quoteDate  = String(d.quoteDate || "").trim() || new Date().toISOString().slice(0, 10);
+  var quoteDate  = String(d.quoteDate || "").trim() || businessDate_();
   if (!isValidBusinessDate_(quoteDate)) {
     return {success:false, message:"วันที่ใบเสนอราคาไม่ถูกต้อง"};
   }
   var validDays  = parseInt(d.validDays, 10) || 15;
-  var validUntil = new Date(quoteDate + "T00:00:00");
-  if (isNaN(validUntil.getTime())) validUntil = new Date();
-  validUntil.setDate(validUntil.getDate() + validDays);
+  var validUntil = addCalendarDays_(quoteDate,validDays);
 
   var totals = calcQuoteTotals_(cleanItems, d.discPct);
   var user   = callerUsername || getCurrentUsername_();
@@ -2156,7 +2027,7 @@ function saveQuotation_(d, callerUsername) {
   var dataObject = {
     Quote_Date       : quoteDate,
     Valid_Days       : validDays,
-    Valid_Until      : validUntil.toISOString().slice(0, 10),
+    Valid_Until      : validUntil,
     Customer_ID      : d.customerId,
     Customer_Name    : cust.Customer_Name,
     Customer_Type    : cust.Customer_Type,
@@ -2204,10 +2075,7 @@ function saveQuotation_(d, callerUsername) {
     var runningNum = nextRunningNumber_("Quotation", periodKey, function() {
       return getNextQuoteRunningNumber_(quoteDate, d.docId || null);
     });
-    if (runningNum === null) {
-      // ตัวนับขัดข้อง (error ชั่วคราว) — fallback กลับไปสแกนแบบเดิมเฉพาะรอบนี้ ไม่ปล่อยให้บันทึกไม่ได้เลย
-      runningNum = getNextQuoteRunningNumber_(quoteDate, d.docId || null) + attempt;
-    }
+    if(runningNum===null)return {success:false,message:'ระบบเลขเอกสารไม่พร้อม กรุณาลองใหม่ภายหลัง'};
     var candidateNo = buildQuoteNoForMonth_(quoteDate, runningNum);
 
     // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบเสนอราคาพร้อมกัน (ดู reserveDocNo_)
@@ -2272,78 +2140,11 @@ function mapQuotationDoc_(doc) {
 // ★ FIX (โควตา Firestore Reads): ใช้ตอนเลือกมุมมอง "ทั้งหมด" (ทุกปีรวมกัน) — เดิมสแกนทั้ง
 //   collection โดยไม่จำกัด (โตไม่มีที่สิ้นสุดตามอายุร้าน) เปลี่ยนเป็น runQuery + orderBy + limit
 //   (เอาล่าสุดก่อน) เหมือน getTaxInvoiceList — ใช้งานปกติควรกรองดูทีละปีผ่าน getQuotationListByYear แทน
-function getQuotationList_() {
-  var list = [];
-  try {
-    var query = {
-      structuredQuery: {
-        from    : [{ collectionId: QUOTATION_COLLECTION }],
-        orderBy : [{ field: { fieldPath: "Quote_Date" }, direction: "DESCENDING" }],
-        limit   : 1500
-      }
-    };
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
-    var res = UrlFetchApp.fetch(url, {
-      method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
-    });
-    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
-    if (res.getResponseCode() === 200) {
-      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
-        if (row.document) list.push(mapQuotationDoc_({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} }));
-      });
-    } else {
-      console.error("getQuotationList HTTP " + res.getResponseCode() + ": " + res.getContentText());
-      throw new Error("โหลดใบเสนอราคาไม่สำเร็จ");
-    }
-  } catch (e) { console.error("getQuotationList_ read failed", e); throw e; }
-  list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
-  return list;
-}
+function getQuotationList_(){var out=[],cursor='';do{var p=getQuotationListData_('all',{pageSize:200,cursor:cursor});out=out.concat(p.quotations);cursor=p.pageInfo.nextCursor;}while(cursor);return out;}
 
 // ★ FIX (โควตา Firestore Reads): กรองเฉพาะใบเสนอราคาของปีที่เลือกด้วย range query บน Quote_Date
 //   ฝั่ง server เลย (pattern เดียวกับ getTaxInvoiceListByYear) แทนการอ่านทั้งหมดมากรองฝั่ง client
-function getQuotationListByYear_(yearBE) {
-  var list = [];
-  try {
-    var yearAD = yearBE - 543;
-    var fromDate = yearAD + "-01-01";
-    var toDate   = yearAD + "-12-31";
-
-    var query = {
-      structuredQuery: {
-        from: [{ collectionId: QUOTATION_COLLECTION }],
-        where: {
-          compositeFilter: {
-            op: "AND",
-            filters: [
-              { fieldFilter: { field: { fieldPath: "Quote_Date" }, op: "GREATER_THAN_OR_EQUAL", value: { stringValue: fromDate } } },
-              { fieldFilter: { field: { fieldPath: "Quote_Date" }, op: "LESS_THAN_OR_EQUAL",    value: { stringValue: toDate   } } }
-            ]
-          }
-        },
-        limit: 1000
-      }
-    };
-
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
-    var res = UrlFetchApp.fetch(url, {
-      method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
-    });
-    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
-
-    if (res.getResponseCode() === 200) {
-      var rows = JSON.parse(res.getContentText());
-      rows.forEach(function(row) {
-        if (row.document) list.push(mapQuotationDoc_({ id: row.document.name.split('/').pop(), fields: row.document.fields || {} }));
-      });
-    } else {
-      console.error("getQuotationListByYear HTTP " + res.getResponseCode() + ": " + res.getContentText());
-      throw new Error("โหลดใบเสนอราคาไม่สำเร็จ");
-    }
-  } catch (e) { console.error("getQuotationListByYear_ read failed", e); throw e; }
-  list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
-  return list;
-}
+function getQuotationListByYear_(yearBE){var out=[],cursor='';do{var p=getQuotationListData_(yearBE,{pageSize:200,cursor:cursor});out=out.concat(p.quotations);cursor=p.pageInfo.nextCursor;}while(cursor);return out;}
 
 var QUOTATION_YEARS_ID = "quotation_years";
 
@@ -2385,35 +2186,9 @@ function seedQuotationYearsMeta_() {
 
 // ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
 //   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
-function getQuotationListData_(yearFilter) {
-  var quotationsList;
-  if (yearFilter === "all") {
-    quotationsList = getQuotationList_();
-  } else {
-    var yearBE = parseInt(yearFilter, 10) || (new Date().getFullYear() + 543);
-    quotationsList = getQuotationListByYear_(yearBE);
-  }
-  return { quotations: quotationsList, availableYears: getQuotationAvailableYears_() };
-}
+function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(function(doc){return mapQuotationDoc_({id:doc.name.split('/').pop(),fields:doc.fields||{}});}),pageInfo:page.pageInfo,availableYears:options&&options.cursor?undefined:getQuotationAvailableYears_()};}
 
-function getQuotationPageData_(yearFilter) {
-  var quotationsList;
-  if (yearFilter === "all") {
-    quotationsList = getQuotationList_();
-  } else {
-    var yearBE = parseInt(yearFilter, 10) || (new Date().getFullYear() + 543);
-    quotationsList = getQuotationListByYear_(yearBE);
-  }
-  return {
-    quotations     : quotationsList,
-    availableYears : getQuotationAvailableYears_(),
-    customers      : getCustomersFull_(),
-    products       : getAllProducts_(),
-    seller         : TAX_INVOICE_SELLER,
-    marginMin      : QUOTATION_MARGIN_MIN,
-    statuses       : QUOTATION_STATUSES
-  };
-}
+function getQuotationPageData_(yearFilter,options){var result=getQuotationListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=getAllProducts_();result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
 
 function updateQuotationStatus_(docId, status) {
   if (QUOTATION_STATUSES.indexOf(status) === -1) {
@@ -2554,12 +2329,19 @@ function deleteZone_(docId) { return deleteFirestoreDocument_("Master_Zones", do
 // ==========================================
 function saveCar_(d) {
   var dataObject = {
+    _expectedUpdateTime:d.expectedUpdateTime||"",
     Brand    : String(d.brand   || ""),
     Type_Car : String(d.typeCar || ""),
     Model    : String(d.model   || ""),
-    Year     : String(d.year    || "")
+    Year     : String(d.year    || ""),
+    Model_Code:String(d.modelCode||""),Note:String(d.note||"")
   };
-  return saveMasterData_("Master_Cars", "CAR", d.docId || null, dataObject, d.brand);
+  if(d.docId){
+    try{var existing=readExistingDocument_('Master_Cars',d.docId);if(d.modelCode===undefined)delete dataObject.Model_Code;if(d.note===undefined)delete dataObject.Note;}
+    catch(e){return {success:false,message:e.message};}
+  }
+  if(dataObject.Model_Code){try{if(hasNormalizedDuplicate_('Master_Cars','Model_Code',dataObject.Model_Code,d.docId))return {success:false,message:'รหัสรุ่นนี้มีอยู่แล้ว'};}catch(e){return {success:false,message:'ตรวจสอบข้อมูลซ้ำไม่สำเร็จ'};}}
+  return saveMasterData_("Master_Cars", "CAR", d.docId || null, dataObject, null);
 }
 
 function getCarsFull_() {
@@ -2570,6 +2352,9 @@ function getCarsFull_() {
       var f = doc.fields || {};
       list.push({
         id       : doc.id,
+        updateTime:doc.updateTime||"",
+        Model_Code:parseFirestoreValue_(f.Model_Code)||"",
+        Note:parseFirestoreValue_(f.Note)||"",
         Brand    : parseFirestoreValue_(f.Brand)    || "",
         Type_Car : parseFirestoreValue_(f.Type_Car) || "",
         Model    : parseFirestoreValue_(f.Model)    || "",
@@ -2612,7 +2397,7 @@ function backupAllDataToBackup_() {
   var endpoint="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents";
   try {
     var folder=getOrCreateBackupFolder_();assertPrivateBackupFolder_(folder);
-    var properties=PropertiesService.getScriptProperties().getProperties();
+    var properties=backupScriptProperties_();
     var begin=UrlFetchApp.fetch(endpoint+":beginTransaction",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({options:{readOnly:{}}}),muteHttpExceptions:true});
     if(begin.getResponseCode()!==200)throw new Error("เริ่ม Backup snapshot ไม่สำเร็จ");
     transaction=JSON.parse(begin.getContentText()).transaction;
@@ -2628,7 +2413,7 @@ function backupAllDataToBackup_() {
       if(original.getLastUpdated().getTime()!==before || backupDigest_(copy.getBlob().getBytes())!==digest)throw new Error("รูปสินค้าถูกแก้ไขระหว่าง Backup");
       assets.push({originalId:id,backupId:copy.getId(),digest:digest});
     });
-    if(backupJsonDigest_(properties)!==backupJsonDigest_(PropertiesService.getScriptProperties().getProperties()))throw new Error("Script Properties เปลี่ยนแปลงระหว่าง Backup กรุณาลองใหม่");
+    if(backupJsonDigest_(properties)!==backupJsonDigest_(backupScriptProperties_()))throw new Error("Script Properties เปลี่ยนแปลงระหว่าง Backup กรุณาลองใหม่");
     var bundle={schemaVersion:2,complete:true,backupDate:new Date().toISOString(),projectId:PROJECT_ID,collections:snapshot,scriptProperties:properties,assets:assets,assetFolderId:assetFolder.getId()};
     bundle.digest=backupJsonDigest_({collections:snapshot,scriptProperties:properties,assets:assets,assetFolderId:bundle.assetFolderId});
     validateBackupBundle_(bundle);
@@ -2908,7 +2693,7 @@ function savePurchaseOrder_(d) {
   if(!isFinite(totalQty)||!isFinite(totalAmount)||totalQty>Number.MAX_SAFE_INTEGER||totalAmount>Number.MAX_SAFE_INTEGER)return {success:false,message:"จำนวนหรือยอดรวมเกินช่วงที่ระบบรองรับ"};
   var dataObject = {
     Vendor_ID     : String(d.vendorId  || ""),
-    Order_Date    : String(d.orderDate || new Date().toISOString().slice(0, 10)),
+    Order_Date    : String(d.orderDate || businessDate_()),
     Status        : String(d.status    || "Pending"),
     Items_JSON    : JSON.stringify(items),
     Receipts_JSON : JSON.stringify([]),
@@ -2917,7 +2702,9 @@ function savePurchaseOrder_(d) {
     Note          : String(d.note || "")
   };
 
-  return saveMasterData_("Purchase_Orders", "PO", null, dataObject, null);
+  var result=saveMasterData_("Purchase_Orders","PO",null,dataObject,null);
+  if(result.success)result.po=purchaseOrderDto_({id:result.id,fields:mapToFirestoreFields_(dataObject)},{});
+  return result;
 }
 
 function buildVendorMap_() {
@@ -2932,70 +2719,9 @@ function getPurchaseOrders_() {
 
 // ★ FIX (โควตา Firestore Reads): เดิมสแกน Purchase_Orders ทั้ง collection ทุกครั้ง (ทั้งหน้า PO เอง
 //   และตอน dashboard เรียก getDashboardBootstrap) เปลี่ยนเป็น runQuery + orderBy + limit เหมือนจุดอื่น
-function buildPurchaseOrderList_(vendorMap) {
-  var list = [];
-  try {
-    var query = {
-      structuredQuery: {
-        from    : [{ collectionId: "Purchase_Orders" }],
-        orderBy : [{ field: { fieldPath: "Order_Date" }, direction: "DESCENDING" }],
-        limit   : 1000
-      }
-    };
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
-    var res = UrlFetchApp.fetch(url, {
-      method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
-    });
-    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
-    if (res.getResponseCode() === 200) {
-      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
-        if (!row.document) return;
-        var id = row.document.name.split('/').pop();
-        var f  = row.document.fields || {};
-        var vendorId = parseFirestoreValue_(f.Vendor_ID) || "";
-        var v        = vendorMap[vendorId] || {};
+function buildPurchaseOrderList_(vendorMap){var out=[],cursor='';do{var page=queryDocumentPage_('Purchase_Orders','Order_Date','all',{pageSize:200,cursor:cursor});out=out.concat(page.docs.map(function(doc){return purchaseOrderDto_({id:doc.name.split('/').pop(),fields:doc.fields},vendorMap);}));cursor=page.pageInfo.nextCursor;}while(cursor);return out;}
 
-        var items = [];
-        try { items = JSON.parse(parseFirestoreValue_(f.Items_JSON) || "[]"); } catch (e) { items = []; }
-
-        var receipts = [];
-        try { receipts = JSON.parse(parseFirestoreValue_(f.Receipts_JSON) || "[]"); } catch (e) { receipts = []; }
-
-        list.push({
-          poId          : id,
-          vendorId      : vendorId,
-          vendorName    : v.Vendor_name  || vendorId,
-          vendorContact : v.Contact_name || "",
-          vendorPhone   : v.Phone        || "",
-          vendorEmail   : v.Email        || "",
-          vendorAddress : v.Address      || "",
-          vendorTaxId   : v.Tax_ID       || "",
-          vendorBranch  : v.Branch       || "",
-          orderDate     : parseFirestoreValue_(f.Order_Date) || "",
-          status        : parseFirestoreValue_(f.Status)     || "Pending",
-          items         : items,
-          receipts      : receipts,
-          totalQty      : parseFloat(parseFirestoreValue_(f.Total_Qty)    || 0),
-          totalAmount   : parseFloat(parseFirestoreValue_(f.Total_Amount) || 0),
-          note          : parseFirestoreValue_(f.Note) || ""
-        });
-      });
-    } else {
-      console.error("buildPurchaseOrderList HTTP " + res.getResponseCode() + ": " + res.getContentText());
-    }
-  } catch (e) { console.error("buildPurchaseOrderList_ read failed", e); throw e; }
-
-  list.sort(function(a, b) { return b.poId.localeCompare(a.poId); });
-  return list;
-}
-
-function getPurchaseOrderPageData_() {
-  var vendorMap = buildVendorMap_();
-  return {
-    lowStockItems  : buildLowStockList_(vendorMap),
-    purchaseOrders : buildPurchaseOrderList_(vendorMap)
-  };
-}
+function getPurchaseOrderPageData_(options){options=options||{};if(options.poId)return {po:getPurchaseOrderById_(options.poId)};var vendors=buildVendorMap_(),page=queryDocumentPage_('Purchase_Orders','Order_Date','all',options),result={purchaseOrders:page.docs.map(function(doc){return purchaseOrderDto_({id:doc.name.split('/').pop(),fields:doc.fields},vendors);}),pageInfo:page.pageInfo};if(!options.cursor){result.lowStockItems=buildLowStockList_(vendors);result.pendingSummary=getPendingPurchaseOrderSummary_(page.pageInfo.readTime);}return result;}
 
 function updatePurchaseOrderStatus_(docId, newStatus) {
   try {
@@ -3436,55 +3162,9 @@ function destroySession_(token) {
 //   ดู updateUserFields_/saveMasterData) เปลี่ยนมาใช้ fetchCollectionDocsCached แทน (6 ชม. + invalidate
 //   อัตโนมัติเมื่อมีการแก้ไขบัญชีจริง) — ผลพลอยได้อีกอย่าง: ตอนนี้ถ้า Firestore quota เต็มพอดี
 //   login ยัง "ใช้ cache เดิมที่ยังไม่หมดอายุ" ต่อได้ ไม่ล่มพร้อมกันไปกับฟีเจอร์อื่นเหมือนเดิม
-function findUserByUsername_(username) {
-  var uname = String(username || "").trim().toLowerCase();
-  if (!uname) return null;
-  try {
-    var docs = fetchCollectionDocsCached_(AUTH_USERS_COLLECTION);
-    for (var i = 0; i < docs.length; i++) {
-      var f = docs[i].fields || {};
-      if (String(parseFirestoreValue_(f.Username) || "").toLowerCase() === uname) {
-        return {
-          docId           : docs[i].id,
-          Username        : parseFirestoreValue_(f.Username) || "",
-          Full_Name       : parseFirestoreValue_(f.Full_Name) || "",
-          Email           : parseFirestoreValue_(f.Email) || "",
-          Password_Hash   : parseFirestoreValue_(f.Password_Hash) || "",
-          Salt            : parseFirestoreValue_(f.Salt) || "",
-          Role            : parseFirestoreValue_(f.Role) || "viewer",
-          Status          : parseFirestoreValue_(f.Status) || "Active",
-          Totp_Enabled    : String(parseFirestoreValue_(f.Totp_Enabled) || "") === "true",
-          Totp_Secret_Enc : parseFirestoreValue_(f.Totp_Secret_Enc) || "",
-          Recovery_Codes  : parseFirestoreValue_(f.Recovery_Codes) || "",
-          Failed_Attempts : parseInt(parseFirestoreValue_(f.Failed_Attempts) || 0, 10),
-          Locked_Until    : parseFirestoreValue_(f.Locked_Until) || "",
-          Password_Changed_At  : parseFirestoreValue_(f.Password_Changed_At) || "",
-          Must_Change_Password : String(parseFirestoreValue_(f.Must_Change_Password) || "") === "true"
-        };
-      }
-    }
-  } catch (e) {
-    console.error("findUserByUsername_ error:", e);
-  }
-  return null;
-}
+function findUserByUsername_(username) {return findAuthUser_('Username',username);}
 
-function findUserByEmail_(email) {
-  var target = String(email || "").trim().toLowerCase();
-  if (!target) return null;
-  try {
-    var docs = fetchCollectionDocsCached_(AUTH_USERS_COLLECTION);
-    for (var i = 0; i < docs.length; i++) {
-      var f = docs[i].fields || {};
-      if (String(parseFirestoreValue_(f.Email) || "").toLowerCase() === target) {
-        return findUserByUsername_(parseFirestoreValue_(f.Username) || "");
-      }
-    }
-  } catch (e) {
-    console.error("findUserByEmail_ error:", e);
-  }
-  return null;
-}
+function findUserByEmail_(email) {return findAuthUser_('Email',email);}
 
 function updateUserFields_(docId, fieldsObj, updateTime) {
   try {
@@ -3539,12 +3219,13 @@ function consumeRecoveryCode_(user, code) {
 // ─────────────────────────────────────────────────────────────
 function authLogin(username, password, otpCode, userAgent) {
   try {
+    if(!allowAuthRequest_("login",username))return {success:false,message:"ส่งคำขอบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่"};
     var user = findUserByUsername_(username);
 
     var genericFail = { success: false, message: "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" };
 
     if (!user) return genericFail;
-    user = readAuthUser_(user.docId);
+
     if (user.Status !== "Active") return { success: false, message: "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ" };
 
     if (user.Locked_Until) {
@@ -3556,15 +3237,9 @@ function authLogin(username, password, otpCode, userAgent) {
     }
 
     if (!safeEquals_(hashPassword_(password, user.Salt), user.Password_Hash)) {
-      var attempts = (user.Failed_Attempts || 0) + 1;
-      var upd = { Failed_Attempts: attempts };
-      if (attempts >= AUTH_MAX_ATTEMPTS) {
-        upd.Locked_Until = new Date(Date.now() + AUTH_LOCK_MINUTES * 60000).toISOString();
-        upd.Failed_Attempts = 0;
-        updateUserFields_(user.docId, upd);
-        return { success: false, message: "กรอกรหัสผิดเกิน " + AUTH_MAX_ATTEMPTS + " ครั้ง บัญชีถูกล็อก " + AUTH_LOCK_MINUTES + " นาที" };
-      }
-      updateUserFields_(user.docId, upd);
+      var failed=recordFailedLogin_(user.docId);
+      if(!failed.ok)return {success:false,message:'ตรวจสอบบัญชีไม่สำเร็จ กรุณาลองใหม่'};
+      if(failed.locked)return {success:false,message:'บัญชีถูกล็อกชั่วคราว '+AUTH_LOCK_MINUTES+' นาที'};
       return genericFail;
     }
 
@@ -3578,17 +3253,18 @@ function authLogin(username, password, otpCode, userAgent) {
       if (!otpOk) otpOk = consumeRecoveryCode_(user, otpCode);
 
       if (!otpOk) {
-        var a2 = (user.Failed_Attempts || 0) + 1;
-        var u2 = { Failed_Attempts: a2 };
-        if (a2 >= AUTH_MAX_ATTEMPTS) {
-          u2.Locked_Until = new Date(Date.now() + AUTH_LOCK_MINUTES * 60000).toISOString();
-          u2.Failed_Attempts = 0;
-        }
-        updateUserFields_(user.docId, u2);
+        if(!recordFailedLogin_(user.docId).ok)return {success:false,message:'ตรวจสอบบัญชีไม่สำเร็จ กรุณาลองใหม่'};
         return { success: false, needOtp: true, message: "รหัส OTP ไม่ถูกต้อง" };
       }
     }
 
+    var verified=readAuthUser_(user.docId);
+    if(verified.Status!=='Active' || verified.Password_Hash!==user.Password_Hash || verified.Session_Version!==user.Session_Version ||
+      new Date(verified.Locked_Until).getTime()>Date.now())return genericFail;
+    if(!updateUserFields_(user.docId,{Failed_Attempts:0,Locked_Until:'',Last_Login:new Date().toISOString()},verified.updateTime))
+      return {success:false,message:'บัญชีเปลี่ยนแปลงแล้ว กรุณาลองเข้าสู่ระบบใหม่'};
+    user=readAuthUser_(user.docId);
+    if(user.Status!=='Active' || user.Password_Hash!==verified.Password_Hash || user.Session_Version!==verified.Session_Version)return genericFail;
     // เช็คว่าต้องบังคับเปลี่ยนรหัสผ่านก่อนหรือไม่
     var mustChange = user.Must_Change_Password === true;
     if (!mustChange && user.Password_Changed_At) {
@@ -3613,12 +3289,6 @@ function authLogin(username, password, otpCode, userAgent) {
         message            : "กรุณาตั้งรหัสผ่านใหม่ก่อนเข้าใช้งาน (รหัสผ่านหมดอายุ หรือเป็นการเข้าใช้งานครั้งแรก)"
       };
     }
-
-    updateUserFields_(user.docId, {
-      Failed_Attempts : 0,
-      Locked_Until    : "",
-      Last_Login      : new Date().toISOString()
-    });
 
     var sess = createSession_(user, userAgent);
     return {
@@ -3917,7 +3587,9 @@ function apiGateway(token, fnName, args, userAgent) {
       console.error("apiGateway: ไม่พบฟังก์ชันจริงสำหรับ", fnName, "(อยู่ใน API_REGISTRY แต่ไม่มีใน API_FUNCTIONS — ตรวจ Code.gs)");
       return { success: false, message: "เกิดข้อผิดพลาดภายในระบบ กรุณาแจ้งผู้ดูแลระบบ" };
     }
-    var result = fn.apply(null, a);
+    var referenceOperations=['saveProduct','saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveMasterData','savePurchaseOrder','saveQuotation',
+      'deleteProduct','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone','deleteCar','deletePurchaseOrder'];
+    var result = referenceOperations.indexOf(fnName)>=0 ? withReferenceMutationLock_(function(){return fn.apply(null,a);}) : fn.apply(null,a);
 
     logActivity_(session.username, fnName, a, result);
 
@@ -3991,26 +3663,21 @@ function getActivityLog_(limitCount) {
 }
 
 function cleanupOldActivityLogs_() {
-  var deleted = 0;
+  var deleted=0,cutoff=new Date();cutoff.setMonth(cutoff.getMonth()-ACTIVITY_LOG_KEEP_MONTHS);
   try {
-    var cutoff = new Date();
-    cutoff.setMonth(cutoff.getMonth() - ACTIVITY_LOG_KEEP_MONTHS);
-
-    var fetched = fetchAllPagesRaw_(ACTIVITY_LOG_COLLECTION);
-    if (!fetched.ok) return { success: false, deleted: 0 };
-
-    fetched.docs.forEach(function (doc) {
-      var f = doc.fields || {};
-      var ts = new Date(parseFirestoreValue_(f.Timestamp) || "");
-      if (!isNaN(ts.getTime()) && ts < cutoff) {
-        deleteFirestoreDocument_(ACTIVITY_LOG_COLLECTION, doc.id);
-        deleted++;
-      }
-    });
-  } catch (e) {
-    console.error("cleanupOldActivityLogs error:", e);
-  }
-  return { success: true, deleted: deleted };
+    var deadline=Date.now()+240000;
+    for(var batch=0;batch<20 && Date.now()<deadline;batch++){
+      var query={structuredQuery:{from:[{collectionId:ACTIVITY_LOG_COLLECTION}],where:{fieldFilter:{field:{fieldPath:'Timestamp'},op:'LESS_THAN',value:{stringValue:cutoff.toISOString()}}},orderBy:[{field:{fieldPath:'Timestamp'},direction:'ASCENDING'}],limit:450}};
+      var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(query),muteHttpExceptions:true});
+      if(res.getResponseCode()!==200)throw new Error('อ่าน Log ที่หมดอายุไม่สำเร็จ');
+      var docs=JSON.parse(res.getContentText()).filter(function(row){return row.document;}).map(function(row){return row.document;});
+      if(!docs.length)return {success:true,deleted:deleted,hasMore:false};
+      var result=fsCommit_(docs.map(function(doc){return {delete:doc.name,currentDocument:{updateTime:doc.updateTime}};}));
+      if(!result.ok)throw new Error('ลบ Log ไม่สำเร็จ');deleted+=docs.length;
+      if(docs.length<450)return {success:true,deleted:deleted,hasMore:false};
+    }
+    return {success:true,deleted:deleted,hasMore:true,message:'ยังมี Log เก่า งานรอบถัดไปจะดำเนินต่อ'};
+  }catch(e){return {success:false,deleted:deleted,message:e.message};}
 }
 
 function setupActivityLogCleanupTrigger_() {
@@ -4026,51 +3693,23 @@ function setupActivityLogCleanupTrigger_() {
 // ★ FIX: เพิ่ม Password_Changed_At/Must_Change_Password ให้ admin คนแรกด้วย
 //   เดิมไม่มี 2 field นี้เลย ทำให้บัญชี admin ตัวแรกไม่เคยถูกบังคับเปลี่ยนรหัสผ่าน
 function setupFirstAdmin_() {
-  var ADMIN_EMAIL = "shopsyy01@gmail.com";
-
-  if (ADMIN_EMAIL.indexOf("@example.com") > -1) {
-    Logger.log("❌ กรุณาแก้ ADMIN_EMAIL ในโค้ดเป็นอีเมลจริงก่อนรันฟังก์ชันนี้");
-    return "กรุณาแก้ ADMIN_EMAIL เป็นอีเมลจริงก่อนรัน";
-  }
-
-  var existing = findUserByUsername_("admin");
-  if (existing) {
-    Logger.log("มีผู้ใช้ admin อยู่แล้ว ไม่สร้างซ้ำ");
-    return "มีผู้ใช้ admin อยู่แล้ว";
-  }
-
-  var tempPassword = Utilities.getUuid().slice(0, 12);
-  var salt = makeSalt_();
-
-  var dataObject = {
-    Username        : "admin",
-    Full_Name       : "ผู้ดูแลระบบ",
-    Email           : ADMIN_EMAIL,
-    Password_Hash   : hashPassword_(tempPassword, salt),
-    Salt            : salt,
-    Role            : "admin",
-    Status          : "Active",
-    Totp_Enabled    : "false",
-    Totp_Secret_Enc : "",
-    Recovery_Codes  : "[]",
-    Failed_Attempts : 0,
-    Locked_Until    : "",
-    Last_Login      : "",
-    Password_Changed_At  : "",
-    Must_Change_Password : "true"
-  };
-
-  var res = saveMasterData_(AUTH_USERS_COLLECTION, "U", null, dataObject, null);
-
-  Logger.log("═══════════════════════════════════════");
-  Logger.log("สร้างผู้ใช้ admin สำเร็จ");
-  Logger.log("Username: admin");
-  Logger.log("Email: " + ADMIN_EMAIL);
-  Logger.log("Password: " + tempPassword);
-  Logger.log("★ กรุณาเข้าระบบแล้วเปลี่ยนรหัสผ่านทันที");
-  Logger.log("═══════════════════════════════════════");
-
-  return "สร้าง admin สำเร็จ — ดูรหัสผ่านใน Log (Execution log)";
+  if(!referenceMutationLocked_)return withReferenceMutationLock_(setupFirstAdmin_);
+  var ADMIN_EMAIL='shopsyy01@gmail.com';
+  try {
+    var existingUsers=fetchAllPagesRaw_(AUTH_USERS_COLLECTION);if(!existingUsers.ok)return {success:false,message:'ตรวจสอบบัญชีเดิมไม่สำเร็จ'};
+    if(existingUsers.docs.some(function(d){return normalizedDuplicateKey_(parseFirestoreValue_((d.fields||{}).Username))==='admin';}))return {success:false,message:'มีผู้ใช้ admin อยู่แล้ว ใช้ลืมรหัสผ่านเพื่อขอลิงก์ใหม่'};
+    var salt=makeSalt_();
+    var result=saveMasterData_(AUTH_USERS_COLLECTION,'U',null,{Username:'admin',Full_Name:'ผู้ดูแลระบบ',Email:ADMIN_EMAIL,
+      Password_Hash:hashPassword_(generateTempPassword_(),salt),Salt:salt,Role:'admin',Status:'Active',Totp_Enabled:'false',
+      Totp_Secret_Enc:'',Recovery_Codes:'[]',Failed_Attempts:0,Locked_Until:'',Last_Login:'',Session_Version:Utilities.getUuid(),
+      Password_Changed_At:'',Must_Change_Password:'true'},null);
+    if(!result || !result.success)return {success:false,message:'สร้าง admin ไม่สำเร็จ'};
+    var user=readAuthUser_(result.id),token=storePasswordResetToken_(user);
+    var url=getWebAppUrl_()+'?page=login&mode=reset&rtoken='+encodeURIComponent(token);
+    try {MailApp.sendEmail(ADMIN_EMAIL,'ตั้งรหัสผ่านผู้ดูแลระบบ — SYY Shop Control','Username: admin\nตั้งรหัสผ่านด้วยลิงก์นี้ภายใน '+RESET_TOKEN_MINUTES+' นาที\n'+url);}
+    catch(mailError){return {success:true,emailSent:false,message:'สร้างบัญชีแล้ว แต่ส่งลิงก์ไม่สำเร็จ กรุณาใช้ลืมรหัสผ่าน'};}
+    return {success:true,emailSent:true,message:'สร้าง admin และส่งลิงก์ตั้งรหัสผ่านแล้ว'};
+  }catch(e){return {success:false,message:'สร้าง admin ไม่สำเร็จ กรุณาตรวจสอบสถานะก่อนลองใหม่'};}
 }
 
 // ★ FIX: เพิ่มเช็คห้ามซ้ำรหัสเดิม + อัปเดต Password_Changed_At/Must_Change_Password
@@ -4204,17 +3843,14 @@ function authForgotPassword(email) {
       return { success: false, message: "กรุณากรอกอีเมลให้ถูกต้อง" };
     }
 
+    if(!allowAuthRequest_("forgot",clean))return {success:true,message:genericMsg};
     var user = findUserByEmail_(clean);
+    if(user)user=readAuthUser_(user.docId);
     if (!user || user.Status !== "Active") {
       return { success: true, message: genericMsg };
     }
 
-    var resetToken = Utilities.getUuid() + "-" + Utilities.getUuid();
-    CacheService.getScriptCache().put(
-      "pwreset_" + resetToken,
-      JSON.stringify({ username: user.Username, docId: user.docId }),
-      RESET_TOKEN_MINUTES * 60
-    );
+    var resetToken = storePasswordResetToken_(user);
 
     var resetUrl = getWebAppUrl_() + "?page=login&mode=reset&rtoken=" + encodeURIComponent(resetToken);
 
@@ -4238,56 +3874,34 @@ function authForgotPassword(email) {
 
 function authVerifyResetToken(resetToken) {
   try {
-    var raw = CacheService.getScriptCache().get("pwreset_" + resetToken);
-    if (!raw) return { success: false, message: "ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาขอลิงก์ใหม่" };
-    var data = JSON.parse(raw);
-    return { success: true, username: data.username };
-  } catch (e) {
-    return { success: false, message: "ลิงก์ไม่ถูกต้อง" };
-  }
+    if(!allowAuthRequest_('verify',resetToken))return {success:false,message:'ส่งคำขอบ่อยเกินไป กรุณารอสักครู่'};
+    var raw=CacheService.getScriptCache().get('pwreset_'+resetToken);
+    if(!raw)return {success:false,message:'ลิงก์หมดอายุหรือถูกใช้แล้ว กรุณาขอลิงก์ใหม่'};
+    var data=JSON.parse(raw);resetTokenUser_(data);return {success:true,username:data.username};
+  }catch(e){return {success:false,message:'ลิงก์หมดอายุหรือบัญชีเปลี่ยนแปลงแล้ว กรุณาขอลิงก์ใหม่'};}
 }
 
 // ★ FIX: เพิ่มเช็คห้ามซ้ำรหัสเดิม + อัปเดต Password_Changed_At/Must_Change_Password
 //   เดิมไม่เคยเคลียร์ 2 ค่านี้ ทำให้ user ที่ถูก admin reset หรือลืมรหัสผ่าน
 //   ต้องเปลี่ยนรหัสผ่านวนซ้ำไม่จบทุกครั้งที่ login แม้ตั้งรหัสใหม่ถูกต้องแล้ว (บั๊กร้ายแรงที่สุดที่พบ)
-function authResetPassword(resetToken, newPassword) {
+function authResetPassword(resetToken,newPassword) {
   try {
-    var cacheKey = "pwreset_" + resetToken;
-    var raw = CacheService.getScriptCache().get(cacheKey);
-    if (!raw) return { success: false, message: "ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาขอลิงก์ใหม่" };
-
-    CacheService.getScriptCache().remove(cacheKey);
-
-    if (!newPassword || String(newPassword).length < 8) {
-      return { success: false, message: "รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร" };
+    if(!allowAuthRequest_('reset',resetToken))return {success:false,message:'ส่งคำขอบ่อยเกินไป กรุณารอสักครู่'};
+    if(typeof newPassword!=='string' || newPassword.length<8 || newPassword.length>256)return {success:false,message:'รหัสผ่านต้องมี 8–256 ตัวอักษร'};
+    var cache=CacheService.getScriptCache(),key='pwreset_'+resetToken,raw=cache.get(key);
+    if(!raw)return {success:false,message:'ลิงก์หมดอายุหรือถูกใช้แล้ว กรุณาขอลิงก์ใหม่'};
+    var data=JSON.parse(raw),user=resetTokenUser_(data);
+    if(isSamePassword_(user,newPassword))return {success:false,message:'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม'};
+    var salt=makeSalt_(),sessionVersion=Utilities.getUuid(),hash=hashPassword_(newPassword,salt);
+    var ok=updateUserFields_(user.docId,{Password_Hash:hash,Salt:salt,Session_Version:sessionVersion,
+      Password_Changed_At:new Date().toISOString(),Must_Change_Password:'false',Failed_Attempts:0,Locked_Until:''},user.updateTime);
+    if(!ok){
+      // A lost response may follow a committed PATCH; confirm before inviting a retry.
+      try {var fresh=readAuthUser_(user.docId);ok=fresh.Session_Version===sessionVersion && fresh.Password_Hash===hash;}catch(ignore){}
     }
-
-    var data = JSON.parse(raw);
-    var user = findUserByUsername_(data.username);
-    if (!user) return { success: false, message: "ไม่พบบัญชีผู้ใช้" };
-    user=readAuthUser_(user.docId);
-    if(user.Status!=="Active") return {success:false,message:"บัญชีถูกปิดใช้งาน"};
-
-    if (isSamePassword_(user, newPassword)) {
-      return { success: false, message: "รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม กรุณาตั้งรหัสผ่านใหม่ที่แตกต่างออกไป" };
-    }
-
-    var newSalt = makeSalt_();
-    var ok = updateUserFields_(user.docId, {
-      Password_Hash         : hashPassword_(newPassword, newSalt),
-      Salt                  : newSalt,
-      Password_Changed_At   : new Date().toISOString(),
-      Must_Change_Password  : "false",
-      Failed_Attempts : 0,
-      Locked_Until    : ""
-    },user.updateTime);
-
-    return ok ? { success: true, message: "ตั้งรหัสผ่านใหม่สำเร็จ กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่" }
-              : { success: false, message: "บันทึกไม่สำเร็จ กรุณาลองใหม่" };
-  } catch (e) {
-    console.error("authResetPassword error:", e);
-    return { success: false, message: "เกิดข้อผิดพลาดในระบบ" };
-  }
+    if(!ok)return {success:false,message:'บันทึกไม่สำเร็จ ลิงก์เดิมยังตรวจสอบได้ กรุณาลองใหม่'};
+    cache.remove(key);return {success:true,message:'ตั้งรหัสผ่านใหม่สำเร็จ กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่'};
+  }catch(e){return {success:false,message:'ลิงก์หมดอายุ ถูกใช้ หรือบัญชีเปลี่ยนแปลงแล้ว กรุณาขอลิงก์ใหม่'};}
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -4460,6 +4074,7 @@ function updateUserAccount_(docId, fullName, email, role, callerUsername) {
     if (cleanRole !== currentRole) changes.Session_Version = Utilities.getUuid();
     var ok = updateUserFields_(docId, changes, targetDoc.updateTime);
 
+    if(ok && cleanEmail!==currentEmail)CacheService.getScriptCache().remove("auth_legacy_index_"+PROJECT_ID);
     return ok ? { success: true, message: "บันทึกข้อมูลบัญชีผู้ใช้สำเร็จ" }
               : { success: false, message: "บันทึกไม่สำเร็จ กรุณาลองใหม่" };
   } catch (e) {
@@ -4497,14 +4112,9 @@ function resetUserPassword_(docId, callerUsername) {
     // ★ รีเซ็ตรหัสผ่านแล้วต้องเพิกถอน session เดิมทั้งหมดทันที — เผื่อเหตุผลที่แอดมินรีเซ็ตให้คือ
     //   สงสัยว่าบัญชีนี้ถูกขโมยไปใช้ ถ้าไม่เพิกถอน คนที่ถือ session เดิมอยู่ (ผู้ไม่ประสงค์ดี) ยังใช้งาน
     //   ต่อได้จนกว่าจะหมดอายุเอง แม้เจ้าของบัญชีตัวจริงจะตั้งรหัสผ่านใหม่ไปแล้วก็ตาม
-    if(!updateUserFields_(docId,{Session_Version:Utilities.getUuid()},targetDoc.updateTime)) return {success:false,message:"บัญชีเปลี่ยนแปลงแล้ว กรุณารีเฟรชแล้วลองใหม่"};
+    if(!updateUserFields_(docId,{Session_Version:Utilities.getUuid(),Must_Change_Password:"true"},targetDoc.updateTime)) return {success:false,message:"บัญชีเปลี่ยนแปลงแล้ว กรุณารีเฟรชแล้วลองใหม่"};
 
-    var resetToken = Utilities.getUuid() + "-" + Utilities.getUuid();
-    CacheService.getScriptCache().put(
-      "pwreset_" + resetToken,
-      JSON.stringify({ username: targetUsername, docId: docId }),
-      RESET_TOKEN_MINUTES * 60
-    );
+    var resetToken=storePasswordResetToken_(readAuthUser_(docId));
 
     var resetUrl = getWebAppUrl_() + "?page=login&mode=reset&rtoken=" + encodeURIComponent(resetToken);
 
@@ -4524,7 +4134,7 @@ function resetUserPassword_(docId, callerUsername) {
       emailSent = false;
     }
 
-    updateUserFields_(docId, { Must_Change_Password: "true" });
+
 
     return {
       success : true,
@@ -4575,11 +4185,12 @@ function toggleUserStatus_(docId, newStatus, callerUsername) {
 
 function authChangePasswordForced(tempToken, newPassword, userAgent) {
   try {
+    if(!allowAuthRequest_("force",tempToken))return {success:false,message:"ส่งคำขอบ่อยเกินไป กรุณารอสักครู่"};
     var cacheKey = "pwforce_" + tempToken;
     var raw = CacheService.getScriptCache().get(cacheKey);
     if (!raw) return { success: false, message: "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง" };
 
-    if (!newPassword || String(newPassword).length < 8) {
+    if (typeof newPassword!=='string' || newPassword.length<8 || newPassword.length>256) {
       return { success: false, message: "รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร" };
     }
 
@@ -4592,10 +4203,10 @@ function authChangePasswordForced(tempToken, newPassword, userAgent) {
     }
 
     var sessionVersion=Utilities.getUuid();
-    var newSalt = makeSalt_();
+    var newSalt = makeSalt_(),newHash=hashPassword_(newPassword,newSalt);
     var ok = updateUserFields_(user.docId, {
       Session_Version      : sessionVersion,
-      Password_Hash        : hashPassword_(newPassword, newSalt),
+      Password_Hash        : newHash,
       Salt                 : newSalt,
       Must_Change_Password : "false",
       Password_Changed_At  : new Date().toISOString(),
@@ -4603,6 +4214,7 @@ function authChangePasswordForced(tempToken, newPassword, userAgent) {
       Locked_Until         : ""
     },user.updateTime);
 
+    if(!ok){try{var confirmed=readAuthUser_(user.docId);ok=confirmed.Session_Version===sessionVersion&&confirmed.Password_Hash===newHash;}catch(e){}}
     if (!ok) return { success: false, message: "บันทึกรหัสผ่านใหม่ไม่สำเร็จ กรุณาลองใหม่" };
 
     CacheService.getScriptCache().remove(cacheKey);
@@ -4986,10 +4598,7 @@ function fetchAllStockMovements_() {
 
 var DASHBOARD_YEARS_BACK = 4;
 
-function dashboardRangeStart_() {
-  var now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear() - DASHBOARD_YEARS_BACK, 0, 1, 0, 0, 0)).toISOString();
-}
+function dashboardRangeStart_(year){year=Number(year)||Number(businessDate_().slice(0,4));return new Date(Date.UTC(year-1,0,1)-7*3600000).toISOString();}
 
 function mapDashboardMovementRow_(row) {
   if (!row || !row.document) return null;
@@ -5067,16 +4676,9 @@ function buildPoVendorMapForMovements_(movements) {
   return out;
 }
 
-function getDashboardBootstrap_() {
-  var serverTime = new Date().toISOString();
-  var rangeStart = dashboardRangeStart_();
-  var movements = queryDashboardMovementsRange_(rangeStart, serverTime, false);
-  return {
-    products:getAllProducts_(), movements:movements,
-    poVendorMap:buildPoVendorMapForMovements_(movements),
-    bounded:true, rangeStart:rangeStart, serverTime:movements.readTime
-  };
-}
+function getDashboardBootstrap_(options){var now=new Date(),current=Number(businessDate_().slice(0,4)),year=Number(options&&options.year)||current;if(!Number.isInteger(year)||year<current-4||year>current)throw new Error('ปีไม่ถูกต้อง');var start=dashboardRangeStart_(year),end=year===current?now.toISOString():new Date(Date.UTC(year+1,0,1)-7*3600000-1).toISOString();var movements=queryDashboardMovementsRange_(start,end,false),readTime=movements.readTime;
+  if(year<current){var recent=queryDashboardMovementsRange_(dashboardRangeStart_(current),now.toISOString(),false),seen={};movements.forEach(function(m){seen[m.id]=true;});recent.forEach(function(m){if(!seen[m.id])movements.push(m);});readTime=recent.readTime;}
+  return {products:getAllProducts_(),movements:movements,poVendorMap:buildPoVendorMapForMovements_(movements),bounded:true,year:year,rangeStart:start,healthRangeStart:dashboardRangeStart_(current),serverTime:readTime};}
 
 function getDashboardDelta_(sinceIso) {
   var since = String(sinceIso || "").trim();
@@ -5110,14 +4712,7 @@ function getCurrentUsername_() {
 
 
 // Fresh targeted reads keep authentication independent of evictable collection caches.
-function readAuthUser_(docId) {
-  var doc = readExistingDocument_(AUTH_USERS_COLLECTION, docId), f = doc.fields || {}, user = {docId:docId, updateTime:doc.updateTime};
-  Object.keys(f).forEach(function(k) { user[k] = parseFirestoreValue_(f[k]); });
-  user.Totp_Enabled = String(user.Totp_Enabled) === "true";
-  user.Must_Change_Password = String(user.Must_Change_Password) === "true";
-  user.Session_Version = String(user.Session_Version || "");
-  return user;
-}
+function readAuthUser_(docId) {return authUserFromDoc_(Object.assign({id:docId},readExistingDocument_(AUTH_USERS_COLLECTION,docId)));}
 var validatedGatewaySession_ = null;
 
 
@@ -5267,4 +4862,199 @@ function canonicalBackupValue_(value) {
   if(Array.isArray(value))return value.map(canonicalBackupValue_);
   if(value && typeof value === "object"){var out=Object.create(null);Object.keys(value).sort().forEach(function(k){out[k]=canonicalBackupValue_(value[k]);});return out;}
   return value;
+}
+
+
+// Fixed-size durable rate buckets: no raw usernames, emails, tokens or client-provided IPs.
+var AUTH_RATE_POLICIES = {login:[20,600,300],forgot:[3,900,60],reset:[12,900,180],verify:[30,900,300],force:[12,900,180]};
+function allowAuthRequest_(kind, subject) {
+  var policy=AUTH_RATE_POLICIES[kind],lock=LockService.getScriptLock();
+  if(!policy || !lock.tryLock(1500))return false;
+  try {
+    var props=PropertiesService.getScriptProperties(),now=Date.now();
+    var bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(subject||'').trim().toLowerCase());
+    var slot=(bytes[0]+256)%128;
+    var keys=['auth_rate_'+kind+'_global','auth_rate_'+kind+'_'+slot];
+    var limits=[policy[2],policy[0]],values={};
+    for(var i=0;i<keys.length;i++){
+      var raw=props.getProperty(keys[i]),state=raw?JSON.parse(raw):null;
+      if(!state || now-state.start>=policy[1]*1000 || now<state.start)state={start:now,count:0};
+      if(state.count>=limits[i])return false;
+      state.count++;values[keys[i]]=JSON.stringify(state);
+    }
+    props.setProperties(values);return true;
+  } catch(e) {return false;} finally {lock.releaseLock();}
+}
+function recordFailedLogin_(docId) {
+  for(var attempt=0;attempt<4;attempt++){
+    var user=readAuthUser_(docId);
+    if(user.Status!=='Active')return {ok:false};
+    if(new Date(user.Locked_Until).getTime()>Date.now())return {ok:true,locked:true};
+    var count=Number(user.Failed_Attempts)||0,locked=count+1>=AUTH_MAX_ATTEMPTS;
+    var fields={Failed_Attempts:locked?0:count+1};
+    if(locked)fields.Locked_Until=new Date(Date.now()+AUTH_LOCK_MINUTES*60000).toISOString();
+    if(updateUserFields_(docId,fields,user.updateTime))return {ok:true,locked:locked};
+  }
+  return {ok:false};
+}
+function storePasswordResetToken_(user) {
+  var token=Utilities.getUuid()+'-'+Utilities.getUuid();
+  CacheService.getScriptCache().put('pwreset_'+token,JSON.stringify({username:user.Username,docId:user.docId,
+    sessionVersion:String(user.Session_Version||''),passwordHash:user.Password_Hash,expiresAt:Date.now()+RESET_TOKEN_MINUTES*60000}),RESET_TOKEN_MINUTES*60);
+  return token;
+}
+function resetTokenUser_(data) {
+  if(!data.docId || !data.passwordHash || !data.expiresAt || Date.now()>=data.expiresAt)throw new Error('ลิงก์หมดอายุ กรุณาขอลิงก์ใหม่');
+  var user=readAuthUser_(data.docId);
+  if(user.Status!=='Active' || user.Username!==data.username || user.Password_Hash!==data.passwordHash ||
+    String(user.Session_Version||'')!==String(data.sessionVersion||''))throw new Error('ลิงก์ถูกใช้หรือบัญชีเปลี่ยนแปลงแล้ว กรุณาขอลิงก์ใหม่');
+  return user;
+}
+
+
+
+function collectionGeneration_(name) {return PropertiesService.getScriptProperties().getProperty('cache_gen_'+name)||'0';}
+function normalizedDuplicateKey_(value) {return String(value==null?'':value).normalize('NFKC').trim().replace(/\s+/g,' ').toLowerCase();}
+function hasNormalizedDuplicate_(collection,field,value,docId) {
+  var key=normalizedDuplicateKey_(value);if(!key)return false;
+  // Equality query must succeed even when a cache exists. The legacy scan covers case/space variants.
+  if(queryByEqualityField_(collection,field,String(value).trim()).some(function(d){return d.id!==docId;}))return true;
+  return fetchCollectionDocsCached_(collection).some(function(d){return d.id!==docId && normalizedDuplicateKey_(parseFirestoreValue_((d.fields||{})[field]))===key;});
+}
+
+
+
+function businessDate_(instant) {return new Date((instant?new Date(instant):new Date()).getTime()+7*3600000).toISOString().slice(0,10);}
+function addCalendarDays_(value,days) {
+  if(!validDateOnly_(value) || !Number.isInteger(Number(days)))throw new Error('วันที่หรือจำนวนวันไม่ถูกต้อง');
+  var date=new Date(value+'T00:00:00Z');date.setUTCDate(date.getUTCDate()+Number(days));return date.toISOString().slice(0,10);
+}
+function backupScriptProperties_() {
+  var props=PropertiesService.getScriptProperties().getProperties();
+  Object.keys(props).forEach(function(key){if(/^(cache_gen_|auth_rate_)/.test(key))delete props[key];});return props;
+}
+function documentReferenceExists_(collection,field,id) {return queryByEqualityField_(collection,field,id).length>0;}
+function assertDeleteAllowed_(collection,id,document) {
+  var f=document.fields||{},productFields={Master_Brands:'Brand_ID',Master_Categories:'Category_ID',Master_Vendors:'Default_Vendor_ID',Master_Zones:'Zone_ID'};
+  function blocked(){throw new Error('ข้อมูลนี้ถูกอ้างอิงหรือมีประวัติธุรกรรม ไม่สามารถลบได้ กรุณาปิดใช้งานหรือเก็บไว้เป็นประวัติ');}
+  if(productFields[collection] && documentReferenceExists_('Master_Products',productFields[collection],id))blocked();
+  if(collection==='Master_Vendors' && documentReferenceExists_('Purchase_Orders','Vendor_ID',id))blocked();
+  if(collection==='Master_Customers' && documentReferenceExists_(QUOTATION_COLLECTION,'Customer_ID',id))blocked();
+  if(collection==='Master_Cars'){
+    var products=fetchAllPagesRaw_('Master_Products');if(!products.ok)throw new Error('ตรวจสอบข้อมูลอ้างอิงไม่สำเร็จ');
+    if(products.docs.some(function(d){var pf=d.fields||{},ids=parseFirestoreValue_(pf.Car_IDs)||[];return parseFirestoreValue_(pf.Car_ID)===id || Array.isArray(ids)&&ids.indexOf(id)>=0;}))blocked();
+  }
+  if(collection==='Master_Products'){
+    var stock=parseFirestoreValue_(f.Current_Stock);
+    if(stock!=='' && (!isFinite(Number(stock)) || Number(stock)!==0))blocked();
+    if(documentReferenceExists_('Stock_Movements','Product_Code',id))blocked();
+    ['Purchase_Orders',QUOTATION_COLLECTION].forEach(function(name){
+      var rows=fetchAllPagesRaw_(name);if(!rows.ok)throw new Error('ตรวจสอบประวัติสินค้าไม่สำเร็จ');
+      if(rows.docs.some(function(d){var items=JSON.parse(parseFirestoreValue_((d.fields||{}).Items_JSON)||'[]');if(!Array.isArray(items))throw new Error('ประวัติไม่สมบูรณ์');return items.some(function(it){return it.productCode===id;});}))blocked();
+    });
+  }
+  if(collection==='Purchase_Orders'){
+    var items=JSON.parse(parseFirestoreValue_(f.Items_JSON)||'[]'),receipts=JSON.parse(parseFirestoreValue_(f.Receipts_JSON)||'[]');
+    if(!Array.isArray(items)||!Array.isArray(receipts))throw new Error('ประวัติใบสั่งซื้อไม่สมบูรณ์');
+    if(['PartiallyReceived','Received'].indexOf(parseFirestoreValue_(f.Status))>=0 || receipts.length || items.some(function(it){return Number(it.receivedQty||0)!==0;}))blocked();
+    if(documentReferenceExists_('Stock_Movements','Ref_No',id))blocked();
+  }
+}
+
+
+
+var referenceMutationLocked_=false;
+function withReferenceMutationLock_(worker) {
+  if(referenceMutationLocked_)return worker();
+  var lock=LockService.getScriptLock();if(!lock.tryLock(5000))return {success:false,message:'มีรายการอื่นกำลังบันทึก กรุณาลองใหม่'};
+  referenceMutationLocked_=true;
+  try{return worker();}finally{referenceMutationLocked_=false;lock.releaseLock();}
+}
+
+
+
+function authUserFromDoc_(doc) {
+  var fields=doc.fields||{},user={docId:doc.id||doc.name.split('/').pop(),updateTime:doc.updateTime};
+  Object.keys(fields).forEach(function(key){user[key]=parseFirestoreValue_(fields[key]);});
+  user.Totp_Enabled=String(user.Totp_Enabled)==='true';user.Must_Change_Password=String(user.Must_Change_Password)==='true';user.Session_Version=String(user.Session_Version||'');return user;
+}
+function findAuthUser_(field,value) {
+  var original=String(value||'').trim(),normalized=original.toLowerCase();if(!normalized || normalized.length>256)return null;
+  var cache=CacheService.getScriptCache(),key='auth_lookup_'+PROJECT_ID+'_'+field+'_'+Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,normalized));
+  var cached=cache.get(key);
+  if(cached){
+    try{var user=readAuthUser_(cached);if(String(user[field]||'').trim().toLowerCase()===normalized)return user;}catch(e){if(!/ไม่พบ/.test(e.message))throw e;}
+    cache.remove(key);
+  }
+  var docs=queryByEqualityField_(AUTH_USERS_COLLECTION,field,normalized);
+  if(!docs.length && original!==normalized)docs=queryByEqualityField_(AUTH_USERS_COLLECTION,field,original);
+  var match=docs.find(function(doc){return String(parseFirestoreValue_((doc.fields||{})[field])||'').trim().toLowerCase()===normalized;});
+  if(match){cache.put(key,match.id,21600);return authUserFromDoc_(match);}
+  // Only legacy mixed-case identities need a scan. Cache an ID-only index independent of security counters.
+  var indexKey='auth_legacy_index_'+PROJECT_ID,raw=cache.get(indexKey),index;
+  if(raw)index=JSON.parse(raw);
+  else {
+    var fetched=fetchAllPagesRaw_(AUTH_USERS_COLLECTION);if(!fetched.ok)throw new Error('ค้นหาบัญชีไม่สำเร็จ');
+    index=fetched.docs.map(function(doc){return {id:doc.id,Username:String(parseFirestoreValue_((doc.fields||{}).Username)||'').trim().toLowerCase(),Email:String(parseFirestoreValue_((doc.fields||{}).Email)||'').trim().toLowerCase()};});
+    var serialized=JSON.stringify(index);if(Utilities.newBlob(serialized).getBytes().length<80000)cache.put(indexKey,serialized,21600);
+  }
+  var legacy=index.find(function(item){return item[field]===normalized;});if(!legacy)return null;
+  var fresh=readAuthUser_(legacy.id);if(String(fresh[field]||'').trim().toLowerCase()!==normalized)return null;
+  cache.put(key,legacy.id,21600);return fresh;
+}
+function purchaseOrderDto_(document,vendorMap) {
+  var f=document.fields||{},vendorId=parseFirestoreValue_(f.Vendor_ID)||'',v=vendorMap&&vendorMap[vendorId]||{};
+  return {poId:document.id||document.name.split('/').pop(),vendorId:vendorId,vendorName:v.name||v.Vendor_name||vendorId,
+    vendorEmail:v.email||v.Email||'',vendorPhone:v.phone||v.Phone||'',vendorContact:v.contact||v.Contact_name||'',vendorAddress:v.address||v.Address||'',vendorTaxId:v.taxId||v.Tax_ID||'',vendorBranch:v.branch||v.Branch||'',
+    orderDate:parseFirestoreValue_(f.Order_Date)||'',status:parseFirestoreValue_(f.Status)||'Pending',note:parseFirestoreValue_(f.Note)||'',
+    items:JSON.parse(parseFirestoreValue_(f.Items_JSON)||'[]'),receipts:JSON.parse(parseFirestoreValue_(f.Receipts_JSON)||'[]'),totalQty:Number(parseFirestoreValue_(f.Total_Qty)||0),totalAmount:Number(parseFirestoreValue_(f.Total_Amount)||0)};
+}
+function getPurchaseOrderById_(id){
+ var doc=readExistingDocument_('Purchase_Orders',id),vendorId=parseFirestoreValue_((doc.fields||{}).Vendor_ID),vendors={};
+ if(vendorId){var list=readProductReferenceDocs_({Master_Vendors:[vendorId]}).Master_Vendors;if(list.length){var vendor={};Object.keys(list[0].fields||{}).forEach(function(key){vendor[key]=parseFirestoreValue_(list[0].fields[key]);});vendors[vendorId]=vendor;}}
+ return purchaseOrderDto_(Object.assign({id:id},doc),vendors);
+}
+
+
+
+// Bounded pages share one Firestore snapshot; a cursor never means a complete total.
+function queryDocumentPage_(collection,dateField,yearFilter,options) {
+  options=options||{};var year=yearFilter==='all'?'all':String(parseInt(yearFilter,10)||Number(businessDate_().slice(0,4))+543);
+  if(year!=='all' && (!/^\d{4}$/.test(year)||Number(year)<2400||Number(year)>3000))throw new Error('ปีไม่ถูกต้อง');
+  var size=Number(options.pageSize||50);if(!Number.isInteger(size)||size<1||size>200)throw new Error('ขนาดหน้าไม่ถูกต้อง');
+  var q={from:[{collectionId:collection}],orderBy:[{field:{fieldPath:dateField},direction:'DESCENDING'},{field:{fieldPath:'__name__'},direction:'DESCENDING'}],limit:size+1},body={structuredQuery:q};
+  if(year!=='all'){var y=Number(year)-543;q.where={compositeFilter:{op:'AND',filters:[{fieldFilter:{field:{fieldPath:dateField},op:'GREATER_THAN_OR_EQUAL',value:{stringValue:y+'-01-01'}}},{fieldFilter:{field:{fieldPath:dateField},op:'LESS_THAN_OR_EQUAL',value:{stringValue:y+'-12-31'}}}]}};}
+  var prefix='projects/'+PROJECT_ID+'/databases/(default)/documents/'+collection+'/';
+  if(options.cursor){try{
+    var cursor=JSON.parse(Utilities.newBlob(Utilities.base64Decode(String(options.cursor))).getDataAsString());
+    if(cursor.collection!==collection||cursor.year!==year||!/^\d{4}-\d{2}-\d{2}$/.test(cursor.date)||typeof cursor.name!=='string'||cursor.name.indexOf(prefix)!==0||cursor.name.slice(prefix.length).indexOf('/')>=0||!cursor.readTime||isNaN(Date.parse(cursor.readTime))||Date.now()-Date.parse(cursor.readTime)>3300000||Date.parse(cursor.readTime)>Date.now()+60000)throw new Error('invalid');
+    body.readTime=cursor.readTime;q.startAt={before:false,values:[{stringValue:cursor.date},{referenceValue:cursor.name}]};
+  }catch(e){throw new Error('หน้าข้อมูลหมดอายุหรือไม่ถูกต้อง กรุณารีเฟรชรายการ');}}
+  var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});
+  if(res.getResponseCode()!==200)throw new Error('โหลดหน้าข้อมูลไม่สำเร็จ กรุณาลองใหม่หรือรีเฟรชรายการ');
+  var rows=JSON.parse(res.getContentText()),docs=[],readTime=body.readTime||'';
+  rows.forEach(function(row){if(row.document)docs.push(row.document);if(!readTime&&row.readTime)readTime=row.readTime;});
+  var more=docs.length>size;docs=docs.slice(0,size);var next='';
+  if(more){if(!readTime)throw new Error('ไม่พบเวลายืนยันหน้าข้อมูล');var last=docs[docs.length-1];next=Utilities.base64Encode(JSON.stringify({collection:collection,year:year,date:parseFirestoreValue_(last.fields[dateField]),name:last.name,readTime:readTime}));}
+  return {docs:docs,pageInfo:{hasMore:more,nextCursor:next,readTime:readTime,year:year,complete:!more}};
+}
+function getPendingPurchaseOrderSummary_(readTime){
+ var codes={},pendingCount=0,orders={},statuses=['Pending','Ordered','PartiallyReceived'];
+ var body={structuredQuery:{from:[{collectionId:'Purchase_Orders'}],where:{fieldFilter:{field:{fieldPath:'Status'},op:'IN',value:{arrayValue:{values:statuses.map(function(s){return {stringValue:s};})}}}},select:{fields:[{fieldPath:'Status'},{fieldPath:'Items_JSON'}]}}};if(readTime)body.readTime=readTime;
+ var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});if(res.getResponseCode()!==200)throw new Error('ตรวจใบสั่งซื้อค้างไม่สำเร็จ');
+ JSON.parse(res.getContentText()).forEach(function(row){if(!row.document)return;var f=row.document.fields||{},status=parseFirestoreValue_(f.Status),id=row.document.name.split('/').pop();if(status==='Pending')pendingCount++;orders[id]={status:status,codes:[]};var items=JSON.parse(parseFirestoreValue_(f.Items_JSON)||'[]');items.forEach(function(it){if(Number(it.qty)-Number(it.receivedQty||0)>0){codes[it.productCode]=true;orders[id].codes.push(it.productCode);}});});
+ return {codes:codes,pendingCount:pendingCount,orders:orders};
+}
+
+// One-time legacy counter seeding must include numbers whose document date was edited.
+function readDocumentNumberSeeds_(collection,numberField){
+ var query={structuredQuery:{from:[{collectionId:collection}],select:{fields:[{fieldPath:numberField}]}}};
+ var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(query),muteHttpExceptions:true});if(res.getResponseCode()!==200)throw new Error('ตรวจเลขเอกสารเดิมไม่สำเร็จ');
+ return JSON.parse(res.getContentText()).filter(function(row){return row.document;}).map(function(row){return {id:row.document.name.split('/').pop(),fields:row.document.fields||{}};});
+}
+
+function readProductReferenceDocs_(references){
+ var result={};Object.keys(references).forEach(function(collection){var ids=references[collection].filter(Boolean),cached=peekCollectionDocsCache_(collection);
+   result[collection]=cached!==null?cached.filter(function(doc){return ids.indexOf(doc.id)>=0;}):ids.map(function(id){return Object.assign({id:id},readExistingDocument_(collection,id));});
+ });return result;
 }

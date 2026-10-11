@@ -186,9 +186,12 @@
   }
 
   function loadTable(){
+    var revision=syyDataRevision();
     document.getElementById('recordCount').innerText='กำลังโหลด';
     document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
+      if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
+      syyDataLoaded();
       // normalize ชื่อ field ให้เหลือชื่อเดียวต่อคอลัมน์ ไม่ว่า backend จะคืนรูปแบบไหน
       cache = (data || []).map(function(item){
         item._code      = item.id || item.carCode || '';
@@ -202,6 +205,7 @@
       });
       renderRows();
     }, function(err){
+      syyDataFailed();
       document.getElementById('tbodyMain').innerHTML = emptyStateHtml(9,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]
@@ -283,7 +287,7 @@
   }
 
   function openAddModal(){
-    editingId=null;
+    editingId=null;masterEditVersion="";
     resetForm();
     document.getElementById('modalTitle').innerText='🚗 เพิ่มข้อมูล'+ENTITY;
     document.getElementById('btnSave').innerHTML='💾 บันทึก';
@@ -294,7 +298,7 @@
   function openEditModal(id){
     var it=cache.find(function(x){return x._code===id;});
     if(!it){ toast('ไม่พบข้อมูล','err'); return; }
-    editingId=id;
+    editingId=id;masterEditVersion=it.updateTime||"";
     resetForm();
     document.getElementById('fDocId').value=it._code;
     document.getElementById('fModelCode').value=it._modelCode;
@@ -329,6 +333,7 @@
 
     var formData = {
       docId    : editingId || null,
+      expectedUpdateTime:masterEditVersion,
       modelCode: inputModelCode,
       brand    : document.getElementById('fBrand').value.trim(),
       model    : document.getElementById('fModel').value.trim(),
@@ -345,7 +350,7 @@
       if(res && res.success){
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+'เรียบร้อย');
-        var raw=res.data||{},item={id:res.id,Brand:raw.Brand||formData.brand||'',Model:raw.Model||formData.model||'',Year:raw.Year||formData.year||'',Type_Car:raw.Type_Car||formData.typeCar||'',Model_Code:raw.Model_Code||'',Note:raw.Note||''};
+        var raw=res.data||{},item={id:res.id,updateTime:res.updateTime||"",Brand:raw.Brand||formData.brand||'',Model:raw.Model||formData.model||'',Year:raw.Year||formData.year||'',Type_Car:raw.Type_Car||formData.typeCar||'',Model_Code:raw.Model_Code||'',Note:raw.Note||''};
         item._code=item.id;item._modelCode=item.Model_Code||'';item._brand=item.Brand||'';item._model=item.Model||'';item._year=item.Year||'';item._type=item.Type_Car||'';item._note=item.Note||'';
         var pos=cache.findIndex(function(x){return x._code===item._code;});if(pos>-1)cache[pos]=item;else cache.push(item);renderRows();notifyParentMasterDelta('cars',item,false);
       } else {
@@ -395,5 +400,6 @@
     });
   }
 </script>
+<script>var masterEditVersion='';syyRegisterFreshness({reload:loadTable});</script>
 </body>
 </html>

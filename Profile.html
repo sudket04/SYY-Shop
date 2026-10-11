@@ -117,7 +117,7 @@
   <div class="tab-panel" id="panelSecurity">
     <div class="card">
       <div class="card-title">ยืนยันตัวตนสองชั้น (2FA)</div>
-      <div class="card-sub">เพิ่มความปลอดภัยด้วยรหัส 6 หลักจากแอป Google Authenticator หรือ Microsoft Authenticator</div>
+      <div class="card-sub">เพิ่มความปลอดภัยด้วยรหัส 6 หลักจากแอป Google Authenticator หรือ Microsoft Authenticator</div><p id="totpPolicy" style="color:#64748b;font-size:13px"></p>
 
       <div class="totp-status" id="totpStatusBox">
         <div><span class="status-dot off" id="totpDot"></span><span id="totpStatusText">กำลังโหลดสถานะ...</span></div>
@@ -340,7 +340,10 @@ function renderTotpStatus(p) {
   var btn = document.getElementById('btnTotpAction');
   var recoveryBox = document.getElementById('recoveryInfoBox');
 
-  btn.style.display = '';
+  btn.style.display = p.role==='admin'?'':'none';
+  btn.disabled=p.role!=='admin';
+  btn.title=p.role==='admin'?'':'การตั้งค่า TOTP อนุญาตเฉพาะผู้ดูแลระบบ';
+  document.getElementById('totpPolicy').textContent=p.role==='admin'?'':'การตั้งค่า 2FA อนุญาตเฉพาะผู้ดูแลระบบ หากต้องการความช่วยเหลือกรุณาติดต่อผู้ดูแลระบบ';
   if (p.totpEnabled) {
     dot.className = 'status-dot on';
     text.innerText = 'เปิดใช้งานอยู่';

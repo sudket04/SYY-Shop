@@ -23,7 +23,7 @@ function syyValidMessageData(d){
   if(d.action==='PRODUCT_DELTA')return d.product && typeof d.product==='object' && typeof (d.product.productCode||d.product.id)==='string';
   if(d.action==='MASTER_DELTA')return ['brands','categories','vendors','zones','cars','customers'].indexOf(d.kind)>=0 && d.item && typeof d.item==='object' && typeof d.item.id==='string';
   if(d.action==='OPEN_PRODUCT_ADD')return typeof d.barcode==='string' && d.barcode.length<=200;
-  return ['REFRESH_DROPDOWNS','REFRESH_PRODUCTS','REFRESH_STOCK_FULL','STOCKISSUE_READY','PRODUCTS_READY','TAXINVOICE_READY'].indexOf(d.action)>=0;
+  return ['REFRESH_DROPDOWNS','REFRESH_PRODUCTS','REFRESH_STOCK_FULL','STOCKISSUE_READY','PRODUCTS_READY','TAXINVOICE_READY','PAGE_ACTIVATED','PAGE_HIDDEN','PAGE_READY'].indexOf(d.action)>=0;
 }
 function syyTrustedParentMessage(e){return syyFrameChannel() && e.data && e.data.channel===syyFrameChannel() && syyMessageOriginAllowed(e.origin) && syyIsAncestor(e.source) && syyValidMessageData(e.data);}
 function syyPostParent(data){
@@ -49,13 +49,52 @@ function syyTrustedChildMessage(e){
   var frames=Array.from(document.querySelectorAll('iframe[data-channel]'));
   var frame=frames.find(function(f){return f.dataset.channel===e.data.channel&&syyFrameOwnsSource(f,e.source);});
   if(!frame)return false;
-  var page=frame.id.replace('iframe-',''),allowed={stockissue:['STOCKISSUE_READY','OPEN_PRODUCT_ADD','OPEN_TAX_INVOICE','STOCK_DELTA','REFRESH_STOCK_FULL'],products:['PRODUCTS_READY','PRODUCT_DELTA','REFRESH_PRODUCTS'],orders:['STOCK_DELTA','REFRESH_STOCK_FULL'],quotation:['OPEN_STOCK_ISSUE'],taxinvoice:['TAXINVOICE_READY']};
+  var page=frame.id.replace('iframe-',''),allowed={stockissue:['STOCKISSUE_READY','OPEN_PRODUCT_ADD','OPEN_TAX_INVOICE','STOCK_DELTA','REFRESH_STOCK_FULL'],products:['PRODUCTS_READY','PRODUCT_DELTA','REFRESH_PRODUCTS'],orders:['STOCK_DELTA','REFRESH_STOCK_FULL'],quotation:['OPEN_STOCK_ISSUE','MASTER_DELTA'],taxinvoice:['TAXINVOICE_READY','MASTER_DELTA']};
   var actions=allowed[page]||['MASTER_DELTA','REFRESH_DROPDOWNS'];
-  if(actions.indexOf(e.data.action)<0)return false;
-  if(e.data.action==='MASTER_DELTA' && e.data.kind!==page)return false;
+  if(e.data.action!=='PAGE_READY'&&actions.indexOf(e.data.action)<0)return false;
+  if(e.data.action==='MASTER_DELTA' && e.data.kind!==page && !(['quotation','taxinvoice'].indexOf(page)>=0 && e.data.kind==='customers'))return false;
   frame.syyReceiver=e.source;frame.syyOrigin=e.origin;
   return true;
 }
+/* Calendar dates use Thailand's business timezone regardless of browser locale. */
+function businessDate(instant){return new Date((instant?new Date(instant):new Date()).getTime()+7*3600000).toISOString().slice(0,10);}
+function addCalendarDays(value,days){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||!Number.isInteger(Number(days)))return '';
+  var date=new Date(value+'T00:00:00Z');if(isNaN(date.getTime())||date.toISOString().slice(0,10)!==value)return '';
+  date.setUTCDate(date.getUTCDate()+Number(days));return date.toISOString().slice(0,10);
+}
+var syyFreshState=null;
+function syyDataRevision(){return syyFreshState?syyFreshState.revision:0;}
+function syyDataLoaded(){if(syyFreshState){syyFreshState.busy=false;syyFreshState.lastLoaded=Date.now();syyFreshState.dirty=syyFreshState.startRevision!==syyFreshState.revision;}}
+function syyDataFailed(){if(syyFreshState)syyFreshState.busy=false;}
+function syyRegisterFreshness(options){
+  var state=syyFreshState={revision:0,startRevision:0,lastLoaded:Date.now(),lastAttempt:0,busy:false,dirty:false,active:window.parent===window};
+  function refresh(){
+    if(!state.active||document.hidden||state.busy||Date.now()-state.lastAttempt<10000||options.canRefresh&& !options.canRefresh())return;
+    if(!state.dirty&&Date.now()-state.lastLoaded<120000)return;
+    state.busy=true;state.startRevision=state.revision;state.lastAttempt=Date.now();options.reload();
+  }
+  window.addEventListener('message',function(event){
+    if(!syyTrustedParentMessage(event))return;var data=event.data;
+    if(data.action==='PAGE_HIDDEN'){state.active=false;return;}
+    if(data.action==='PAGE_ACTIVATED'){state.active=true;refresh();return;}
+    if(['STOCK_DELTA','PRODUCT_DELTA','MASTER_DELTA'].indexOf(data.action)<0)return;
+    state.revision++;state.dirty=true;
+    if(data.action==='STOCK_DELTA'&&options.stock)options.stock(data.productStocks);
+    if(data.action==='PRODUCT_DELTA'&&options.product)options.product(data.product,!!data.deleted);
+    if(data.action==='MASTER_DELTA'&&options.master)options.master(data);
+    if(data.action==='MASTER_DELTA' && state.active)setTimeout(refresh,500);
+  });
+  window.addEventListener('load',function(){syyPostParent({action:'PAGE_READY'});});
+  window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',refresh);
+  setInterval(refresh,60000);
+  return {refresh:refresh};
+}
+function syyApplyProductRows(rows,product,deleted){
+  var code=product.productCode||product.id,index=rows.findIndex(function(p){return (p.productCode||p.id)===code;});
+  if(deleted){if(index>=0)rows.splice(index,1);}else if(index>=0)rows[index]=Object.assign({},rows[index],product);else rows.push(Object.assign({},product));
+}
+function syyApplyStockRows(rows,stocks){(stocks||[]).forEach(function(stock){var row=rows.find(function(p){return (p.productCode||p.id)===stock.productCode;});if(row)row.currentStock=Number(stock.currentStock);});}
 /* ── escape / format ── */
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 // ★ ใช้แทน esc() เฉพาะตอนฝังค่าไว้ในสตริง JS ที่ครอบด้วย ' อยู่แล้ว (เช่น onclick="fn('...')")
@@ -91,21 +130,36 @@ function toast(msg,type,ms){
    ★ Static/Persistent Modal — ปิดได้เฉพาะกดปุ่มในตัว Modal เอง (× / ยกเลิก / บันทึก / ปิด ฯลฯ
    ซึ่งเรียก closeModal() ตรงๆ อยู่แล้วทุกจุด) ไม่มีทางปิดโดยไม่ตั้งใจจากคลิกฉากหลังหรือกด Esc
    เพื่อกันข้อมูลที่กรอกในฟอร์มหายจากการคลิกพลาด — ใช้จุดเดียวนี้จุดเดียวทั้งโปรเจกต์ ไม่ต้องแก้ทีละหน้า */
-function openModal(id){
-  var el=document.getElementById(id);
-  if(!el) return;
-  el.classList.add('active');
-  if(window.SYYSelect) SYYSelect.refresh(el);
-  var first=el.querySelector('input:not([type="hidden"]):not([disabled]),textarea:not([disabled]),.syy-select-control:not([disabled])');
-  if(first) setTimeout(function(){first.focus();},60);
+var syyModalStack=[],syyModalInert=new Map(),syyModalBodyOverflow='';
+function syyModalFocusables(modal){return Array.from(modal.querySelectorAll('button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])')).filter(function(element){return !element.closest('[inert]')&&element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden'&& !element.classList.contains('syy-select-native');});}
+function syySyncModals(){
+  var active=Array.from(document.querySelectorAll('.modal-overlay.active')),closed=syyModalStack.filter(function(item){return active.indexOf(item.element)<0;});
+  syyModalStack=syyModalStack.filter(function(item){return active.indexOf(item.element)>=0;});
+  active.forEach(function(element){if(syyModalStack.some(function(item){return item.element===element;}))return;
+    if(!syyModalStack.length)syyModalBodyOverflow=document.body.style.overflow;
+    var dialog=element.querySelector('.modal-box,.modal')||element;dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.tabIndex=-1;
+    var title=dialog.querySelector('.modal-title,h2,h3');if(title){if(!title.id)title.id='dialog-title-'+element.id;dialog.setAttribute('aria-labelledby',title.id);}else dialog.setAttribute('aria-label','หน้าต่างข้อมูล');
+    syyModalStack.push({element:element,dialog:dialog,returnFocus:document.activeElement});
+    setTimeout(function(){if(syyModalStack.at(-1)?.element===element)(syyModalFocusables(element)[0]||dialog).focus();},0);
+  });
+  syyModalInert.forEach(function(value,element){element.inert=value;});syyModalInert.clear();
+  var top=syyModalStack.at(-1);
+  if(top){document.body.style.overflow='hidden';var branch=top.element;
+    while(branch&&branch!==document.body){var parent=branch.parentElement;if(!parent)break;Array.from(parent.children).forEach(function(element){if(element!==branch&&!element.classList.contains('swal2-container')){syyModalInert.set(element,element.inert);element.inert=true;}});branch=parent;}
+  }
+  else document.body.style.overflow=syyModalBodyOverflow;
+  if(closed.length){var target=closed.at(-1).returnFocus;if(target&&target.isConnected&&!target.closest('[inert]'))target.focus();else if(top)(syyModalFocusables(top.element)[0]||top.dialog).focus();}
 }
-function closeModal(id){
-  var el=document.getElementById(id);
-  if(el&&window.SYYPassword)SYYPassword.hide(el);
-  if(window.SYYSelect) SYYSelect.closeActive();
-  if(el) el.classList.remove('active');
-}
-
+function openModal(id){var element=document.getElementById(id);if(!element)return;element.classList.add('active');if(window.SYYSelect)SYYSelect.refresh(element);syySyncModals();}
+function closeModal(id){var element=document.getElementById(id);if(element&&window.SYYPassword)SYYPassword.hide(element);if(window.SYYSelect)SYYSelect.closeActive();if(element)element.classList.remove('active');syySyncModals();}
+document.addEventListener('keydown',function(event){
+  var top=syyModalStack.at(-1);if(!top||event.key!=='Tab'||document.querySelector('.swal2-container'))return;var targets=syyModalFocusables(top.element);
+  if(!targets.length){event.preventDefault();top.dialog.focus();return;}
+  var first=targets[0],last=targets.at(-1);if(event.shiftKey&&(document.activeElement===first||!top.element.contains(document.activeElement))){event.preventDefault();last.focus();}
+  else if(!event.shiftKey&&(document.activeElement===last||!top.element.contains(document.activeElement))){event.preventDefault();first.focus();}
+});
+document.addEventListener('focusin',function(event){var top=syyModalStack.at(-1);if(top&&!document.querySelector('.swal2-container')&&!top.element.contains(event.target))(syyModalFocusables(top.element)[0]||top.dialog).focus();});
+document.addEventListener('DOMContentLoaded',function(){new MutationObserver(function(records){if(records.some(function(record){return record.target.classList?.contains('modal-overlay');}))syySyncModals();}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class']});});
 
 /* ── SYY Searchable Select ────────────────────────────────────────────────
    Progressive enhancement for native <select>. Search is 100% client-side. */
@@ -161,7 +215,7 @@ var SYYSelect=(function(){
     var search=document.createElement('input');search.type='search';search.className='syy-select-search';search.placeholder='ค้นหา...';search.autocomplete='off';
     var list=document.createElement('div');list.className='syy-select-list';list.setAttribute('role','listbox');
     var meta=document.createElement('div');meta.className='syy-select-meta';panel.appendChild(search);panel.appendChild(list);panel.appendChild(meta);
-    sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);document.body.appendChild(panel);sel.classList.add('syy-select-native');sel.style.position='absolute';sel.style.opacity='0';sel.style.pointerEvents='none';sel.style.width='1px';sel.style.height='1px';sel.style.margin='0';sel.style.padding='0';sel.setAttribute('aria-hidden','true');sel.tabIndex=-1;
+    sel.parentNode.insertBefore(wrap,sel);wrap.appendChild(sel);wrap.appendChild(control);(sel.closest('.modal-overlay')||document.body).appendChild(panel);sel.classList.add('syy-select-native');sel.style.position='absolute';sel.style.opacity='0';sel.style.pointerEvents='none';sel.style.width='1px';sel.style.height='1px';sel.style.margin='0';sel.style.padding='0';sel.setAttribute('aria-hidden','true');sel.tabIndex=-1;
     var inst={sel:sel,wrap:wrap,control:control,label:label,panel:panel,search:search,list:list,meta:meta};
     function sync(){var o=sel.options[sel.selectedIndex];label.textContent=o?o.text:'เลือก...';control.disabled=sel.disabled;}
     function render(q){
@@ -308,7 +362,7 @@ function swyConfirm(o){
    หน้า login ไม่ได้เรียกผ่าน callApi() นี้เลย (เรียก google.script.run ตรงๆ เฉพาะฟังก์ชัน auth ที่
    ตั้งใจเปิดให้ก่อน login อยู่แล้ว — authLogin/authForgotPassword/authResetPassword/ฯลฯ) จึงตัด
    ทางลัดนี้ออกได้โดยไม่กระทบการ login */
-function callApi(fnName,args,onSuccess,onFailure){
+function syyCallApiRaw(fnName,args,onSuccess,onFailure){
   var token=(typeof AUTH_TOKEN!=='undefined')?AUTH_TOKEN:'';
   if(!token){
     if(typeof WEB_APP_URL!=='undefined') window.top.location.href=WEB_APP_URL+'?page=login';
@@ -331,5 +385,28 @@ function callApi(fnName,args,onSuccess,onFailure){
     })
     .withFailureHandler(onFailure||function(err){ swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err))); })
     .apiGateway(token,fnName,args||[],navigator.userAgent);
+}
+
+// Fetch only requested pages; incomplete lists are visibly marked and cannot claim full totals.
+function syyDocumentPager(options){
+ var info={hasMore:false,nextCursor:''},generation=0,busy=false;
+ var host=document.createElement('div');host.className='pagination-bar';host.style.cssText='padding:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';host.setAttribute('aria-live','polite');
+ host.innerHTML='<span></span><button type="button" class="btn btn-ghost">โหลดเพิ่ม</button><button type="button" class="btn btn-ghost">โหลดทั้งหมดเพื่อสรุป</button>';
+ document.querySelector(options.container).appendChild(host);var label=host.querySelector('span'),buttons=host.querySelectorAll('button');
+ function render(){label.textContent='โหลดแล้ว '+options.rows().length+' รายการ'+(info.hasMore?' · ยังไม่ครบ · ตัวกรอง/ผลรวมใช้เฉพาะรายการที่โหลด':' · ครบช่วงที่เลือก');buttons.forEach(function(b){b.hidden=!info.hasMore;b.style.display=info.hasMore?'':'none';b.disabled=busy;});}
+ function next(all){if(busy||!info.hasMore)return;busy=true;render();var request=generation,year=options.year?options.year():null,params={cursor:info.nextCursor,pageSize:200};
+ callApi(options.api,options.year?[year,params]:[params],function(data){if(request!==generation)return;busy=false;var rows=data&&data[options.key];if(!Array.isArray(rows)||!data.pageInfo){toast('หน้าข้อมูลไม่ถูกต้อง กรุณารีเฟรช','err');render();return;}
+ var existing=options.rows(),seen={};existing.forEach(function(x){seen[x[options.id||'id']]=true;});rows.forEach(function(x){if(!seen[x[options.id||'id']])existing.push(x);});info=data.pageInfo;options.render();render();if(all&&info.hasMore)setTimeout(function(){if(request===generation)next(true);},0);
+ },function(){if(request!==generation)return;busy=false;render();toast('โหลดเพิ่มไม่สำเร็จ ข้อมูลเดิมยังอยู่ กรุณาลองใหม่หรือรีเฟรช','err');});}
+ buttons[0].onclick=function(){next(false);};buttons[1].onclick=function(){next(true);};
+ return {reset:function(value){generation++;busy=false;info=value||{hasMore:false,nextCursor:''};render();},render:render,hasMore:function(){return !!info.hasMore;},busy:function(){return busy;},cancel:function(){generation++;busy=false;render();},next:next};
+}
+
+var syyPendingReads=new Map();
+function callApi(fnName,args,onSuccess,onFailure){
+ if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,onSuccess,onFailure);
+ var key=fnName+JSON.stringify(args||[]),listeners=syyPendingReads.get(key);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
+ listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(key,listeners);
+ syyCallApiRaw(fnName,args,function(data){syyPendingReads.delete(key);listeners.forEach(function(x){try{if(x.ok)x.ok(data);}catch(e){setTimeout(function(){throw e;},0);}});},function(error){syyPendingReads.delete(key);listeners.forEach(function(x){if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));});});
 }
 </script>

@@ -364,7 +364,7 @@ var STATUS_CLASS = {
 };
 
 window.addEventListener('load', function () {
-  document.getElementById('inpQuoteDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('inpQuoteDate').value = businessDate();
   loadPageData();
 });
 
@@ -376,13 +376,21 @@ document.addEventListener('keydown', function (e) {
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
 //   (เดิมดึงใบเสนอราคา "ทุกใบทุกปี" ทุกครั้งที่เปิดหน้า — ปรับให้กรองตามปีฝั่ง server แทน
 //   ลดการอ่าน Firestore ลงมาก โดยเฉพาะร้านที่เปิดมานานสะสมใบเสนอราคาไว้เยอะ)
-function loadPageData(yearParam, afterLoad, onError) {
+var documentPager;
+window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getQuotationListData',key:'quotations',year:function(){return currentPageYear;},rows:function(){return quotations;},render:function(){renderList();}});});
+var quotationLoadGeneration=0;
+function loadPageData(yearParam, afterLoad, onError, forceFull) {
+  var requestGeneration=++quotationLoadGeneration,revision=syyDataRevision();
+  if(quotationBootstrapped && yearParam==null){yearParam=currentPageYear;forceFull=true;}
+  if(documentPager)documentPager.cancel();
   var btn = document.querySelector('.page-head .btn-ghost');
   if (btn) btnBusy(btn, 'กำลังโหลด...');
   var badge = document.getElementById('listYearLoadingBadge');
   if (badge) badge.style.display = 'inline';
-  var apiName = quotationBootstrapped ? 'getQuotationListData' : 'getQuotationPageData';
+  var apiName = quotationBootstrapped && !forceFull ? 'getQuotationListData' : 'getQuotationPageData';
   callApi(apiName, [yearParam || ''], function (data) {
+    if(requestGeneration!==quotationLoadGeneration)return;
+    if(revision!==syyDataRevision()){syyDataFailed();if(btn)btnDone(btn);if(badge)badge.style.display='none';return;}
     if (!data || data.success === false || !Array.isArray(data.quotations)) {
       failedLoad({message:data && data.message || 'ข้อมูลใบเสนอราคาไม่ถูกต้อง'}); return;
     }
@@ -390,13 +398,15 @@ function loadPageData(yearParam, afterLoad, onError) {
     data = data || {};
     if (data.customers) customers = data.customers;
     if (data.products) products = data.products;
+    basket.forEach(function(item){var fresh=products.find(function(p){return p.productCode===item.productCode;});item.stock=fresh?num(fresh.currentStock):0;});updateBasketSummary();
     quotations = data.quotations || [];
+    if(documentPager)documentPager.reset(data.pageInfo);
     if (data.seller) sellerInfo = data.seller;
     if (data.marginMin != null) marginMin = data.marginMin;
     if (data.statuses) statuses = data.statuses;
     availableYearsCache = data.availableYears || [new Date().getFullYear() + 543];
     quotationBootstrapped = true;
-    currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || availableYearsCache[0]);
+    currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || Number(data.pageInfo&&data.pageInfo.year) || availableYearsCache[0]);
     if (currentPageYear !== 'all' && availableYearsCache.indexOf(Number(currentPageYear)) < 0) {
       availableYearsCache.push(Number(currentPageYear)); availableYearsCache.sort(function(a,b){return b-a;});
     }
@@ -407,11 +417,15 @@ function loadPageData(yearParam, afterLoad, onError) {
     renderList();
     renderResults();
     if (badge) badge.style.display = 'none';
+    syyDataLoaded();
     if (typeof afterLoad === 'function') afterLoad();
   }, failedLoad);
   function failedLoad(err) {
+    if(requestGeneration!==quotationLoadGeneration)return;
+    syyDataFailed();
     if (btn) btnDone(btn);
     if (badge) badge.style.display = 'none';
+    populateListYearDropdown();
     toast('โหลดข้อมูลไม่สำเร็จ: ' + esc(JSON.stringify(err)), 'err');
     if (typeof onError === 'function') onError(err);
   }
@@ -474,6 +488,7 @@ function submitQuickAddCustomer(e) {
       if (pos >= 0) customers[pos] = customer; else customers.push(customer);
       renderCustomerOptions();
       document.getElementById('selCustomer').value = res.id;
+      notifyParentMasterDelta('customers',customer,false);
       if (window.SYYSelect) SYYSelect.refresh(document.getElementById('selCustomer'));
       closeQuickAddCustomer(); toast('เพิ่มและเลือกลูกค้าเรียบร้อย');
     } else { alertEl.className = 'modal-alert error'; alertEl.innerText = res && res.message || 'บันทึกไม่สำเร็จ'; }
@@ -758,7 +773,7 @@ function newQuotation() {
   editingDocId = null;
   basket = [];
   document.getElementById('selCustomer').value = '';
-  document.getElementById('inpQuoteDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('inpQuoteDate').value = businessDate();
   document.getElementById('selValidDays').value = '15';
   document.getElementById('inpCustomerPo').value = '';
   document.getElementById('inpVehicleNote').value = '';
@@ -786,7 +801,7 @@ function loadQuotationIntoBuild(docId) {
   }
   sel.value = q.customerId;
   if (window.SYYSelect) SYYSelect.refresh(sel);
-  document.getElementById('inpQuoteDate').value = q.quoteDate || new Date().toISOString().slice(0, 10);
+  document.getElementById('inpQuoteDate').value = q.quoteDate || businessDate();
   document.getElementById('selValidDays').value = String(q.validDays || 15);
   document.getElementById('inpCustomerPo').value = q.customerPo || '';
   document.getElementById('inpVehicleNote').value = q.vehicleNote || '';
@@ -836,19 +851,16 @@ function saveQuotationNow() {
         var pos = quotations.findIndex(function(q) { return q.id === res.id; });
         if (pos >= 0) quotations[pos] = res.quotation; else quotations.push(res.quotation);
       }
-      loadPageData(currentPageYear === 'all' ? 'all' : savedYear, function () {
-        quotationSaving = false;
-        btnDone(btn);
-        if (res.quotation && !quotations.some(function(q) { return q.id === res.id; })) quotations.push(res.quotation);
-        var q = quotations.find(function (x) { return x.id === res.id; });
-        if (q) loadQuotationIntoBuild(q.id);
-        switchTab('doc');
-      }, function () {
-        quotationSaving = false;
-        btnDone(btn);
-        if (res.quotation) { loadQuotationIntoBuild(res.id); switchTab('doc'); }
-        toast('บันทึกสำเร็จแล้ว แต่รีเฟรชทะเบียนไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ', 'warn');
-      });
+      function finishSavedQuote(){
+        quotationSaving=false;btnDone(btn);
+        if(availableYearsCache.indexOf(savedYear)<0)availableYearsCache.push(savedYear);
+        availableYearsCache.sort(function(a,b){return b-a;});populateListYearDropdown();renderList();
+        if(res.quotation){loadQuotationIntoBuild(res.id);switchTab('doc');}
+      }
+      if(currentPageYear!=='all' && Number(currentPageYear)!==savedYear)loadPageData(savedYear,finishSavedQuote,function(){finishSavedQuote();toast('บันทึกแล้ว แต่โหลดปีใหม่ไม่สำเร็จ','warn');});
+      else finishSavedQuote();
+      if(res.refreshWarning)toast(res.refreshWarning,'warn');
+
     } else {
       quotationSaving = false;
       btnDone(btn);
@@ -1006,8 +1018,7 @@ function renderDoc() {
   var t = currentTotals();
   var quoteDate = document.getElementById('inpQuoteDate').value;
   var validDays = parseInt(document.getElementById('selValidDays').value, 10) || 15;
-  var validUntil = new Date(quoteDate + 'T00:00:00');
-  if (!isNaN(validUntil.getTime())) validUntil.setDate(validUntil.getDate() + validDays);
+  var validUntil = addCalendarDays(quoteDate,validDays);
 
   var quoteNo = 'ฉบับร่าง (ยังไม่บันทึก)';
   var docQ = null;
@@ -1031,7 +1042,7 @@ function renderDoc() {
   var ctx = {
     cust: cust, t: t, quoteNo: quoteNo,
     quoteDateTxt: thaiDateLong(quoteDate),
-    validUntilTxt: isNaN(validUntil.getTime()) ? '-' : thaiDateLong(validUntil.toISOString().slice(0, 10)),
+    validUntilTxt: validUntil ? thaiDateLong(validUntil) : '-',
     vehicleNote: document.getElementById('inpVehicleNote').value,
     customerPo: document.getElementById('inpCustomerPo').value,
     note: document.getElementById('inpNote').value,
@@ -1061,6 +1072,8 @@ function renderStatusFilterBar() {
 function setListFilter(s) { listStatusFilter = s; renderStatusFilterBar(); renderList(); }
 
 function renderList() {
+  if(documentPager)documentPager.render();
+  document.querySelectorAll('#panelList .stat-mini .lb').forEach(function(el){if(!el.dataset.original)el.dataset.original=el.textContent;el.textContent=el.dataset.original+(documentPager&&documentPager.hasMore()?' (เฉพาะที่โหลด)':'');});
   var open = quotations.filter(function (q) { return q.status === 'ร่าง' || q.status === 'ส่งลูกค้าแล้ว'; });
   var openValue = open.reduce(function (s, q) { return s + q.grandTotal; }, 0);
   document.getElementById('statOpenCount').innerText = open.length;
@@ -1175,6 +1188,11 @@ function confirmDeleteQuotation(docId) {
     }, function (err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
   });
 }
+</script>
+<script>
+syyRegisterFreshness({reload:function(){loadPageData(currentPageYear,null,null,true);},canRefresh:function(){return !quickCustomerSaving && !quotationSaving && !(documentPager&&documentPager.busy());},
+  stock:function(stocks){syyApplyStockRows(products,stocks);basket.forEach(function(line){var p=products.find(function(x){return x.productCode===line.productCode;});if(p)line.stock=num(p.currentStock);});renderResults();updateBasketSummary();},
+  product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();renderResults();}});
 </script>
 </body>
 </html>

@@ -132,12 +132,16 @@
   }
 
   function loadTable(){
+    var revision=syyDataRevision();
     document.getElementById('recordCount').innerText='กำลังโหลด';
     document.getElementById('tbodyMain').innerHTML = skeletonRows(4,5);
     callApi(API.list, [], function(data){
+      if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
+      syyDataLoaded();
       cache = data || [];
       renderRows();
     }, function(err){
+      syyDataFailed();
       document.getElementById('tbodyMain').innerHTML = emptyStateHtml(4,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]
@@ -206,7 +210,7 @@
   }
 
   function openAddModal(){
-    editingId=null;
+    editingId=null;masterEditVersion="";
     document.getElementById('mainForm').reset();
     document.getElementById('fDocId').value='';
     document.getElementById('fName').value='';
@@ -220,7 +224,7 @@
   function openEditModal(id){
     var it=cache.find(function(x){return x.id===id;});
     if(!it){ toast('ไม่พบข้อมูล','err'); return; }
-    editingId=id;
+    editingId=id;masterEditVersion=it.updateTime||"";
     document.getElementById('fDocId').value=it.id;
     document.getElementById('fName').value=it.Name||'';
     clearErr('fName');
@@ -245,12 +249,12 @@
     var btn=document.getElementById('btnSave');
     btnBusy(btn);
 
-    callApi('saveMasterData', ['Master_Categories','C', editingId||'', { Category_Name:name }, name], function(res){
+    callApi('saveMasterData', ['Master_Categories','C', editingId||'', { Category_Name:name,_expectedUpdateTime:masterEditVersion }, name], function(res){
       btnDone(btn);
       if(res && res.success){
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+' “'+name+'” เรียบร้อย');
-        var raw=res.data||{},item={id:res.id,Name:raw.Category_Name||name,Category_Name:raw.Category_Name||name};
+        var raw=res.data||{},item={id:res.id,updateTime:res.updateTime||"",Name:raw.Category_Name||name,Category_Name:raw.Category_Name||name};
         var pos=cache.findIndex(function(x){return x.id===item.id;});if(pos>-1)cache[pos]=item;else cache.push(item);
         renderRows();
         notifyParentMasterDelta('categories',item,false);
@@ -299,5 +303,6 @@
     });
   }
 </script>
+<script>var masterEditVersion='';syyRegisterFreshness({reload:loadTable});</script>
 </body>
 </html>

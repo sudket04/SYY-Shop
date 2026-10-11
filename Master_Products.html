@@ -142,7 +142,7 @@
   <div class="crumb">
     <span>คลังสินค้า</span><span class="sep">›</span>
     <b>จัดการสินค้า</b>
-    <span class="badge badge-mute" id="recordCount">—</span>
+    <span class="badge badge-mute" id="recordCountToolbar">—</span>
   </div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
@@ -611,11 +611,7 @@
     //   ทำให้ยิง Firestore ซ้ำเป็น 10 reads แทนที่จะเป็น 5 ทุกครั้งที่เปิดหน้า
     //   เรียงลำดับแทน: คำขอแรกเขียน cache เสร็จก่อน คำขอที่สองจึงอ่าน cache เจอแน่นอน
     //   (ไม่รวมเป็น endpoint เดียว เพราะเคยลองแล้วชนข้อจำกัดขนาด response ทำให้หน้าค้าง — ดูหมายเหตุด้านล่าง)
-    loadDropdowns(function() {
-      loadTable();
-      // ★ แจ้งเชลล์ (index.html) ว่า dropdown พร้อมแล้ว รับคำขอเปิดฟอร์มเพิ่มสินค้าจากหน้าอื่นได้
-      try { syyPostParent({ action: 'PRODUCTS_READY' }); } catch (e) {}
-    });
+    loadTable(true);
     document.addEventListener('click',function(e){if(!e.target.closest('.column-picker'))closeColumnPicker();});
     document.addEventListener('keydown',function(e){if(e.key==='Escape')closeColumnPicker();});
   };
@@ -712,20 +708,6 @@
     masterData      = data;
     carOptionsCache = data.cars || [];
 
-    // ★ FIX: ถ้า dropdown ทั้งหมดว่างเปล่าพร้อมกัน (สัญญาณของการดึงข้อมูลพลาดชั่วคราว
-    //   ไม่ใช่ว่า DB ไม่มีข้อมูลจริง) ให้ลองโหลดซ้ำอัตโนมัติ 1 ครั้ง แทนที่จะค้างว่างเปล่า
-    //   จนกว่าผู้ใช้จะปิดเปิด modal ใหม่เอง
-    var allEmpty = !(data.brands && data.brands.length) &&
-                   !(data.categories && data.categories.length) &&
-                   !(data.vendors && data.vendors.length) &&
-                   !(data.zones && data.zones.length);
-    if (allEmpty && !dropdownRetried) {
-      dropdownRetried = true;
-      console.warn('Dropdown ทั้งหมดว่างเปล่า — ลองโหลดซ้ำอัตโนมัติ');
-      setTimeout(loadDropdowns, 600);
-      return;
-    }
-
     fillDropdown('inp_brandId',    data.brands,     '-- เลือกแบรนด์ --');
     fillDropdown('inp_categoryId', data.categories, '-- เลือกหมวดหมู่ --');
     fillDropdown('inp_vendorId',   data.vendors,    '-- เลือกผู้จำหน่าย --');
@@ -755,12 +737,16 @@
     if (currentVal) { sel.value = currentVal; }
   }
 
-  function loadTable() {
+  function loadTable(withMasters) {
+    var revision=syyDataRevision();
     var tbody = document.getElementById('productBody');
     tbody.innerHTML = skeletonRows(visibleProductColumns.length,6);
-    document.getElementById('recordCount').innerText = 'กำลังโหลด';
+    updateProductRecordCounts('กำลังโหลด');
 
-    callApi('getAllProducts', [], function(data) {
+    callApi('getAllProducts', withMasters?[{includeMasters:true}]:[], function(data) {
+        if(revision!==syyDataRevision()){syyDataFailed();filterAndRenderTable();return;}
+        if(withMasters){masterData=data.masters||{};data=data.products;applyProductDropdowns();syyPostParent({action:'PRODUCTS_READY'});}
+        syyDataLoaded();
         try {
           productsCache = data || [];
           filterAndRenderTable();
@@ -769,6 +755,7 @@
           tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
         }
       }, function(err) {
+        syyDataFailed();updateProductRecordCounts('โหลดไม่สำเร็จ');
         tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
           actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]});
       });
@@ -827,7 +814,7 @@
     }
 
     var total = filteredProducts.length;
-    document.getElementById('recordCount').innerText = '📋 ทั้งหมด ' + total + ' รายการ';
+    updateProductRecordCounts('📋 ทั้งหมด '+total+' รายการ');
 
     var tbody = document.getElementById('productBody');
 
@@ -1576,6 +1563,15 @@
     });
   }
 
+</script>
+<script>syyRegisterFreshness({reload:function(){loadTable(true);},canRefresh:function(){return !document.getElementById('btnSave')?.disabled;},product:function(product,deleted){if(deleted)removeProductLocal(product.productCode||product.id);else upsertProductLocal(product);}});</script>
+<script>
+function updateProductRecordCounts(text){['recordCount','recordCountToolbar'].forEach(function(id){var element=document.getElementById(id);if(element)element.textContent=text;});}
+function applyProductDropdowns(){
+  fillDropdown('inp_brandId',masterData.brands||[],'-- เลือกแบรนด์ --');fillDropdown('inp_categoryId',masterData.categories||[],'-- เลือกหมวดหมู่ --');
+  fillDropdown('inp_vendorId',masterData.vendors||[],'-- เลือกผู้จำหน่าย --');fillDropdown('inp_zoneId',masterData.zones||[],'-- เลือกโซนจัดเก็บ --');
+  carOptionsCache=(masterData.cars||[]).slice();renderCarDropdownList('');renderCarChips();
+}
 </script>
 </body>
 </html>

@@ -38,7 +38,7 @@ window.respond=function(fn,args){
  if(fn==='saveCustomer')return {success:true,id:'C2',data:{Customer_Name:args[0].customerName,Customer_Type:'ลูกค้าทั่วไป',Branch:args[0].branch,Address:args[0].address||''}};
  if(fn==='getZonesFull')return [{id:'Z1',Area:'A',Build:'โกดัง',Floor:'ชั้น 2',Rack_no:'R1',Rack_Level:''}];
  if(fn==='getAllMasterDropdowns')return {brands:[{id:'B1',Name:'B'}],categories:[{id:'CAT1',Name:'CAT'}],vendors:[{id:'V1',Name:'V'}],zones:[{id:'Z1',Name:'A (Rack R1)'}],cars:[]};
- if(fn==='getAllProducts')return [fixtureProduct];
+ if(fn==='getAllProducts')return args[0]&&args[0].includeMasters?{products:[fixtureProduct],masters:respond('getAllMasterDropdowns',[])}:[fixtureProduct];
  if(fn==='saveZone')return {success:true,id:args[0].docId||'Z2',data:{Area:args[0].area,Build:args[0].build,Floor:args[0].floor,Rack_no:args[0].rackNo,Rack_Level:args[0].rackLevel}};
  if(fn==='authGetMyProfile')return {success:true,username:'staff',fullName:'Staff',role:'staff',totpEnabled:false,recoveryCodesLeft:0};
  return {success:true};
@@ -68,7 +68,7 @@ async function main(){
     await page.waitForTimeout(100);
     return page;
   }
-  async function check(name,fn){await fn();cases++;console.log('PASS: '+name);}
+  let encountered=0;async function check(name,fn){encountered++;if(encountered<Number(process.env.BROWSER_TEST_START||1))return;await fn();cases++;console.log('PASS: '+name);}
   await check('All 15 routed pages load after private include rename',async()=>{
     for(const file of ['index.html','Master_Products.html','StockIssue.html','Purchase_Orders.html','Quotation.html',
       'Master_Tax_Invoice.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html',
@@ -134,7 +134,7 @@ async function main(){
     const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>{openEditModal('TX1');document.getElementById('modalBuyerName').value='Saved Buyer';apiFailure='getTaxInvoiceListData';handleSubmit();});await p.waitForTimeout(60);
     assert.equal(await p.evaluate(()=>currentPrintInvoice.buyerName),'Saved Buyer');
     assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveTaxInvoice').length),1);
-    assert.match(await p.locator('#toastWrap').innerText(),/บันทึกสำเร็จแล้ว/);assert.deepEqual(p.errors,[]);await p.close();
+    assert.match(await p.locator('#toastWrap').innerText(),/บันทึก.*เรียบร้อย/);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getTaxInvoiceListData').length),0);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Invoice buyer branch defaults and actual legacy branch',async()=>{
     const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>openAddModal());assert.equal(await p.locator('#modalBuyerBranch').inputValue(),'ไม่ระบุ');
@@ -158,7 +158,7 @@ async function main(){
     await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForTimeout(40);
     assert.match(await p.locator('#printArea').innerText(),/QT saved/);assert.match(await p.locator('#printArea').innerText(),/Snapshot Buyer/);
     assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getQuotationListData').args[0]),2568);
-    assert.match(await p.locator('#toastWrap').innerText(),/บันทึกสำเร็จแล้ว/);assert.deepEqual(p.errors,[]);await p.close();
+    assert.match(await p.locator('#toastWrap').innerText(),/บันทึกแล้ว แต่โหลดปีใหม่ไม่สำเร็จ/);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Viewer has no quick-add controls and cannot open quick-add workflow',async()=>{
     for(const file of ['Quotation.html','Master_Tax_Invoice.html']){
@@ -286,6 +286,64 @@ async function main(){
     assert.equal(await p.evaluate(()=>JSON.stringify(DASH.products)),before);
     const child=p.frames().find(f=>f.url().includes('page=products'));assert.equal(await child.evaluate(()=>syyTrustedParentMessage({data:{action:'OPEN_PRODUCT_ADD',barcode:'X',channel:syyFrameChannel()},origin:location.origin,source:window})),false);
     assert.deepEqual(p.errors,[]);await p.close();
+  });
+
+  await check('Product bootstrap is one RPC and unique counters both finish loading',async()=>{
+    const p=await pageFor('Master_Products.html');assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length),1);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllMasterDropdowns').length),0);
+    assert.equal(await p.locator('#recordCount').count(),1);assert.equal(await p.locator('#recordCountToolbar').count(),1);assert.equal(await p.locator('#recordCount').innerText(),await p.locator('#recordCountToolbar').innerText());assert.match(await p.locator('#recordCountToolbar').innerText(),/1/);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Thai calendar defaults and expiry preserve selected date in a UTC browser',async()=>{
+    const p=await pageFor('Quotation.html');assert.equal(await p.evaluate(()=>businessDate('2026-10-10T17:30:00Z')),'2026-10-11');assert.equal(await p.evaluate(()=>addCalendarDays('2026-10-11',15)),'2026-10-26');await p.evaluate(()=>{addToBasket('P1');document.getElementById('selCustomer').value='C1';document.getElementById('inpQuoteDate').value='2026-10-11';document.getElementById('selValidDays').value='15';renderDoc();});assert.match(await p.locator('#printArea').innerText(),/26 ต\.ค\. 2569/);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Quote prefill preserves fractional quantity, zero price and provenance; cancel and missing products preserve basket',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>applyPrefillBasket({items:[{productCode:'P1',qty:0.5,unitPrice:0}],quoteId:'Q1',refNo:'Q1',note:'note'}));assert.deepEqual(await p.evaluate(()=>[basket[0].qty,basket[0].unitPrice,pendingQuoteId]),[0.5,0,'Q1']);
+    await p.evaluate(async()=>{Swal.fire=()=>Promise.resolve({isConfirmed:false});await applyPrefillBasket({items:[{productCode:'P1',qty:2,unitPrice:125}],quoteId:'Q2'});});assert.equal(await p.evaluate(()=>pendingQuoteId),'Q1');assert.equal(await p.evaluate(()=>basket[0].qty),0.5);
+    await p.evaluate(async()=>{Swal.fire=()=>Promise.resolve({isConfirmed:true});await applyPrefillBasket({items:[{productCode:'MISSING',qty:1,unitPrice:0}],quoteId:'Q2'});});assert.equal(await p.evaluate(()=>pendingQuoteId),'Q1');
+    await p.evaluate(()=>applyPrefillBasket({items:[{productCode:'P1',qty:1.25,unitPrice:125}],quoteId:'Q2',refNo:'Q2'}));assert.deepEqual(await p.evaluate(()=>[basket[0].qty,basket[0].unitPrice,pendingQuoteId]),[1.25,125,'Q2']);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Year replies arriving backwards keep latest requested invoice and quotation year',async()=>{
+    for(const file of ['Master_Tax_Invoice.html','Quotation.html']){const p=await pageFor(file);await p.evaluate(()=>{const old=respond;respond=(fn,args)=>{if(fn==='getTaxInvoiceListData')return {invoices:[Object.assign({},fixtureInvoice,{id:'YEAR'+args[0]})],availableYears:[2569,2568,2567]};if(fn==='getQuotationListData')return {quotations:[{id:'YEAR'+args[0],quoteDate:'2026-10-11',status:'ร่าง',grandTotal:0,items:[]}],availableYears:[2569,2568,2567]};return old(fn,args);};apiHold=typeof loadAll==='function'?'getTaxInvoiceListData':'getQuotationListData';if(typeof loadAll==='function'){loadAll(2568);loadAll(2567);}else{loadPageData(2568);loadPageData(2567);}});await p.evaluate(()=>{apiHold='';apiPending.pop()();apiPending.shift()();});assert.equal(await p.evaluate(()=>currentPageYear),2567);assert.equal(await p.evaluate(()=>typeof invoicesCache==='undefined'?quotations[0].id:invoicesCache[0].id),'YEAR2567');assert.deepEqual(p.errors,[]);await p.close();}
+  });
+  await check('Incomplete invoice pages cannot show full-year totals; retry, dedupe and load-all complete the summary',async()=>{
+    const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getTaxInvoicePageData'?Object.assign({},old(fn,args),{pageInfo:{hasMore:true,nextCursor:'cursor-1',year:'2569'}}):fn==='getTaxInvoiceListData'?{invoices:[fixtureInvoice,Object.assign({},fixtureInvoice,{id:'TX3',grandTotal:200})],pageInfo:{hasMore:false,nextCursor:'',year:'2569'}}:old(fn,args);loadAll(2569,null,null,true);});await p.waitForTimeout(35);assert.equal(await p.evaluate(()=>documentPager.hasMore()),true);assert.equal(await p.locator('#dashStats').innerText(),'');assert.match(await p.locator('.pagination-bar').innerText(),/ยังไม่ครบ/);
+    await p.evaluate(()=>{apiFailure='getTaxInvoiceListData';documentPager.next(false);});await p.waitForTimeout(25);assert.equal(await p.evaluate(()=>invoicesCache.length),1);assert.equal(await p.evaluate(()=>documentPager.hasMore()),true);
+    await p.evaluate(()=>loadAll(2568));await p.waitForTimeout(25);assert.equal(await p.evaluate(()=>currentPageYear),2569);assert.equal(await p.evaluate(()=>documentPager.hasMore()),true);
+    await p.evaluate(()=>{apiFailure='';documentPager.next(true);});await p.waitForTimeout(35);assert.equal(await p.evaluate(()=>invoicesCache.length),2);assert.equal(await p.evaluate(()=>documentPager.hasMore()),false);assert.equal(await p.locator('.pagination-bar button:visible').count(),0);assert.match(await p.locator('#dashStats').innerText(),/307/);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Dashboard switches bounded year on demand, coalesces rapid requests and avoids claiming never moved',async()=>{
+    const p=await pageFor('index.html');assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllMasterDropdowns').length),0);await p.evaluate(()=>{apiHold='getDashboardBootstrap';dashOnYearSel(DASH.year-1);dashOnYearSel(DASH.year-1);});assert.equal(await p.evaluate(()=>apiPending.length),1);await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForTimeout(40);assert.equal(await p.evaluate(()=>DASH.loadedYear),await p.evaluate(()=>DASH.year));assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDashboardBootstrap').at(-1).args[0].year),await p.evaluate(()=>DASH.year));assert.equal(await p.evaluate(()=>DASH.health.rows[0].tag),'ไม่พบในช่วงที่โหลด');assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Car edit round-trips model code/note and original updateTime despite background refresh',async()=>{
+    const p=await pageFor('Master_Cars.html');await p.evaluate(()=>{respond=(fn,args)=>fn==='getCarsFull'?[{id:'CAR1',Brand:'Brand',Model:'Model',Model_Code:'CODE',Note:'Original',updateTime:'v1'}]:{success:true,id:'CAR1',data:{Brand:'Brand',Model:'Model',Model_Code:args[0].modelCode,Note:args[0].note},updateTime:'v3'};loadTable();});await p.waitForTimeout(25);await p.evaluate(()=>openEditModal('CAR1'));assert.equal(await p.locator('#fModelCode').inputValue(),'CODE');await p.locator('#fNote').fill('Draft');await p.evaluate(()=>{cache[0].updateTime='v2';handleSubmit({preventDefault(){}});});assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='saveCar').args[0].expectedUpdateTime),'v1');assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='saveCar').args[0].note),'Draft');assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Profile shows TOTP actions only for admin with server policy unchanged',async()=>{
+    const p=await pageFor('Profile.html');await p.evaluate(()=>switchTab('security'));for(const role of ['viewer','staff','admin']){await p.evaluate(role=>renderTotpStatus({role,totpEnabled:false,recoveryCodesLeft:0}),role);assert.equal(await p.locator('#btnTotpAction').isVisible(),role==='admin');assert.equal(await p.locator('#btnTotpAction').isDisabled(),role!=='admin');}assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('PO mobile cards fit at 390 and 320 px; only history table scrolls horizontally',async()=>{
+    const p=await pageFor('Purchase_Orders.html');for(const width of [390,320]){await p.setViewportSize({width,height:844});await p.evaluate(()=>{purchaseOrders=[{poId:'PO1',vendorName:'Vendor',orderDate:'2026-10-11',status:'Pending',totalAmount:1,totalQty:1,items:[{productCode:'P1',qty:1,receivedQty:0}]}];renderHistoryTab();switchTab('create');});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'create '+width);await p.evaluate(()=>switchTab('history'));assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'history '+width);await p.screenshot({path:path.join(output,'po-mobile-'+width+'.png')});}assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Modal traps Tab, returns focus, inerts background, allows searchable select and SweetAlert focus',async()=>{
+    const p=await pageFor('Master_Products.html');const trigger=p.locator('button[onclick="openAddModal()"]');await trigger.focus();await p.evaluate(()=>openAddModal());await p.waitForTimeout(30);
+    assert.equal(await p.evaluate(()=>syyModalStack.at(-1).dialog.getAttribute('aria-modal')),'true');assert.equal(await p.evaluate(()=>!!document.querySelector('.page-body .toolbar').closest('[inert]')),true,JSON.stringify(await p.evaluate(()=>({children:Array.from(document.body.children).map(x=>[x.tagName,x.id,x.className,x.inert]),top:syyModalStack.at(-1).element.id}))));
+    await p.evaluate(()=>syyModalFocusables(syyModalStack.at(-1).element).at(-1).focus());await p.keyboard.press('Tab');assert.equal(await p.evaluate(()=>document.activeElement===syyModalFocusables(syyModalStack.at(-1).element)[0]),true);await p.keyboard.press('Shift+Tab');assert.equal(await p.evaluate(()=>document.activeElement===syyModalFocusables(syyModalStack.at(-1).element).at(-1)),true);
+    await p.keyboard.press('Escape');assert.equal(await p.locator('.modal-overlay.active').count(),1);
+    await p.locator('#inp_brandId').locator('..').locator('.syy-select-control').click();await p.waitForTimeout(25);assert.equal(await p.evaluate(()=>document.activeElement.classList.contains('syy-select-search')),true);await p.keyboard.press('Escape');
+    await p.evaluate(()=>{const box=document.createElement('div');box.className='swal2-container';box.innerHTML='<button id="testSwalButton">Confirm</button>';document.body.appendChild(box);document.getElementById('testSwalButton').focus();});assert.equal(await p.evaluate(()=>document.activeElement.id),'testSwalButton');await p.evaluate(()=>{document.querySelector('.swal2-container').remove();closeModal(syyModalStack.at(-1).element.id);});assert.equal(await trigger.evaluate(x=>x===document.activeElement),true);assert.equal(await p.evaluate(()=>document.querySelector('.page-body').inert),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Trusted cross-page deltas update stock without changing negotiated draft and inactive frames do not poll',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>switchPage('quotation'));await p.waitForTimeout(180);const quote=p.frames().find(f=>f.url().includes('page=quotation'));await quote.evaluate(()=>{addToBasket('P1');basket[0].unitPrice=125;document.getElementById('inpNote').value='Draft';});await p.evaluate(()=>switchPage('stockissue'));await p.waitForTimeout(180);const stock=p.frames().find(f=>f.url().includes('page=stockissue'));await stock.evaluate(()=>syyPostParent({action:'STOCK_DELTA',productStocks:[{productCode:'P1',currentStock:7}]}));await p.waitForTimeout(40);assert.deepEqual(await quote.evaluate(()=>[products[0].currentStock,basket[0].stock,basket[0].unitPrice,document.getElementById('inpNote').value]),[7,7,125,'Draft']);assert.equal(await quote.evaluate(()=>syyFreshState.active),false);
+    await quote.evaluate(()=>{syyFreshState.lastLoaded=Date.now()-200000;syyFreshState.lastAttempt=0;apiCalls=[];window.dispatchEvent(new Event('focus'));});assert.equal(await quote.evaluate(()=>apiCalls.length),0);await p.evaluate(()=>switchPage('quotation'));await p.waitForTimeout(40);assert.equal(await quote.evaluate(()=>apiCalls.filter(x=>x.fn==='getQuotationPageData').length),1);assert.equal(await quote.locator('#inpNote').inputValue(),'Draft');assert.equal(await quote.evaluate(()=>basket[0].unitPrice),125);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Identical read calls share one RPC and return to both callbacks; saves remain separate',async()=>{
+    const p=await pageFor('Quotation.html');await p.evaluate(()=>{apiCalls=[];apiHold='getAllMasterDropdowns';window.received=0;callApi('getAllMasterDropdowns',[],()=>received++);callApi('getAllMasterDropdowns',[],()=>received++);});assert.equal(await p.evaluate(()=>apiCalls.length),1);await p.evaluate(()=>{apiHold='';apiPending.shift()();});assert.equal(await p.evaluate(()=>received),2);await p.evaluate(()=>{callApi('saveCustomer',[{customerName:'A'}],()=>{});callApi('saveCustomer',[{customerName:'A'}],()=>{});});assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveCustomer').length),2);assert.deepEqual(p.errors,[]);await p.close();
+  });
+
+
+  await check('Stock cross-browser reconciliation updates basket stock while preserving negotiated quantity/price',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{addToBasket('P1');basket[0].unitPrice=125;basket[0].qty=1.25;fixtureProduct.currentStock=4;loadProducts();});await p.waitForTimeout(30);assert.deepEqual(await p.evaluate(()=>[basket[0].stock,basket[0].qty,basket[0].unitPrice]),[4,1.25,125]);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Product freshness failure releases busy state and retries with both loading labels completed',async()=>{
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{syyFreshState.busy=true;apiFailure='getAllProducts';loadTable(true);});await p.waitForTimeout(25);assert.equal(await p.evaluate(()=>syyFreshState.busy),false);assert.match(await p.locator('#recordCountToolbar').innerText(),/โหลดไม่สำเร็จ/);await p.evaluate(()=>{apiFailure='';loadTable(true);});await p.waitForTimeout(30);assert.equal(await p.locator('#recordCountToolbar').innerText(),await p.locator('#recordCount').innerText());assert.deepEqual(p.errors,[]);await p.close();
   });
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));

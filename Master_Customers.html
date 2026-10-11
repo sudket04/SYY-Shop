@@ -214,15 +214,19 @@
   }
 
   function loadTable(){
+    var revision=syyDataRevision();
     document.getElementById('recordCount').innerText='กำลังโหลด';
     document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
+      if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
+      syyDataLoaded();
       cache = (data || []).map(function(item){
         item._taxStatus = (item.Tax_ID && item.Tax_ID.length === 13) ? 'มีเลขผู้เสียภาษี' : 'ไม่มีเลขผู้เสียภาษี';
         return item;
       });
       renderRows();
     }, function(err){
+      syyDataFailed();
       document.getElementById('tbodyMain').innerHTML = emptyStateHtml(9,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]
@@ -425,7 +429,7 @@
   }
 
   function openAddModal(){
-    editingId=null;
+    editingId=null;masterEditVersion="";
     resetForm();
     document.getElementById('modalTitle').innerText='➕ เพิ่ม'+ENTITY;
     document.getElementById('btnSave').innerHTML='💾 บันทึก';
@@ -436,7 +440,7 @@
   function openEditModal(id){
     var it=cache.find(function(x){return x.id===id;});
     if(!it){ toast('ไม่พบข้อมูล','err'); return; }
-    editingId=id;
+    editingId=id;masterEditVersion=it.updateTime||"";
     resetForm();
     document.getElementById('fDocId').value=it.id;
     document.getElementById('fCustomerName').value=it.Customer_Name||'';
@@ -483,6 +487,7 @@
 
     var payload = {
       docId       : editingId || null,
+      expectedUpdateTime:masterEditVersion,
       customerName: customerName,
       customerType: customerType,
       phone       : document.getElementById('fPhone').value.trim(),
@@ -506,7 +511,7 @@
       if(res && res.success){
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+' “'+customerName+'” เรียบร้อย');
-        var raw=res.data||{},item={id:res.id,Customer_Name:raw.Customer_Name||customerName,Customer_Type:raw.Customer_Type||customerType,Phone:raw.Phone||payload.phone||'',Address_No:raw.Address_No||payload.addressNo||'',Address_Moo:raw.Address_Moo||payload.addressMoo||'',Address_Road:raw.Address_Road||payload.addressRoad||'',Subdistrict:raw.Subdistrict||payload.subdistrict||'',District:raw.District||payload.district||'',Province:raw.Province||payload.province||'',Postal_Code:raw.Postal_Code||payload.postalCode||'',Tax_ID:raw.Tax_ID||taxIdVal,Branch:raw.Branch||payload.branch||'สำนักงานใหญ่',Status:raw.Status||payload.status||'Active'};
+        var raw=res.data||{},item={id:res.id,updateTime:res.updateTime||"",Customer_Name:raw.Customer_Name||customerName,Customer_Type:raw.Customer_Type||customerType,Phone:raw.Phone||payload.phone||'',Address_No:raw.Address_No||payload.addressNo||'',Address_Moo:raw.Address_Moo||payload.addressMoo||'',Address_Road:raw.Address_Road||payload.addressRoad||'',Subdistrict:raw.Subdistrict||payload.subdistrict||'',District:raw.District||payload.district||'',Province:raw.Province||payload.province||'',Postal_Code:raw.Postal_Code||payload.postalCode||'',Tax_ID:raw.Tax_ID||taxIdVal,Branch:raw.Branch||payload.branch||'สำนักงานใหญ่',Status:raw.Status||payload.status||'Active'};
         item.Address=[item.Address_No?'เลขที่ '+item.Address_No:'',item.Address_Moo?'หมู่ '+item.Address_Moo:'',item.Address_Road?'ถนน'+item.Address_Road:'',item.Subdistrict?'ตำบล/แขวง'+item.Subdistrict:'',item.District?'อำเภอ/เขต'+item.District:'',item.Province?'จังหวัด'+item.Province:'',item.Postal_Code||''].filter(Boolean).join(' ');item._taxStatus=(item.Tax_ID&&item.Tax_ID.length===13)?'มีเลขผู้เสียภาษี':'ไม่มีเลขผู้เสียภาษี';
         var pos=cache.findIndex(function(x){return x.id===item.id;});if(pos>-1)cache[pos]=item;else cache.push(item);renderRows();
       } else {
@@ -553,5 +558,6 @@
     });
   }
 </script>
+<script>var masterEditVersion='';syyRegisterFreshness({reload:loadTable});</script>
 </body>
 </html>

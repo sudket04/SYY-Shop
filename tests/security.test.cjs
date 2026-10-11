@@ -14,11 +14,13 @@ const imageRoles = {getProductImagesV2:'viewer',uploadProductImageV2:'staff',del
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 function setup() {
   const cache = new Map(), network = [], mail = [], writes = [], logs = [], created = [], removed = [];
-  let sequence = 0; const authDocs = new Map();
+  let sequence = 0; const authDocs = new Map(),props={};
   const c = vm.createContext({
     console:{error(){},log(){}},
     CacheService:{getScriptCache:()=>({get:key=>cache.get(key)||null,put:(key,value)=>cache.set(key,value),remove:key=>cache.delete(key)})},
-    Utilities:{getUuid:()=> 'dummy-'+(++sequence),formatDate:()=> '2026-10-11'},
+    PropertiesService:{getScriptProperties:()=>({getProperty:key=>props[key]||null,setProperty:(key,value)=>props[key]=value,setProperties:values=>Object.assign(props,values)})},
+    LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock(){}})},
+    Utilities:{DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,value)=>Array.from(require('node:crypto').createHash('sha256').update(String(value)).digest()),getUuid:()=> 'dummy-'+(++sequence),formatDate:()=> '2026-10-11'},
     ScriptApp:{getOAuthToken:()=> 'dummy-oauth',getService:()=>({getUrl:()=> 'https://example.invalid/shop'}),
       WeekDay:{SUNDAY:'SUNDAY'},getProjectTriggers:()=>[],deleteTrigger:t=>removed.push(t),
       newTrigger(handler){const config={handler}; const builder={
@@ -36,7 +38,7 @@ function setup() {
   function session(role='staff') {authDocs.set('U-'+role,{Username:role,Role:role,Status:'Active',Full_Name:role});return {username:role,role,fullName:role,docId:'U-'+role,issuedAt:Date.now()};}
   function loginUser(overrides={}) {
     const user={docId:'U1',Username:'staff',Full_Name:'Staff',Email:'staff@example.invalid',Role:'staff',Status:'Active',
-      Password_Hash:'hash:password',Salt:'salt',Totp_Enabled:false,Must_Change_Password:false,Failed_Attempts:0,
+      Session_Version:'',Password_Hash:'hash:password',Salt:'salt',Totp_Enabled:false,Must_Change_Password:false,Failed_Attempts:0,
       Password_Changed_At:new Date().toISOString(),...overrides};
     authDocs.set('U1',user);c.findUserByUsername_=()=>user;c.findUserByEmail_=()=>user;
     c.hashPassword_=password=>'hash:'+password;c.makeSalt_=()=> 'new-salt';
@@ -173,7 +175,7 @@ test('forced password change remains available before login and creates a sessio
   const start=s.rpc('authLogin',['staff','password']);assert.equal(start.needPasswordChange,true);
   const result=s.rpc('authChangePasswordForced',[start.tempToken,'new-password','ua']);
   assert.equal(result.success,true);assert.equal(s.c.getSession_(result.token).username,'staff');
-  assert.equal(s.writes.length,1);assert(s.network.every(x=>x.options.method==='get'));
+  assert.equal(s.writes.length,2);assert(s.network.every(x=>x.options.method==='get'));
 });
 test('logout and admin-only TOTP cannot bypass the gateway',()=>{
   const s=setup();s.cache.set('sess_dummy',JSON.stringify(s.session('staff')));
@@ -199,9 +201,8 @@ test('private scheduled backup and cleanup still execute their existing workers'
   const s=setup();let backups=0,deleted=[];
   s.c.backupAllDataToBackup_=()=>{backups++;return {success:true};};
   s.c.weeklyBackupJob_();assert.equal(backups,1);
-  s.c.fetchAllPagesRaw_=()=>({ok:true,docs:[{id:'old',fields:s.c.mapToFirestoreFields_({Timestamp:'2020-01-01'})},
-    {id:'recent',fields:s.c.mapToFirestoreFields_({Timestamp:new Date().toISOString()})}]});
-  s.c.deleteFirestoreDocument_=(collection,id)=>{deleted.push([collection,id]);return {success:true};};
+  s.c.UrlFetchApp.fetch=(url,options)=>{const q=JSON.parse(options.payload).structuredQuery;assert.equal(q.where.fieldFilter.op,'LESS_THAN');assert.equal(q.limit,450);return {getResponseCode:()=>200,getContentText:()=>JSON.stringify([{document:{name:'projects/syy-shop/databases/(default)/documents/Activity_Log/old',updateTime:'v1'}}])};};
+  s.c.fsCommit_=writes=>{deleted.push(...writes.map(w=>w.delete.split('/').slice(-2)));return {ok:true};};
   assert.equal(s.c.cleanupOldActivityLogs_().deleted,1);assert.deepEqual(deleted,[['Activity_Log','old']]);
   assert.equal(s.network.length+s.writes.length,0);
 });

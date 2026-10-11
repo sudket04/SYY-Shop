@@ -7,7 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
 function response(code, body) { return {getResponseCode:()=>code, getContentText:()=>JSON.stringify(body)}; }
 function setup() {
   const calls = [], docs = new Map();
-  const c = vm.createContext({console:{error(){},log(){}}, Utilities:{formatDate:()=> '261011-120000',getUuid:()=> 'abcd1234'},
+  const c = vm.createContext({console:{error(){},log(){}}, LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock(){}})},Utilities:{formatDate:()=> '261011-120000',getUuid:()=> 'abcd1234'},
     UrlFetchApp:{fetch(url, options) {
       calls.push({url, options});
       const u = new URL(url), key = decodeURIComponent(u.pathname.split('/documents/')[1] || '');
@@ -30,7 +30,7 @@ function setup() {
     }}});
   vm.runInContext(source, c);
   Object.assign(c, {getAuthHeader_:()=>({}), clearCollectionCache_:()=>{}, queryByEqualityField_:()=>[], peekCollectionDocsCache_:()=>null,
-    getFirestoreRawList_:()=>[], updateTaxInvoiceYearsMeta_:()=>{}, updateQuotationYearsMeta_:()=>{}, logActivity_:()=>{},
+    fetchCollectionDocsCached_:name=>[...docs].filter(([key])=>key.startsWith(name+"/")).map(([key,doc])=>({id:key.split("/")[1],...doc})),getFirestoreRawList_:()=>[], updateTaxInvoiceYearsMeta_:()=>{}, updateQuotationYearsMeta_:()=>{}, logActivity_:()=>{},
     getProductById_:id=>({id, productCode:id, currentStock:c.parseFirestoreValue_(docs.get('Master_Products/'+id).fields.Current_Stock)}),
     hashPassword_:(value,salt)=>require('node:crypto').createHash('sha256').update(String(value)+salt).digest('hex'),getCurrentUsername_:()=> 'staff'});
   function put(key, fields) { docs.set(key, {fields:c.mapToFirestoreFields_(fields), updateTime:'v1'}); }

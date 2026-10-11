@@ -16,7 +16,7 @@
   .tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
   .tab-panel{display:none}
   .tab-panel.active{display:block}
-  .stat-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+  .stat-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
   .stat-card{background:#fff;padding:15px 18px;border-radius:10px;box-shadow:var(--shadow);border:1px solid var(--line);display:flex;align-items:center;gap:12px}
   .stat-icon{font-size:24px;width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
   .stat-icon.blue{background:#dbeafe}.stat-icon.red{background:#fee2e2}
@@ -89,6 +89,8 @@
   .btn.is-loading{opacity:.6;pointer-events:none}
   .pill-group{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
   .receive-required label .req{color:#dc2626}
+  @media(max-width:767px){.stat-strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.stat-card{min-width:0;padding:12px 10px;gap:8px}.stat-card>div{min-width:0}.stat-label{font-size:12px;overflow-wrap:break-word}.stat-value{font-size:18px}.vendor-name{overflow-wrap:anywhere}.tab-bar{overflow-x:auto}.tab-btn{flex-shrink:0}.order-table-wrap,.table-scroll{max-width:100%}}
+  @media(max-width:359px){.stat-strip{grid-template-columns:minmax(0,1fr)}}
   </style>
 </head>
 <body>
@@ -317,6 +319,8 @@
   // ==========================================
   var lowStockItems   = [];   // สินค้าสต็อกต่ำ (จาก getLowStockProductsForOrder)
   var purchaseOrders  = [];   // ประวัติใบสั่งซื้อ (จาก getPurchaseOrders)
+  var pendingSummary={codes:{},pendingCount:0},documentPager;
+  window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#tabHistory',api:'getPurchaseOrderPageData',key:'purchaseOrders',id:'poId',rows:function(){return purchaseOrders;},render:function(){renderHistoryTab();updateStatCards();}});});
   var pendingProductCodes = {}; // productCode ที่มีคำสั่งซื้อค้างอยู่ (Pending/Ordered)
   var checkedState    = {};   // { productCode: true/false } เช็คบ็อกซ์ที่เลือกไว้
   var qtyState        = {};   // { productCode: qty } จำนวนที่จะสั่ง (แก้ไขได้)
@@ -336,13 +340,14 @@
   var pendingReceivePO = null; // PO object ที่กำลังบันทึกรับสินค้าอยู่ใน modal
 
   window.addEventListener('load', function() {
-    document.getElementById('confirmOrderDate').value = new Date().toISOString().slice(0,10);
+    document.getElementById('confirmOrderDate').value = businessDate();
     loadAll();
   });
 
   XLF.bindHeaderClicks('#historyThead', function() { return purchaseOrders; }, renderHistoryTab);
 
   function loadAll() {
+    var revision=syyDataRevision();if(documentPager)documentPager.cancel();
     var btn = document.getElementById('btnRefresh');
     btn.classList.add('is-loading');
 
@@ -350,8 +355,11 @@
     //   + getPurchaseOrders() แยกกัน 2 รอบ (ซึ่งแต่ละรอบดึงข้อมูลผู้จัดจำหน่ายซ้ำกันเอง)
     //   ฝั่ง server ดึงข้อมูลผู้จัดจำหน่ายแค่ครั้งเดียว ใช้ร่วมกันทั้ง 2 ส่วน
     callApi('getPurchaseOrderPageData', [], function(data) {
+        if(revision!==syyDataRevision()){syyDataFailed();btn.classList.remove('is-loading');return;}
+        syyDataLoaded();
         lowStockItems  = (data && data.lowStockItems)  || [];
         purchaseOrders = (data && data.purchaseOrders) || [];
+        pendingSummary=data.pendingSummary||{codes:{},pendingCount:purchaseOrders.filter(function(po){return po.status==='Pending';}).length};if(documentPager)documentPager.reset(data.pageInfo);
 
         lowStockItems.forEach(function(p) {
           if (!(p.productCode in qtyState)) qtyState[p.productCode] = p.suggestedQty;
@@ -365,6 +373,7 @@
         updateStatCards();
         btn.classList.remove('is-loading');
       }, function(err) {
+        syyDataFailed();
         document.getElementById('vendorGroupsContainer').innerHTML =
           '<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดข้อมูลไม่สำเร็จ</div><div class="su">' + esc(JSON.stringify(err)) + '</div></div>';
         document.getElementById('historyTableBody').innerHTML =
@@ -373,14 +382,10 @@
       });
   }
 
-  function rebuildPendingProductCodes() {
-    pendingProductCodes = {};
-    purchaseOrders.forEach(function(po) {
-      if (po.status !== 'Pending' && po.status !== 'Ordered' && po.status !== 'PartiallyReceived') return;
-      (po.items || []).forEach(function(it) {
-        if (num(it.qty) - num(it.receivedQty) > 0) pendingProductCodes[it.productCode] = true;
-      });
-    });
+  function rebuildPendingProductCodes(){
+    var orders=pendingSummary.orders||(pendingSummary.orders={});
+    purchaseOrders.forEach(function(po){if(['Pending','Ordered','PartiallyReceived'].indexOf(po.status)<0){delete orders[po.poId];return;}orders[po.poId]={status:po.status,codes:(po.items||[]).filter(function(it){return num(it.qty)-num(it.receivedQty)>0;}).map(function(it){return it.productCode;})};});
+    pendingProductCodes={};pendingSummary.pendingCount=0;Object.keys(orders).forEach(function(id){var order=orders[id];if(order.status==='Pending')pendingSummary.pendingCount++;order.codes.forEach(function(code){pendingProductCodes[code]=true;});});
   }
 
   function applyReceiveGoodsDelta(res) {
@@ -426,7 +431,7 @@
     document.getElementById('statVendorCount').innerText = Object.keys(vendorIds).length.toLocaleString();
     document.getElementById('statEstValue').innerText    = estValue.toLocaleString('th-TH', { maximumFractionDigits: 0 });
 
-    var pendingCount = purchaseOrders.filter(function(po) { return po.status === 'Pending'; }).length;
+    var pendingCount = documentPager&&documentPager.hasMore()?pendingSummary.pendingCount:purchaseOrders.filter(function(po) { return po.status === 'Pending'; }).length;
     document.getElementById('statPendingPO').innerText = pendingCount.toLocaleString();
   }
 
@@ -638,7 +643,7 @@
     if (g.vendorEmail)   metaParts.push('อีเมล: ' + g.vendorEmail);
     document.getElementById('confirmVendorMeta').innerText = metaParts.join(' • ') || 'ไม่มีข้อมูลติดต่อ';
     document.getElementById('confirmNote').value = '';
-    document.getElementById('confirmOrderDate').value = new Date().toISOString().slice(0,10);
+    document.getElementById('confirmOrderDate').value = businessDate();
 
     var total = 0;
     document.getElementById('confirmItemsBody').innerHTML = selectedItems.map(function(p) {
@@ -717,7 +722,7 @@
           document.getElementById('confirmNote').disabled = true;
           document.getElementById('confirmOrderDate').disabled = true;
 
-          loadAll();
+          upsertPurchaseOrder(Object.assign({},res.po||lastCreatedOrderForExport,{vendorName:g.vendorName,vendorContact:g.vendorContact,vendorPhone:g.vendorPhone}));
         } else {
           btn.disabled = false; btn.innerText = '💾 บันทึกใบสั่งซื้อ';
           alertEl.className = 'modal-alert error';
@@ -742,6 +747,7 @@
   }
 
   function renderHistoryTab() {
+  if(documentPager)documentPager.render();
     var thead = document.getElementById('historyThead');
     thead.innerHTML =
       '<tr>' +
@@ -839,12 +845,12 @@
           updateStatCards();
         } else {
           swyError('อัปเดตสถานะไม่สำเร็จ', res.message);
-          loadAll();
+          refreshPurchaseOrder(poId);
         }
       }, function(err) {
         selectEl.disabled = false;
         swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
-        loadAll();
+        refreshPurchaseOrder(poId);
       });
   }
 
@@ -852,7 +858,7 @@
     swyConfirm({title:'ต้องการลบใบสั่งซื้อ ' + poId + '?', html:'ออกจากประวัติหรือไม่ ลบแล้วกู้คืนไม่ได้', danger:true}).then(function(ok){
       if (!ok) return;
       callApi('deletePurchaseOrder', [poId], function(res) {
-          if (res.success) { toast('ลบใบสั่งซื้อเรียบร้อย'); loadAll(); } else { swyError('ลบไม่สำเร็จ', res.message); }
+          if (res.success) { toast('ลบใบสั่งซื้อเรียบร้อย');if(pendingSummary.orders)delete pendingSummary.orders[poId]; purchaseOrders=purchaseOrders.filter(function(po){return po.poId!==poId;});renderPurchaseOrderState(); } else { swyError('ลบไม่สำเร็จ', res.message); }
         }, function(err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
     });
   }
@@ -877,7 +883,7 @@
     document.getElementById('recvInvoiceNo').value = '';
     document.getElementById('recvReceiverName').value = '';
     document.getElementById('recvDeliveryNoteNo').value = '';
-    document.getElementById('recvDate').value = new Date().toISOString().slice(0,10);
+    document.getElementById('recvDate').value = businessDate();
 
     document.getElementById('receiveItemsBody').innerHTML = (po.items || []).map(function(it) {
       var received  = parseFloat(it.receivedQty || 0);
@@ -1139,9 +1145,18 @@
     ws['!cols'] = [{wch:8},{wch:14},{wch:30},{wch:14},{wch:14},{wch:14}];
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "PO");
-    var filename = 'PO_' + (order.poId || 'draft') + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
+    var filename = 'PO_' + (order.poId || 'draft') + '_' + businessDate() + '.xlsx';
     XLSX.writeFile(wb, filename);
   }
+</script>
+<script>
+syyRegisterFreshness({reload:loadAll,canRefresh:function(){return !receiveBusy && !(documentPager&&documentPager.busy()) && !document.querySelector('.modal-overlay.active');},
+  stock:function(stocks){syyApplyStockRows(lowStockItems,stocks);renderCreateTab();updateStatCards();}});
+</script>
+<script>
+function renderPurchaseOrderState(){rebuildPendingProductCodes();renderCreateTab();renderHistoryTab();updateStatCards();}
+function upsertPurchaseOrder(po){if(!po||!po.poId)return;var index=purchaseOrders.findIndex(function(item){return item.poId===po.poId;});if(index>=0)purchaseOrders[index]=Object.assign({},purchaseOrders[index],po);else purchaseOrders.unshift(po);renderPurchaseOrderState();}
+function refreshPurchaseOrder(id){callApi('getPurchaseOrderPageData',[{poId:id}],function(data){upsertPurchaseOrder(data.po);},function(){toast('โหลดสถานะล่าสุดไม่สำเร็จ กรุณารีเฟรช','warn');});}
 </script>
 </body>
 </html>
