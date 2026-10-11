@@ -632,7 +632,7 @@
     if(kind==='brands')return item.Brand_Name||item.Name||item.id||'';
     if(kind==='categories')return item.Category_Name||item.Name||item.id||'';
     if(kind==='vendors'){var vn=item.Vendor_name||item.Name||item.id||'';return item.Phone?vn+' ('+item.Phone+')':vn;}
-    if(kind==='zones'){var z=item.Area||item.Name||item.id||'';if(item.Build||item.Floor)z+=' — '+[item.Build,item.Floor].filter(Boolean).join(' ');if(item.Rack_no)z+=' (Rack '+item.Rack_no+')';return z;}
+    if(kind==='zones'){var z=item.Area||item.Name||item.id||'';if(item.Build||item.Floor)z+=' — '+[item.Build,item.Floor].filter(Boolean).join(' ');if(item.Rack_no)z+=' (Rack '+item.Rack_no+(item.Rack_Level?' · ระดับ '+item.Rack_Level:'')+')';return z;}
     if(kind==='cars'){var c=[item.Brand,item.Model].filter(Boolean).join(' ');if(item.Year)c+=' ('+item.Year+')';if(item.Type_Car)c+=' — '+item.Type_Car;return c||item.Name||item.id||'';}
     return item.Name||item.id||'';
   }
@@ -641,6 +641,10 @@
     var pos=list.findIndex(function(x){return x.id===id;});
     if(d.deleted){if(pos>-1)list.splice(pos,1);}else{var label=masterDeltaLabel(kind,item),entry={id:id,Name:label,name:String(label).toLowerCase()};if(pos>-1)list[pos]=entry;else list.push(entry);}
     masterData[kind]=list;
+    if(kind==='zones'){
+      productsCache.forEach(function(p){if(p.zoneId===id)p.zoneName=d.deleted?id:masterDeltaLabel(kind,item);});
+      filterAndRenderTable();
+    }
     if(kind==='brands')fillDropdown('inp_brandId',list,'-- เลือกแบรนด์ --');
     else if(kind==='categories')fillDropdown('inp_categoryId',list,'-- เลือกหมวดหมู่ --');
     else if(kind==='vendors')fillDropdown('inp_vendorId',list,'-- เลือกผู้จำหน่าย --');
@@ -663,7 +667,10 @@
       if(p&&num(p.currentStock)!==stock){p.currentStock=stock;changed=true;}
       if(editingDocId===code){
         var input=document.getElementById('inp_currentStock');
-        if(input)input.value=stock;
+        if(input && Number(input.value)===Number(input.dataset.originalStock)) {
+          input.value=stock;
+          input.dataset.originalStock=stock;
+        }
       }
     });
     if(changed)filterAndRenderTable();
@@ -984,6 +991,7 @@
     document.getElementById('inp_costPrice').value     = item.costPrice     || 0;
     document.getElementById('inp_sellingPrice').value  = item.sellingPrice  || 0;
     document.getElementById('inp_currentStock').value   = item.currentStock   || 0;
+    document.getElementById('inp_currentStock').dataset.originalStock = item.currentStock || 0;
     document.getElementById('inp_minStock').value      = item.minStock      || 0;
     document.getElementById('inp_status').value        = item.status        || 'Active';
 
@@ -1000,6 +1008,7 @@
   }
 
   function closeProductModal() {
+    if(document.getElementById('modalBtnSave').disabled) return;
     closeModal('productModal');
     document.getElementById('productForm').reset();
 
@@ -1024,6 +1033,7 @@
   function handleSubmit(e) {
     e.preventDefault();
     var btn=document.getElementById('modalBtnSave'),alertEl=document.getElementById('modalAlert');
+    if(btn.disabled) return;
     alertEl.style.display='none';
     var formData={
       docId:editingDocId||null,productName:document.getElementById('inp_productName').value.trim(),
@@ -1032,7 +1042,9 @@
       categoryId:document.getElementById('inp_categoryId').value,vendorId:document.getElementById('inp_vendorId').value,
       zoneId:document.getElementById('inp_zoneId').value,carIds:selectedCarIds,
       costPrice:parseFloat(document.getElementById('inp_costPrice').value||0),sellingPrice:parseFloat(document.getElementById('inp_sellingPrice').value||0),
-      currentStock:parseFloat(document.getElementById('inp_currentStock').value||0),minStock:parseFloat(document.getElementById('inp_minStock').value||0),
+      currentStock:parseFloat(document.getElementById('inp_currentStock').value||0),
+      originalStock:editingDocId ? Number(document.getElementById('inp_currentStock').dataset.originalStock) : undefined,
+      minStock:parseFloat(document.getElementById('inp_minStock').value||0),
       status:document.getElementById('inp_status').value
     };
     var wasNew=!editingDocId;
@@ -1041,7 +1053,14 @@
     function finishSavedProduct(product,res){
       product=product||{};product.id=product.id||res.id;product.productCode=product.productCode||res.id;
       editingDocId=res.id;document.getElementById('modalDocId').value=res.id;
-      upsertProductLocal(product);notifyParentProductDelta(product,false);
+      if(res.product){
+        upsertProductLocal(product);notifyParentProductDelta(product,false);
+        document.getElementById('inp_currentStock').value=product.currentStock;
+        document.getElementById('inp_currentStock').dataset.originalStock=product.currentStock;
+      }else{
+        loadTable();notifyParentRefreshProducts();
+        toast('บันทึกสินค้าแล้ว แต่โหลดข้อมูลที่บันทึกกลับมาไม่สำเร็จ กำลังรีเฟรชข้อมูล', 'warn');
+      }
       btn.disabled=false;btn.innerText='💾 บันทึกการแก้ไข';
       alertEl.style.display='block';alertEl.className='modal-alert success';
       alertEl.innerText=''+res.message+' (ID: '+res.id+')';
@@ -1060,12 +1079,16 @@
         callApi('commitProductImageDraft',[res.id,buildProductImageDraftPayload()],function(imgRes){
           if(imgRes&&imgRes.success){applyCommittedImageResult(product,imgRes);finishSavedProduct(product,res);}
           else{
-            editingDocId=res.id;document.getElementById('modalDocId').value=res.id;upsertProductLocal(product);notifyParentProductDelta(product,false);
+            editingDocId=res.id;document.getElementById('modalDocId').value=res.id;
+            if(res.product){upsertProductLocal(product);notifyParentProductDelta(product,false);document.getElementById('inp_currentStock').value=product.currentStock;document.getElementById('inp_currentStock').dataset.originalStock=product.currentStock;}
+            else{loadTable();notifyParentRefreshProducts();}
             btn.disabled=false;btn.innerText='💾 บันทึกการแก้ไข';alertEl.style.display='block';alertEl.className='modal-alert error';
             alertEl.innerText='ข้อมูลสินค้าบันทึกแล้ว แต่รูปยังไม่บันทึก: '+((imgRes&&imgRes.message)||'ไม่ทราบสาเหตุ')+' — draft รูปยังอยู่ กดบันทึกอีกครั้งเพื่อ retry';
           }
         },function(err){
-          editingDocId=res.id;document.getElementById('modalDocId').value=res.id;upsertProductLocal(product);notifyParentProductDelta(product,false);
+          editingDocId=res.id;document.getElementById('modalDocId').value=res.id;
+          if(res.product){upsertProductLocal(product);notifyParentProductDelta(product,false);document.getElementById('inp_currentStock').value=product.currentStock;document.getElementById('inp_currentStock').dataset.originalStock=product.currentStock;}
+          else{loadTable();notifyParentRefreshProducts();}
           btn.disabled=false;btn.innerText='💾 บันทึกการแก้ไข';alertEl.style.display='block';alertEl.className='modal-alert error';
           alertEl.innerText='ข้อมูลสินค้าบันทึกแล้ว แต่รูปยังไม่บันทึก: '+JSON.stringify(err)+' — draft รูปยังอยู่';
         });

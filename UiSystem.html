@@ -4,6 +4,11 @@
 .btn .syy-icon,.btn-icon .syy-icon,.row-actions .syy-icon{width:18px;height:18px}
 .btn-icon .syy-icon,.row-actions .btn .syy-icon{width:19px;height:19px}
 .modal-header .syy-icon,.empty-state .syy-icon{width:21px;height:21px}
+.syy-password{position:relative;display:block;width:100%}
+.syy-password input{padding-right:50px!important;box-sizing:border-box;width:100%}
+.syy-password-toggle{position:absolute;right:3px;top:50%;transform:translateY(-50%);width:42px;height:38px;border:0;border-radius:6px;background:transparent;color:#64748b;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.syy-password-toggle:hover{background:#f1f5f9;color:#005088}
+.syy-password-toggle:focus-visible{outline:2px solid #005088;outline-offset:1px}
 </style>
 <script>
 (function(){
@@ -57,3 +62,37 @@
 })();
 </script>
 <?!= include('UiEnhancements'); ?>
+<script>
+/* Presentation only: keep the same input, value, autocomplete and auth handlers. */
+(function(){
+  var eye='<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/>';
+  var eyeOff='<path d="m3 3 18 18M10.5 6.1A12 12 0 0 1 12 6c6 0 10 6 10 6a18 18 0 0 1-3 3.5M6 7.5A18 18 0 0 0 2 12s4 6 10 6c1.6 0 3.1-.4 4.4-1M10 10a3 3 0 0 0 4 4"/>';
+  function sync(input,btn){
+    var shown=input.type==='text';
+    btn.setAttribute('aria-label',shown?'ซ่อนรหัสผ่าน':'แสดงรหัสผ่าน');
+    btn.setAttribute('aria-pressed',shown?'true':'false');
+    btn.title=shown?'ซ่อนรหัสผ่าน':'แสดงรหัสผ่าน';
+    btn.innerHTML='<svg class="syy-icon" viewBox="0 0 24 24" aria-hidden="true">'+(shown?eyeOff:eye)+'</svg>';
+  }
+  function enhance(input){
+    if(input.dataset.syyPassword==='true')return;
+    input.dataset.syyPassword='true';
+    var wrap=document.createElement('span');wrap.className='syy-password';
+    input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);
+    var btn=document.createElement('button');btn.type='button';btn.className='syy-password-toggle';
+    if(input.id)btn.setAttribute('aria-controls',input.id);
+    btn.onclick=function(){input.type=input.type==='password'?'text':'password';sync(input,btn);};
+    wrap.appendChild(btn);sync(input,btn);
+    if(input.form)input.form.addEventListener('reset',function(){input.type='password';sync(input,btn);});
+  }
+  function init(root){
+    if(root.matches&&root.matches('input[type="password"]'))enhance(root);
+    if(root.querySelectorAll)root.querySelectorAll('input[type="password"]').forEach(enhance);
+  }
+  function hide(root){(root||document).querySelectorAll('.syy-password input').forEach(function(input){input.type='password';sync(input,input.parentNode.querySelector('button'));});}
+  window.SYYPassword={hide:hide};
+  document.addEventListener('visibilitychange',function(){if(document.hidden)hide(document);});
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){init(document);});else init(document);
+  new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType===1)init(n);});});}).observe(document.documentElement,{childList:true,subtree:true});
+})();
+</script>

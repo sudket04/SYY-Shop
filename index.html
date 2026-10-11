@@ -603,7 +603,7 @@
     if(kind==='zones'){
       var z=item.Area||item.Name||item.id||'';
       if(item.Build||item.Floor)z+=' — '+[item.Build,item.Floor].filter(Boolean).join(' ');
-      if(item.Rack_no)z+=' (Rack '+item.Rack_no+')';
+      if(item.Rack_no)z+=' (Rack '+item.Rack_no+(item.Rack_Level?' · ระดับ '+item.Rack_Level:'')+')';
       return z;
     }
     if(kind==='cars'){
@@ -624,6 +624,10 @@
       if(pos>-1)list[pos]=entry;else list.push(entry);
     }
     masters[kind]=list;
+    if(kind==='zones'){
+      DASH.products.forEach(function(p){if(p.zoneId===item.id)p.zoneName=deleted?item.id:shellMasterDeltaLabel(kind,item);});
+      if(DASH.loaded){dashBuildAggregates();dashRenderAll();}
+    }
     var selectId={brands:'mBrandId',categories:'mCategoryId',vendors:'mVendorId',zones:'mZoneId'}[kind];
     if(selectId)fillSelect(selectId,list);
     var frame=document.getElementById('iframe-products');
@@ -1649,6 +1653,7 @@
     document.getElementById('mCost').value=num(p.costPrice);
     document.getElementById('mSell').value=num(p.sellingPrice);
     document.getElementById('mStock').value=num(p.currentStock);
+    document.getElementById('mStock').dataset.originalStock=num(p.currentStock);
     document.getElementById('mMinStock').value=num(p.minStock);
     document.getElementById('mStatus').value=p.status||'Active';
     document.getElementById('editForm').dataset.carIds=JSON.stringify(p.carIds||[]);
@@ -1678,6 +1683,7 @@
         costPrice   : num(document.getElementById('mCost').value),
         sellingPrice: num(document.getElementById('mSell').value),
         currentStock: num(document.getElementById('mStock').value),
+        originalStock: Number(document.getElementById('mStock').dataset.originalStock),
         minStock    : num(document.getElementById('mMinStock').value),
         status      : document.getElementById('mStatus').value
       }], function(res){
@@ -1685,7 +1691,8 @@
         if(res && res.success){
           closeModal('editModal');
           toast('บันทึกสินค้าเรียบร้อย');
-          refreshDashboardProductsOnly();
+          if(res.product){applyDashboardProductDelta(res.product,false);}
+          else{refreshDashboardProductsOnly();}
         } else {
           alertEl.className='modal-alert error';
           alertEl.innerText=''+((res&&res.message)||'บันทึกไม่สำเร็จ');

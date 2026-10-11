@@ -1,0 +1,10 @@
+{
+  "name": "syy-shop-regression",
+  "private": true,
+  "scripts": {
+    "test": "node tests/backend.test.cjs",
+    "test:browser": "node tests/browser.cjs",
+    "check": "node tests/syntax.cjs"
+  },
+  "devDependencies": {"playwright": "1.62.1"}
+}

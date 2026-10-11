@@ -41,7 +41,7 @@
       <table>
         <colgroup>
           <col style="width:44px"><col style="width:100px"><col style="width:170px"><col style="width:120px">
-          <col style="width:90px"><col style="width:110px"><col><col style="width:100px">
+          <col style="width:90px"><col style="width:110px"><col style="width:110px"><col><col style="width:100px">
         </colgroup>
         <thead id="theadMain"></thead>
         <tbody id="tbodyMain"></tbody>
@@ -84,7 +84,7 @@
             </select>
           </div>
           <div class="form-group">
-            <label>ชั้น (Floor)</label>
+            <label>ชั้นอาคาร (Floor)</label>
             <select id="fFloor" class="form-control select">
               <option value="">-- เลือกชั้น --</option>
               <option value="ชั้น 1">ชั้น 1</option>
@@ -97,7 +97,15 @@
           </div>
           <div class="form-group">
             <label>เลขแร็ค (Rack No)</label>
-            <input type="text" id="fRackNo" class="form-control" placeholder="เช่น RACK-01">
+            <input type="text" id="fRackNo" class="form-control" placeholder="เช่น RACK-01" oninput="updateRackLevelState()">
+          </div>
+          <div class="form-group">
+            <label for="fRackLevel">ระดับแร็ค (Rack Level)</label>
+            <select id="fRackLevel" class="form-control" disabled>
+              <option value="">ไม่ระบุ</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <span class="field-hint">ระดับชั้นวางภายในแร็ค แยกจากชั้นอาคาร</span>
           </div>
           <div class="form-group">
             <label>หมายเหตุ</label>
@@ -144,17 +152,18 @@
     { col:'id',      label:'รหัสโซน' },
     { col:'Area',    label:'พื้นที่ (Area)' },
     { col:'Build',   label:'อาคาร' },
-    { col:'Floor',   label:'ชั้น' },
+    { col:'Floor',   label:'ชั้นอาคาร' },
     { col:'Rack_no', label:'Rack No' },
+    { col:'Rack_Level', label:'ระดับแร็ค' },
     { col:'Note',    label:'หมายเหตุ' }
   ];
-  var SEARCH_KEYS = ['id','Area','Build','Floor','Rack_no','Note'];
+  var SEARCH_KEYS = ['id','Area','Build','Floor','Rack_no','Rack_Level','Note'];
 
   var cache=[], editingId=null, deleteId=null, searchTimer=null;
 
   window.onload = function(){
     initDensity();
-    document.getElementById('tbodyMain').innerHTML = skeletonRows(8,5);
+    document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     renderHead();
     loadTable();
   };
@@ -170,12 +179,12 @@
 
   function loadTable(){
     document.getElementById('recordCount').innerText='กำลังโหลด';
-    document.getElementById('tbodyMain').innerHTML = skeletonRows(8,5);
+    document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
       cache = data || [];
       renderRows();
     }, function(err){
-      document.getElementById('tbodyMain').innerHTML = emptyStateHtml(8,{
+      document.getElementById('tbodyMain').innerHTML = emptyStateHtml(9,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]
       });
@@ -210,9 +219,9 @@
     var tbody=document.getElementById('tbodyMain');
     if(!rows.length){
       tbody.innerHTML = cache.length
-        ? emptyStateHtml(8,{ title:'ไม่พบรายการที่ตรงกับที่ค้นหา', sub:'ลองลดคำค้นหรือล้างตัวกรอง',
+        ? emptyStateHtml(9,{ title:'ไม่พบรายการที่ตรงกับที่ค้นหา', sub:'ลองลดคำค้นหรือล้างตัวกรอง',
             actions:[{label:'ล้างตัวกรอง',onclick:'clearAllFilters()'},{label:'+ เพิ่ม'+ENTITY,primary:true,onclick:'openAddModal()'}] })
-        : emptyStateHtml(8,{ icon:'📦', title:'ยังไม่มีข้อมูล'+ENTITY+'จัดเก็บ', sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
+        : emptyStateHtml(9,{ icon:'📦', title:'ยังไม่มีข้อมูล'+ENTITY+'จัดเก็บ', sub:'เพิ่มรายการแรกเพื่อเริ่มใช้งาน',
             actions:[{label:'+ เพิ่ม'+ENTITY,primary:true,onclick:'openAddModal()'}] });
       return;
     }
@@ -226,6 +235,7 @@
         '<td>'+esc(it.Build||'—')+'</td>'+
         '<td>'+esc(it.Floor||'—')+'</td>'+
         '<td>'+rack+'</td>'+
+        '<td>'+esc(it.Rack_Level||'—')+'</td>'+
         '<td style="color:var(--muted)">'+esc(it.Note||'—')+'</td>'+
         '<td class="text-center col-sticky-right"><span class="row-actions">'+
           '<button class="btn btn-icon edit" title="แก้ไข" onclick="openEditModal(\''+escJs(it.id)+'\')">✏️</button>'+
@@ -254,8 +264,21 @@
     document.getElementById('fBuild').value='';
     document.getElementById('fFloor').value='';
     document.getElementById('fRackNo').value='';
+    document.getElementById('fRackLevel').value='';
+    updateRackLevelState();
     document.getElementById('fNote').value='';
     clearErr('fArea');
+  }
+
+  function updateRackLevelState(){
+    var rack=document.getElementById('fRackNo').value.trim();
+    var sel=document.getElementById('fRackLevel');
+    var old=cache.find(function(x){return x.id===editingId;});
+    var legacy=old && !old.Rack_Level && (old.Rack_no||'').trim()===rack;
+    sel.disabled=!rack;
+    sel.required=!!rack && !legacy;
+    if(!rack)sel.value='';
+    if(window.SYYSelect)SYYSelect.refresh(sel);
   }
 
   function openAddModal(){
@@ -277,6 +300,8 @@
     document.getElementById('fBuild').value=it.Build||'';
     document.getElementById('fFloor').value=it.Floor||'';
     document.getElementById('fRackNo').value=it.Rack_no||'';
+    document.getElementById('fRackLevel').value=it.Rack_Level||'';
+    updateRackLevelState();
     document.getElementById('fNote').value=it.Note||'';
     document.getElementById('modalTitle').innerText='✏️ แก้ไข'+ENTITY+' ('+id+')';
     document.getElementById('btnSave').innerHTML='💾 บันทึกการแก้ไข';
@@ -286,6 +311,7 @@
 
   function handleSubmit(e){
     e.preventDefault();
+    if(document.getElementById('btnSave').disabled) return;
     var area=document.getElementById('fArea').value.trim();
     var alertEl=document.getElementById('modalAlert');
     alertEl.className='modal-alert';
@@ -302,6 +328,7 @@
       build : document.getElementById('fBuild').value.trim(),
       floor : document.getElementById('fFloor').value.trim(),
       rackNo: document.getElementById('fRackNo').value.trim(),
+      rackLevel: document.getElementById('fRackLevel').value,
       note  : document.getElementById('fNote').value.trim()
     };
 
@@ -313,7 +340,7 @@
       if(res && res.success){
         closeModal('editModal');
         toast((editingId?'แก้ไข':'เพิ่ม')+ENTITY+' “'+area+'” เรียบร้อย');
-        var raw=res.data||{},item={id:res.id,Area:raw.Area||formData.area||'',Build:raw.Build||formData.build||'',Floor:raw.Floor||formData.floor||'',Rack_no:raw.Rack_no||formData.rackNo||'',Note:raw.Note||formData.note||'',Car_ID:raw.Car_ID||'',Status:raw.Status||'Active'};
+        var raw=res.data||{},item={id:res.id,Area:raw.Area||formData.area||'',Build:raw.Build||formData.build||'',Floor:raw.Floor||formData.floor||'',Rack_no:raw.Rack_no||formData.rackNo||'',Rack_Level:raw.Rack_Level||'',Note:raw.Note||formData.note||'',Car_ID:raw.Car_ID||'',Status:raw.Status||'Active'};
         var pos=cache.findIndex(function(x){return x.id===item.id;});if(pos>-1)cache[pos]=item;else cache.push(item);renderRows();notifyParentMasterDelta('zones',item,false);
       } else {
         alertEl.className='modal-alert error';

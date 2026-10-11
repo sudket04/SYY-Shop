@@ -150,7 +150,9 @@
               <div class="form-group">
                 <label>ลูกค้า *</label>
                 <select id="selCustomer" class="form-control"></select>
-                <span class="field-hint" style="font-size:11px;color:var(--faint)">ไม่พบลูกค้า? ไปเพิ่มที่เมนู "ลูกค้า" ก่อน</span>
+                <? if (userRole === 'staff' || userRole === 'admin') { ?>
+                <button type="button" class="btn btn-ghost" onclick="openQuickAddCustomer()">+ เพิ่มลูกค้าด่วน</button>
+                <? } ?>
               </div>
               <div class="form-group">
                 <label>วันที่เสนอราคา</label>
@@ -314,17 +316,39 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="quickCustomerModal">
+  <div class="modal-box" style="width:520px">
+    <div class="modal-header"><span>เพิ่มลูกค้าด่วน</span><button type="button" class="modal-close" aria-label="ปิด" onclick="closeQuickAddCustomer()">×</button></div>
+    <form onsubmit="submitQuickAddCustomer(event)">
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group full"><label for="qcName">ชื่อลูกค้า *</label><input id="qcName" class="form-control" required maxlength="200"></div>
+          <div class="form-group"><label for="qcPhone">โทรศัพท์</label><input id="qcPhone" class="form-control" type="tel" maxlength="12"></div>
+          <div class="form-group"><label for="qcTaxId">เลขผู้เสียภาษี</label><input id="qcTaxId" class="form-control" inputmode="numeric" maxlength="13" pattern="[0-9]{13}" placeholder="13 หลัก หรือเว้นว่าง"></div>
+          <div class="form-group full"><label for="qcAddress">ที่อยู่</label><textarea id="qcAddress" class="form-control" rows="3"></textarea></div>
+          <div class="form-group full"><label for="qcBranch">สาขา</label><input id="qcBranch" class="form-control" placeholder="ไม่ระบุ"></div>
+        </div>
+        <div id="qcAlert" class="modal-alert" role="alert"></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-ghost" onclick="closeQuickAddCustomer()">ยกเลิก</button><button type="submit" class="btn btn-primary" id="qcBtnSave">บันทึกลูกค้า</button></div>
+    </form>
+  </div>
+</div>
+
 <?!= include('UiSystem'); ?>
 <?!= include('Shared'); ?>
 <script>
 var AUTH_TOKEN  = "<?= authToken ?>";
 var WEB_APP_URL = "<?= webAppUrl ?>";
+var USER_ROLE = "<?= userRole ?>";
 
 var customers = [], products = [], quotations = [], sellerInfo = {}, marginMin = 15, statuses = [];
 var basket = [];             // {productCode, productName, partNumber, qty, unitPrice, costPrice, stock}
 var results = [], selIdx = 0, searchTimer = null;
 var stockFilter = 'all';
 var editingDocId = null;
+var quotationSaving = false;
+var quickCustomerSaving = false;
 var listStatusFilter = '';
 // ★ ปีที่กำลังแสดงอยู่ในทะเบียนตอนนี้ ('all' = ทุกปี, หรือตัวเลข พ.ศ.) — เริ่มต้นเป็นปีล่าสุดเสมอ
 var currentPageYear = null;
@@ -351,13 +375,16 @@ document.addEventListener('keydown', function (e) {
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
 //   (เดิมดึงใบเสนอราคา "ทุกใบทุกปี" ทุกครั้งที่เปิดหน้า — ปรับให้กรองตามปีฝั่ง server แทน
 //   ลดการอ่าน Firestore ลงมาก โดยเฉพาะร้านที่เปิดมานานสะสมใบเสนอราคาไว้เยอะ)
-function loadPageData(yearParam, afterLoad) {
+function loadPageData(yearParam, afterLoad, onError) {
   var btn = document.querySelector('.page-head .btn-ghost');
   if (btn) btnBusy(btn, 'กำลังโหลด...');
   var badge = document.getElementById('listYearLoadingBadge');
   if (badge) badge.style.display = 'inline';
   var apiName = quotationBootstrapped ? 'getQuotationListData' : 'getQuotationPageData';
   callApi(apiName, [yearParam || ''], function (data) {
+    if (!data || data.success === false || !Array.isArray(data.quotations)) {
+      failedLoad({message:data && data.message || 'ข้อมูลใบเสนอราคาไม่ถูกต้อง'}); return;
+    }
     if (btn) btnDone(btn);
     data = data || {};
     if (data.customers) customers = data.customers;
@@ -369,6 +396,9 @@ function loadPageData(yearParam, afterLoad) {
     availableYearsCache = data.availableYears || [new Date().getFullYear() + 543];
     quotationBootstrapped = true;
     currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || availableYearsCache[0]);
+    if (currentPageYear !== 'all' && availableYearsCache.indexOf(Number(currentPageYear)) < 0) {
+      availableYearsCache.push(Number(currentPageYear)); availableYearsCache.sort(function(a,b){return b-a;});
+    }
     populateListYearDropdown();
     renderCustomerOptions();
     buildCategoryFilter();
@@ -377,11 +407,13 @@ function loadPageData(yearParam, afterLoad) {
     renderResults();
     if (badge) badge.style.display = 'none';
     if (typeof afterLoad === 'function') afterLoad();
-  }, function (err) {
+  }, failedLoad);
+  function failedLoad(err) {
     if (btn) btnDone(btn);
     if (badge) badge.style.display = 'none';
     toast('โหลดข้อมูลไม่สำเร็จ: ' + esc(JSON.stringify(err)), 'err');
-  });
+    if (typeof onError === 'function') onError(err);
+  }
 }
 
 // ★ สร้าง dropdown ปีจาก availableYears ที่ backend ส่งมา (อ่านแค่ 1 document metadata ไม่ใช่ทุกใบ)
@@ -410,6 +442,44 @@ function renderCustomerOptions() {
       return '<option value="' + esc(c.id) + '">' + esc(label) + '</option>';
     }).join('');
   if (current) sel.value = current;
+}
+
+function openQuickAddCustomer() {
+  if (USER_ROLE !== 'staff' && USER_ROLE !== 'admin') { toast('สิทธิ์ของคุณไม่เพียงพอสำหรับเพิ่มลูกค้า', 'err'); return; }
+  if (quickCustomerSaving || quotationSaving) return;
+  ['qcName','qcPhone','qcTaxId','qcAddress','qcBranch'].forEach(function(id) { document.getElementById(id).value = ''; });
+  document.getElementById('qcAlert').className = 'modal-alert';
+  openModal('quickCustomerModal');
+}
+function closeQuickAddCustomer() { if (!quickCustomerSaving) closeModal('quickCustomerModal'); }
+function submitQuickAddCustomer(e) {
+  e.preventDefault();
+  if (quickCustomerSaving || (USER_ROLE !== 'staff' && USER_ROLE !== 'admin')) return;
+  var name = document.getElementById('qcName').value.trim();
+  var taxId = document.getElementById('qcTaxId').value.trim();
+  var alertEl = document.getElementById('qcAlert');
+  if (!name || (taxId && !/^\d{13}$/.test(taxId))) {
+    alertEl.className = 'modal-alert error'; alertEl.innerText = 'กรุณากรอกชื่อและเลขผู้เสียภาษี 13 หลัก หรือเว้นเลขไว้'; return;
+  }
+  var payload = {customerName:name, phone:document.getElementById('qcPhone').value.trim(), taxId:taxId,
+    address:document.getElementById('qcAddress').value.trim(), branch:document.getElementById('qcBranch').value.trim() || 'ไม่ระบุ', status:'Active'};
+  var btn = document.getElementById('qcBtnSave');
+  quickCustomerSaving = true; btnBusy(btn);
+  callApi('saveCustomer', [payload], function(res) {
+    quickCustomerSaving = false; btnDone(btn);
+    if (res && res.success) {
+      var customer = Object.assign({id:res.id}, res.data);
+      var pos = customers.findIndex(function(c) { return c.id === res.id; });
+      if (pos >= 0) customers[pos] = customer; else customers.push(customer);
+      renderCustomerOptions();
+      document.getElementById('selCustomer').value = res.id;
+      if (window.SYYSelect) SYYSelect.refresh(document.getElementById('selCustomer'));
+      closeQuickAddCustomer(); toast('เพิ่มและเลือกลูกค้าเรียบร้อย');
+    } else { alertEl.className = 'modal-alert error'; alertEl.innerText = res && res.message || 'บันทึกไม่สำเร็จ'; }
+  }, function(err) {
+    quickCustomerSaving = false; btnDone(btn);
+    alertEl.className = 'modal-alert error'; alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+  });
 }
 
 /* ═══ Tabs ═══ */
@@ -592,14 +662,15 @@ function setQty(code, val) {
   var line = basket.find(function (b) { return b.productCode === code; });
   if (!line) return;
   var n = parseFloat(val);
-  line.qty = (!n || n < 1) ? 1 : n;
-  renderBasket();
+  line.qty = isFinite(n) && n > 0 ? n : 0;
+  updateBasketSummary();
 }
 function setPrice(code, val) {
   var line = basket.find(function (b) { return b.productCode === code; });
   if (!line) return;
-  line.unitPrice = parseFloat(val) || 0;
-  renderBasket();
+  var n = parseFloat(val);
+  line.unitPrice = isFinite(n) && n >= 0 ? n : 0;
+  updateBasketSummary();
 }
 function renderBasket() {
   var box = document.getElementById('itemBasket');
@@ -621,15 +692,28 @@ function renderBasket() {
         '</div>' +
         '<div class="qty-box">' +
           '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',-1)">−</button>' +
-          '<input type="number" value="' + b.qty + '" min="1" oninput="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
+          '<input type="number" class="quote-qty" aria-label="จำนวน" value="' + b.qty + '" min="1" oninput="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
           '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',1)">+</button>' +
         '</div>' +
-        '<input type="number" class="price-input" value="' + b.unitPrice + '" min="0" step="0.01" oninput="setPrice(\'' + escJs(b.productCode) + '\',this.value)">' +
+        '<input type="number" class="price-input" aria-label="ราคา/หน่วย" value="' + b.unitPrice + '" min="0" step="0.01" oninput="setPrice(\'' + escJs(b.productCode) + '\',this.value)">' +
         '<span class="line-total">' + money(amount) + '</span>' +
         '<button type="button" class="btn-remove-row" onclick="removeLine(\'' + escJs(b.productCode) + '\')">✕</button>' +
       '</div>';
     }).join('');
   }
+  updateBasketSummary();
+}
+
+// Update outputs only; keep the input DOM, focus, selection and unfinished decimal intact.
+function updateBasketSummary() {
+  document.querySelectorAll('#itemBasket .item-basket-row').forEach(function(row, i) {
+    var b = basket[i];
+    if (!b) return;
+    row.querySelector('.line-total').innerText = money(b.qty * b.unitPrice);
+    var stockNote = row.querySelector('.stock-note');
+    stockNote.classList.toggle('low', b.qty > b.stock);
+    stockNote.innerText = b.qty > b.stock ? 'สต๊อกคงเหลือไม่พอ (คงเหลือ ' + b.stock + ')' : 'คงเหลือ ' + b.stock + ' ชิ้น';
+  });
   var lineCount = basket.length, pieceCount = basket.reduce(function (s, b) { return s + b.qty; }, 0);
   document.getElementById('lineCountLabel').innerText = '(' + lineCount + ' รายการ · ' + pieceCount + ' ชิ้น)';
   document.getElementById('lineCountBadge').innerText = lineCount + ' รายการ';
@@ -669,6 +753,7 @@ function recalcTotals() {
 
 /* ═══ ใบเสนอราคาใหม่ / บันทึก ═══ */
 function newQuotation() {
+  if (quotationSaving) return;
   editingDocId = null;
   basket = [];
   document.getElementById('selCustomer').value = '';
@@ -684,6 +769,7 @@ function newQuotation() {
 }
 
 function loadQuotationIntoBuild(docId) {
+  if (quotationSaving) return;
   var q = quotations.find(function (x) { return x.id === docId; });
   if (!q) { toast('ไม่พบใบเสนอราคานี้', 'err'); return; }
   editingDocId = q.id;
@@ -693,7 +779,12 @@ function loadQuotationIntoBuild(docId) {
              barcode: p ? (p.barcode || '') : '',
              qty: it.qty, unitPrice: it.unitPrice, costPrice: it.costPrice, stock: p ? num(p.currentStock) : 0 };
   });
-  document.getElementById('selCustomer').value = q.customerId;
+  var sel = document.getElementById('selCustomer');
+  if (!Array.from(sel.options).some(function(o) { return o.value === q.customerId; })) {
+    sel.add(new Option(q.customerName + ' (ข้อมูลในเอกสารเดิม)', q.customerId));
+  }
+  sel.value = q.customerId;
+  if (window.SYYSelect) SYYSelect.refresh(sel);
   document.getElementById('inpQuoteDate').value = q.quoteDate || new Date().toISOString().slice(0, 10);
   document.getElementById('selValidDays').value = String(q.validDays || 15);
   document.getElementById('inpCustomerPo').value = q.customerPo || '';
@@ -707,9 +798,16 @@ function loadQuotationIntoBuild(docId) {
 function editQuotation(docId) { loadQuotationIntoBuild(docId); switchTab('build'); }
 
 function saveQuotationNow() {
+  if (quotationSaving) return;
   var customerId = document.getElementById('selCustomer').value;
   if (!customerId) { swyWarning('ข้อมูลไม่ครบ', 'กรุณาเลือกลูกค้า'); return; }
   if (!basket.length) { swyWarning('ข้อมูลไม่ครบ', 'กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ'); return; }
+  var invalidInput = Array.from(document.querySelectorAll('#itemBasket input')).some(function(input) {
+    return !input.value.trim() || !input.checkValidity() || !isFinite(Number(input.value));
+  });
+  if (invalidInput || basket.some(function(b) { return !isFinite(b.qty) || b.qty <= 0 || !isFinite(b.unitPrice) || b.unitPrice < 0; })) {
+    swyWarning('ข้อมูลไม่ถูกต้อง', 'กรุณาระบุจำนวนมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป'); return;
+  }
 
   var d = {
     docId      : editingDocId,
@@ -726,21 +824,37 @@ function saveQuotationNow() {
   };
 
   var btn = document.getElementById('btnSaveQuote');
+  quotationSaving = true;
   btnBusy(btn, 'กำลังบันทึก...');
   callApi('saveQuotation', [d], function (res) {
-    btnDone(btn);
     if (res && res.success) {
       editingDocId = res.id;
       toast(res.message || 'บันทึกเรียบร้อย');
-      loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear, function () {
+      var savedYear = new Date(d.quoteDate + 'T00:00:00').getFullYear() + 543;
+      if (res.quotation) {
+        var pos = quotations.findIndex(function(q) { return q.id === res.id; });
+        if (pos >= 0) quotations[pos] = res.quotation; else quotations.push(res.quotation);
+      }
+      loadPageData(currentPageYear === 'all' ? 'all' : savedYear, function () {
+        quotationSaving = false;
+        btnDone(btn);
+        if (res.quotation && !quotations.some(function(q) { return q.id === res.id; })) quotations.push(res.quotation);
         var q = quotations.find(function (x) { return x.id === res.id; });
-        if (q) { document.getElementById('qtNoBadge').innerText = q.quoteNo + ' · ' + q.status; }
+        if (q) loadQuotationIntoBuild(q.id);
         switchTab('doc');
+      }, function () {
+        quotationSaving = false;
+        btnDone(btn);
+        if (res.quotation) { loadQuotationIntoBuild(res.id); switchTab('doc'); }
+        toast('บันทึกสำเร็จแล้ว แต่รีเฟรชทะเบียนไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ', 'warn');
       });
     } else {
+      quotationSaving = false;
+      btnDone(btn);
       swyError(res && res.title || 'ล้มเหลว', res && res.message);
     }
   }, function (err) {
+    quotationSaving = false;
     btnDone(btn);
     swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
   });
@@ -899,6 +1013,10 @@ function renderDoc() {
   if (editingDocId) {
     docQ = quotations.find(function (x) { return x.id === editingDocId; });
     if (docQ) quoteNo = docQ.quoteNo;
+  }
+  if (docQ && docQ.customerId === customerId) {
+    cust = {Customer_Name:docQ.customerName, Customer_Type:docQ.customerType,
+      Address:docQ.customerAddress, Tax_ID:docQ.customerTaxId, Branch:docQ.customerBranch, Phone:docQ.customerPhone};
   }
 
   var btnIssue = document.getElementById('btnIssueFromDoc');

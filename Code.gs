@@ -801,7 +801,7 @@ function allocateNextAutoId_(collectionName, prefix, forceReseed) {
 // 4. แปลงข้อมูลเป็น Firestore Format
 // ==========================================
 var FORCE_STRING_FIELDS = ["Part_Number", "Product_Name", "Brand_Name", "Category_Name",
-                            "Vendor_name", "Phone", "Area", "Build", "Floor", "Rack_no",
+                            "Vendor_name", "Phone", "Area", "Build", "Floor", "Rack_no", "Rack_Level",
                             "Tax_ID", "Branch", "Invoice_No", "Buyer_Tax_ID", "Buyer_Branch",
                             "Customer_Name", "Address_No", "Address_Moo", "Address_Road",
                             "Subdistrict", "District", "Province", "Postal_Code", "Invoice_Date",
@@ -912,7 +912,7 @@ function deleteFirestoreDocument(collectionName, docId) {
 // ==========================================
 // 8. บันทึก / อัปเดต ข้อมูล (UPSERT)
 // ==========================================
-function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicateName) {
+function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicateName, editOptions) {
   try {
     if (checkDuplicateName) {
       var list        = getFirestoreRawList(collectionName);
@@ -961,6 +961,16 @@ function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicat
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
             + "/databases/(default)/documents/" + collectionName + "/" + id;
 
+    if (editOptions) {
+      var params = (editOptions.fieldPaths || Object.keys(dataObject)).map(function(field) {
+        return "updateMask.fieldPaths=" + encodeURIComponent(field);
+      });
+      params.push(editOptions.updateTime
+        ? "currentDocument.updateTime=" + encodeURIComponent(editOptions.updateTime)
+        : "currentDocument.exists=true");
+      url += "?" + params.join("&");
+    }
+
     var res = UrlFetchApp.fetch(url, {
       method            : "patch",
       headers           : getAuthHeader(),
@@ -971,6 +981,9 @@ function saveMasterData(collectionName, prefix, docId, dataObject, checkDuplicat
     if (res.getResponseCode() === 200) {
       clearCollectionCache(collectionName);
       return { success: true, title: "สำเร็จ", message: "บันทึกข้อมูลเรียบร้อย", id: id, data: dataObject };
+    }
+    if (editOptions && /FAILED_PRECONDITION|NOT_FOUND/.test(res.getContentText())) {
+      return { success: false, title: "ข้อมูลเปลี่ยนแปลง", message: "ข้อมูลถูกแก้ไขหรือลบโดยผู้ใช้อื่น กรุณารีเฟรชและตรวจสอบก่อนบันทึกอีกครั้ง" };
     }
     return { success: false, title: "ล้มเหลว", message: res.getContentText() };
   } catch (e) {
@@ -998,13 +1011,22 @@ function buildZoneMapFromDocs(docs) {
   var map = {};
   (docs || []).forEach(function(doc) {
     var f     = doc.fields || {};
-    var build = parseFirestoreValue(f.Build) || "";
-    var floor = parseFirestoreValue(f.Floor) || "";
-    var area  = parseFirestoreValue(f.Area)  || "";
-    var label = [build, floor, area].filter(Boolean).join(" ");
+    var label = zoneDisplayLabel_(f, doc.id);
     map[doc.id] = label || doc.id;
   });
   return map;
+}
+
+function zoneDisplayLabel_(f, id) {
+  var area = parseFirestoreValue(f.Area) || id || "";
+  var build = parseFirestoreValue(f.Build) || "";
+  var floor = parseFirestoreValue(f.Floor) || "";
+  var rack = parseFirestoreValue(f.Rack_no) || "";
+  var level = parseFirestoreValue(f.Rack_Level) || "";
+  var label = area;
+  if (build || floor) label += " — " + [build, floor].filter(Boolean).join(" ");
+  if (rack) label += " (Rack " + rack + (level ? " · ระดับ " + level : "") + ")";
+  return label;
 }
 
 function buildCarMapFromDocs(docs) {
@@ -1195,14 +1217,7 @@ function getAllMasterDropdowns(preloadedMasters) {
 
   function buildZones() {
     return buildSimpleList("Master_Zones", function(f, id) {
-      var area  = parseFirestoreValue(f.Area)  || id;
-      var build = parseFirestoreValue(f.Build) || "";
-      var floor = parseFirestoreValue(f.Floor) || "";
-      var rack  = parseFirestoreValue(f.Rack_no) || "";
-      var parts = area;
-      if (build || floor) parts += " — " + [build, floor].filter(Boolean).join(" ");
-      if (rack) parts += " (Rack " + rack + ")";
-      return parts;
+      return zoneDisplayLabel_(f, id);
     });
   }
 
@@ -1257,6 +1272,7 @@ function getAllMasterDropdowns(preloadedMasters) {
 // 13. saveProduct
 // ==========================================
 function saveProduct(d) {
+  d = d || {};
   var carIds = Array.isArray(d.carIds) ? d.carIds.filter(Boolean) : [];
 
   var dataObject = {
@@ -1285,7 +1301,32 @@ function saveProduct(d) {
   //   หมายเหตุ: query เทียบค่าตรงตัว (case-sensitive) ต่างจาก scan เดิมที่ไม่สนตัวพิมพ์เล็ก/ใหญ่ —
   //   Barcode เป็นตัวเลขล้วนไม่กระทบ ส่วน Part_Number ถ้าพิมพ์ตัวพิมพ์ต่างกันอาจไม่ถูกจับว่าซ้ำ (data
   //   quality guard เท่านั้น ไม่ใช่ข้อจำกัดด้านความปลอดภัย)
-  var existingFields = docId ? getProductRawFields_(docId) : null;
+  var existingDoc = null;
+  if (docId) {
+    try { existingDoc = readExistingDocument_("Master_Products", docId); }
+    catch (e) { return { success:false, message:e.message }; }
+  }
+  var existingFields = existingDoc ? existingDoc.fields || {} : null;
+  var editOptions = null;
+  if (existingDoc) {
+    // Older clients have no stock baseline: their cached stock is never written back.
+    var stockChanged = d.originalStock !== undefined && d.originalStock !== null &&
+      Number(d.currentStock) !== Number(d.originalStock);
+    if (stockChanged) {
+      if (!isFinite(Number(d.originalStock)) || !isFinite(Number(d.currentStock)) || Number(d.currentStock) < 0) {
+        return { success:false, message:"จำนวนสต๊อกต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป" };
+      }
+      if (Number(d.originalStock) !== Number(parseFirestoreValue(existingFields.Current_Stock) || 0)) {
+        return { success:false, message:"สต๊อกเปลี่ยนแปลงแล้ว กรุณารีเฟรชและตรวจสอบจำนวนก่อนแก้ไขสต๊อก" };
+      }
+      editOptions = { updateTime:existingDoc.updateTime };
+    } else {
+      delete dataObject.Current_Stock;
+      editOptions = {};
+    }
+  } else if (!isFinite(Number(d.currentStock || 0)) || dataObject.Current_Stock < 0) {
+    return { success:false, message:"จำนวนสต๊อกต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป" };
+  }
 
   var cleanProductName = String(dataObject.Product_Name || "").trim();
   if (cleanProductName) {
@@ -1333,12 +1374,23 @@ function saveProduct(d) {
     }
   }
 
-  var saveRes = saveMasterData("Master_Products", "P", docId, dataObject, null);
+  var saveRes = saveMasterData("Master_Products", "P", docId, dataObject, null, editOptions);
   if (saveRes && saveRes.success) {
     saveRes.product = getProductById(saveRes.id);
     if (saveRes.product) saveRes.product.id = saveRes.id;
   }
   return saveRes;
+}
+
+// Reads for edits fail closed: never recreate a deleted record or allocate a new document number.
+function readExistingDocument_(collection, docId) {
+  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
+    + "/databases/(default)/documents/" + collection + "/" + encodeURIComponent(docId);
+  var res = UrlFetchApp.fetch(url, { method:"get", headers:getAuthHeader(), muteHttpExceptions:true });
+  if (res.getResponseCode() !== 200) throw new Error("อ่านข้อมูลเดิมไม่สำเร็จ กรุณารีเฟรชก่อนแก้ไขอีกครั้ง");
+  var doc = JSON.parse(res.getContentText());
+  if (!doc.updateTime) throw new Error("ตรวจสอบเวอร์ชันข้อมูลเดิมไม่สำเร็จ กรุณาลองใหม่");
+  return doc;
 }
 
 function getProductRawFields_(docId) {
@@ -1618,7 +1670,7 @@ function saveCustomer(d) {
     Postal_Code   : String(d.postalCode  || ""),
     Address       : String(d.address || ""),
     Tax_ID        : taxId,
-    Branch        : String(d.branch  || "").trim() || "สำนักงานใหญ่",
+    Branch        : String(d.branch  || "").trim() || "ไม่ระบุ",
     Phone         : String(d.phone   || ""),
     Status        : String(d.status  || "Active")
   };
@@ -1720,6 +1772,12 @@ function calcTaxInvoiceTotals(items) {
   return { subtotal: Math.round(subtotal * 100) / 100, vat: vat, total: total };
 }
 
+function isValidBusinessDate_(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  var date = new Date(value + "T00:00:00Z");
+  return !isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 var TAX_INVOICE_PREFIX = "SYY";
 
 function buildInvoiceNoForMonth(invoiceDateStr, runningNumber) {
@@ -1759,10 +1817,16 @@ function getNextInvoiceRunningNumber(invoiceDateStr, excludeDocId) {
 }
 
 function saveTaxInvoice(d) {
+  d = d || {};
   var items = Array.isArray(d.items) ? d.items : [];
   if (!items.length) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเพิ่มรายการสินค้า/บริการอย่างน้อย 1 รายการ" };
   }
+  if (items.some(function(it) {
+    return !it || !String(it.name || "").trim() || !isFinite(Number(it.qty)) || Number(it.qty) <= 0 ||
+      it.unitPrice === "" || it.unitPrice === null || it.unitPrice === undefined ||
+      !isFinite(Number(it.unitPrice)) || Number(it.unitPrice) < 0;
+  })) return {success:false, message:"รายการสินค้าต้องมีชื่อ จำนวนมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป"};
   var cleanItems = items.filter(function(it) {
     return String(it.name || "").trim() && parseFloat(it.qty) > 0 && parseFloat(it.unitPrice) >= 0;
   }).map(function(it) {
@@ -1789,19 +1853,19 @@ function saveTaxInvoice(d) {
   var totals = calcTaxInvoiceTotals(cleanItems);
 
   var invoiceDate = String(d.invoiceDate || "").trim() || new Date().toISOString().slice(0, 10);
+  if (!isValidBusinessDate_(invoiceDate)) {
+    return { success:false, message:"วันที่ใบกำกับภาษีไม่ถูกต้อง" };
+  }
 
   var invoiceNo = "";
+  var existingDoc = null;
   if (d.docId) {
-    var existingUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                     + "/databases/(default)/documents/Master_Tax_Invoice/" + d.docId;
     try {
-      var existingRes = UrlFetchApp.fetch(existingUrl, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
-      if (existingRes.getResponseCode() === 200) {
-        var existingDoc = JSON.parse(existingRes.getContentText());
-        invoiceNo = parseFirestoreValue((existingDoc.fields || {}).Invoice_No) || "";
-      }
+      existingDoc = readExistingDocument_("Master_Tax_Invoice", d.docId);
+      invoiceNo = parseFirestoreValue((existingDoc.fields || {}).Invoice_No) || "";
+      if (!invoiceNo) return { success:false, message:"ไม่พบเลขที่เอกสารเดิม กรุณาตรวจสอบก่อนแก้ไข" };
     } catch (e) {
-      console.error("saveTaxInvoice: อ่านเลขที่เดิมไม่สำเร็จ (จะรันเลขใหม่แทน):", e);
+      return { success:false, message:e.message };
     }
   }
 
@@ -1810,7 +1874,9 @@ function saveTaxInvoice(d) {
     Buyer_Name    : String(d.buyerName    || "").trim(),
     Buyer_Address : String(d.buyerAddress || "").trim(),
     Buyer_Tax_ID  : buyerTaxId,
-    Buyer_Branch  : String(d.buyerBranch  || "").trim() || "สำนักงานใหญ่",
+    Buyer_Branch  : String(d.buyerBranch === undefined && existingDoc
+      ? parseFirestoreValue((existingDoc.fields || {}).Buyer_Branch) || ""
+      : d.buyerBranch || "").trim() || "ไม่ระบุ",
     Items_JSON    : JSON.stringify(cleanItems),
     Subtotal      : totals.subtotal,
     Vat_Amount    : totals.vat,
@@ -1822,8 +1888,11 @@ function saveTaxInvoice(d) {
 
   if (d.docId && invoiceNo) {
     dataObject.Invoice_No = invoiceNo;
-    var editRes = saveMasterData("Master_Tax_Invoice", "TX", d.docId, dataObject, null);
-    if (editRes.success) updateTaxInvoiceYearsMeta_(invoiceYearBE);
+    var editRes = saveMasterData("Master_Tax_Invoice", "TX", d.docId, dataObject, null, {updateTime:existingDoc.updateTime});
+    if (editRes.success) {
+      updateTaxInvoiceYearsMeta_(invoiceYearBE);
+      editRes.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + editRes.id, fields:mapToFirestoreFields(dataObject)});
+    }
     return editRes;
   }
 
@@ -1849,6 +1918,7 @@ function saveTaxInvoice(d) {
     var res = saveMasterData("Master_Tax_Invoice", "TX", d.docId || null, dataObject, null);
     if (res.success) {
       updateTaxInvoiceYearsMeta_(invoiceYearBE);
+      res.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + res.id, fields:mapToFirestoreFields(dataObject)});
       return res;
     }
     lastErr = res.message;
@@ -1965,9 +2035,11 @@ function getTaxInvoiceListByYear(yearBE) {
       });
     } else {
       console.error("getTaxInvoiceListByYear HTTP " + res.getResponseCode() + ": " + res.getContentText());
+      throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ");
     }
   } catch (e) {
     console.error("getTaxInvoiceListByYear error:", e);
+    throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
   }
   list.sort(function(a, b) { return b.invoiceNo.localeCompare(a.invoiceNo); });
   return list;
@@ -1997,9 +2069,11 @@ function getTaxInvoiceList() {
       });
     } else {
       console.error("getTaxInvoiceList HTTP " + res.getResponseCode() + ": " + res.getContentText());
+      throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ");
     }
   } catch (e) {
     console.error("getTaxInvoiceList error:", e);
+    throw new Error("โหลดใบกำกับภาษีไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
   }
   list.sort(function(a, b) { return b.invoiceNo.localeCompare(a.invoiceNo); });
   return list;
@@ -2110,6 +2184,12 @@ function getNextQuoteRunningNumber(quoteDateStr, excludeDocId) {
 function saveQuotation(d, callerUsername) {
   d = d || {};
   var items = Array.isArray(d.items) ? d.items : [];
+  if (items.some(function(it) {
+    return !it || !String(it.productCode || "").trim() || !isFinite(Number(it.qty)) || Number(it.qty) <= 0 ||
+      it.unitPrice === "" || it.unitPrice === null || it.unitPrice === undefined ||
+      !isFinite(Number(it.unitPrice)) || Number(it.unitPrice) < 0 ||
+      !isFinite(Number(it.costPrice || 0)) || Number(it.costPrice || 0) < 0;
+  })) return {success:false, message:"รายการสินค้าต้องมีจำนวนมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป"};
   var cleanItems = items.filter(function(it) {
     return it && String(it.productCode || "").trim() && parseFloat(it.qty) > 0 && parseFloat(it.unitPrice) >= 0;
   }).map(function(it) {
@@ -2129,10 +2209,27 @@ function saveQuotation(d, callerUsername) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกลูกค้า" };
   }
 
-  var cust = getCustomerById_(d.customerId);
+  var existingDoc = null;
+  if (d.docId) {
+    try { existingDoc = readExistingDocument_(QUOTATION_COLLECTION, d.docId); }
+    catch (e) { return {success:false, message:e.message}; }
+  }
+  var ef = existingDoc ? existingDoc.fields || {} : {};
+  // Preserve the customer snapshot when editing the same document/customer.
+  var cust = existingDoc && parseFirestoreValue(ef.Customer_ID) === d.customerId ? {
+    Customer_Name:parseFirestoreValue(ef.Customer_Name) || "",
+    Customer_Type:parseFirestoreValue(ef.Customer_Type) || "",
+    Address:parseFirestoreValue(ef.Customer_Address) || "",
+    Tax_ID:parseFirestoreValue(ef.Customer_Tax_ID) || "",
+    Branch:parseFirestoreValue(ef.Customer_Branch) || "",
+    Phone:parseFirestoreValue(ef.Customer_Phone) || ""
+  } : getCustomerById_(d.customerId);
   if (!cust) return { success: false, title: "ไม่พบข้อมูล", message: "ไม่พบลูกค้ารายนี้ในระบบ — อาจถูกลบไปแล้ว" };
 
   var quoteDate  = String(d.quoteDate || "").trim() || new Date().toISOString().slice(0, 10);
+  if (!isValidBusinessDate_(quoteDate)) {
+    return {success:false, message:"วันที่ใบเสนอราคาไม่ถูกต้อง"};
+  }
   var validDays  = parseInt(d.validDays, 10) || 15;
   var validUntil = new Date(quoteDate + "T00:00:00");
   if (isNaN(validUntil.getTime())) validUntil = new Date();
@@ -2143,21 +2240,12 @@ function saveQuotation(d, callerUsername) {
   var nowIso = new Date().toISOString();
 
   var quoteNo = "", status = "ร่าง", createdUser = user, createdAt = nowIso;
-  if (d.docId) {
-    var existingUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                     + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + d.docId;
-    try {
-      var existingRes = UrlFetchApp.fetch(existingUrl, { method: "get", headers: getAuthHeader(), muteHttpExceptions: true });
-      if (existingRes.getResponseCode() === 200) {
-        var ef = JSON.parse(existingRes.getContentText()).fields || {};
-        quoteNo     = parseFirestoreValue(ef.Quote_No)  || "";
-        status      = parseFirestoreValue(ef.Status)    || "ร่าง";
-        createdUser = parseFirestoreValue(ef.User)      || user;
-        createdAt   = parseFirestoreValue(ef.Timestamp) || nowIso;
-      }
-    } catch (e) {
-      console.error("saveQuotation: อ่านข้อมูลเดิมไม่สำเร็จ (จะออกเลขที่ใหม่แทน):", e);
-    }
+  if (existingDoc) {
+    quoteNo     = parseFirestoreValue(ef.Quote_No) || "";
+    if (!quoteNo) return {success:false, message:"ไม่พบเลขที่เอกสารเดิม กรุณาตรวจสอบก่อนแก้ไข"};
+    status      = parseFirestoreValue(ef.Status) || "ร่าง";
+    createdUser = parseFirestoreValue(ef.User) || user;
+    createdAt   = parseFirestoreValue(ef.Timestamp) || nowIso;
   }
 
   var dataObject = {
@@ -2193,8 +2281,12 @@ function saveQuotation(d, callerUsername) {
 
   if (d.docId && quoteNo) {
     dataObject.Quote_No = quoteNo;
-    var editRes = saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId, dataObject, null);
-    if (editRes.success) updateQuotationYearsMeta_(quoteYearBE);
+    var editRes = saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId, dataObject, null, {updateTime:existingDoc.updateTime});
+    if (editRes.success) {
+      updateQuotationYearsMeta_(quoteYearBE);
+      var savedFields = Object.assign({}, ef, mapToFirestoreFields(dataObject));
+      editRes.quotation = mapQuotationDoc_({id:editRes.id, fields:savedFields});
+    }
     return editRes;
   }
 
@@ -2220,6 +2312,7 @@ function saveQuotation(d, callerUsername) {
     var res = saveMasterData(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId || null, dataObject, null);
     if (res.success) {
       updateQuotationYearsMeta_(quoteYearBE);
+      res.quotation = mapQuotationDoc_({id:res.id, fields:mapToFirestoreFields(dataObject)});
       return res;
     }
     lastErr = res.message;
@@ -2294,9 +2387,11 @@ function getQuotationList() {
       });
     } else {
       console.error("getQuotationList HTTP " + res.getResponseCode() + ": " + res.getContentText());
+      throw new Error("โหลดใบเสนอราคาไม่สำเร็จ");
     }
   } catch (e) {
     console.error("getQuotationList error:", e);
+    throw new Error("โหลดใบเสนอราคาไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
   }
   list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
   return list;
@@ -2339,9 +2434,11 @@ function getQuotationListByYear(yearBE) {
       });
     } else {
       console.error("getQuotationListByYear HTTP " + res.getResponseCode() + ": " + res.getContentText());
+      throw new Error("โหลดใบเสนอราคาไม่สำเร็จ");
     }
   } catch (e) {
     console.error("getQuotationListByYear error:", e);
+    throw new Error("โหลดใบเสนอราคาไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ");
   }
   list.sort(function(a, b) { return String(b.quoteNo).localeCompare(String(a.quoteNo)); });
   return list;
@@ -2530,16 +2627,39 @@ function markQuotationStockIssued(docId, docNo, callerUsername) {
 // 17. Master — Zones
 // ==========================================
 function saveZone(d) {
+  d = d || {};
+  var area = String(d.area || "").trim();
+  var rack = String(d.rackNo || "").trim();
+  var level = String(d.rackLevel || "").trim();
+  if (!area) return {success:false, message:"กรุณากรอกพื้นที่"};
+  if (level && !/^[1-5]$/.test(level)) return {success:false, message:"ระดับแร็คต้องเป็น 1–5 เท่านั้น"};
+  if (level && !rack) return {success:false, message:"กรุณาระบุเลขแร็คก่อนเลือกระดับแร็ค"};
+  var existing = null;
+  if (d.docId) {
+    try { existing = readExistingDocument_("Master_Zones", d.docId); }
+    catch (e) { return {success:false, message:e.message}; }
+  }
+  var oldFields = existing ? existing.fields || {} : {};
+  if (d.rackLevel === undefined && rack && rack === String(parseFirestoreValue(oldFields.Rack_no) || "").trim()) {
+    level = String(parseFirestoreValue(oldFields.Rack_Level) || "");
+  }
+  // An unchanged legacy rack may remain unspecified; new or changed racks require a level.
+  var legacyRack = existing && !parseFirestoreValue(oldFields.Rack_Level) &&
+    String(parseFirestoreValue(oldFields.Rack_no) || "").trim() === rack;
+  if (rack && !level && !legacyRack) return {success:false, message:"กรุณาเลือกระดับแร็ค 1–5"};
   var dataObject = {
-    Area    : String(d.area    || ""),
+    Area    : area,
     Build   : String(d.build   || ""),
     Floor   : String(d.floor   || ""),
-    Rack_no : String(d.rackNo  || ""),
+    Rack_no : rack,
+    Rack_Level : level,
     Note    : String(d.note    || ""),
-    Car_ID  : String(d.carId   || ""),
-    Status  : String(d.status  || "Active")
+    Car_ID  : String(d.carId === undefined ? parseFirestoreValue(oldFields.Car_ID) || "" : d.carId),
+    Status  : String(d.status || parseFirestoreValue(oldFields.Status) || "Active")
   };
-  return saveMasterData("Master_Zones", "Z", d.docId || null, dataObject, d.area);
+  // Preserve the existing Area uniqueness policy; rack levels do not relax duplicate checks.
+  return saveMasterData("Master_Zones", "Z", d.docId || null, dataObject, area,
+    existing ? {updateTime:existing.updateTime} : null);
 }
 
 function getZoneById(docId) {
@@ -2560,6 +2680,7 @@ function getZoneById(docId) {
         Build   : parseFirestoreValue(f.Build)   || "",
         Floor   : parseFirestoreValue(f.Floor)   || "",
         Rack_no : parseFirestoreValue(f.Rack_no) || "",
+        Rack_Level : parseFirestoreValue(f.Rack_Level) || "",
         Note    : parseFirestoreValue(f.Note)    || "",
         Car_ID  : parseFirestoreValue(f.Car_ID)  || "",
         Status  : parseFirestoreValue(f.Status)  || ""
@@ -2583,6 +2704,7 @@ function getZonesFull() {
         Build   : parseFirestoreValue(f.Build)   || "",
         Floor   : parseFirestoreValue(f.Floor)   || "",
         Rack_no : parseFirestoreValue(f.Rack_no) || "",
+        Rack_Level : parseFirestoreValue(f.Rack_Level) || "",
         Note    : parseFirestoreValue(f.Note)    || "",
         Car_ID  : parseFirestoreValue(f.Car_ID)  || "",
         Status  : parseFirestoreValue(f.Status)  || ""

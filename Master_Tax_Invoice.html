@@ -163,7 +163,9 @@
               <select id="modalCustomerSelect" class="form-control" onchange="onCustomerSelect()" style="flex:1;">
                 <option value="">-- ลูกค้าใหม่ / ลูกค้าขาจร --</option>
               </select>
+              <? if (userRole === 'staff' || userRole === 'admin') { ?>
               <button type="button" class="btn btn-primary" style="background:#16a34a; white-space:nowrap; padding:9px 14px;" onclick="openQuickAddCustomer()">➕ เพิ่มลูกค้า</button>
+              <? } ?>
             </div>
             <span class="field-hint">เลือกแล้วระบบจะเติมชื่อ/ที่อยู่/เลขผู้เสียภาษีให้อัตโนมัติ (แก้ไขต่อได้) หรือกด "เพิ่มลูกค้า" เพื่อเพิ่มลูกค้าใหม่เข้าระบบทันที</span>
           </div>
@@ -183,7 +185,7 @@
           </div>
           <div class="form-group">
             <label>สาขาผู้ซื้อ</label>
-            <input type="text" id="modalBuyerBranch" class="form-control" placeholder="สำนักงานใหญ่">
+            <input type="text" id="modalBuyerBranch" class="form-control" placeholder="ไม่ระบุ">
           </div>
         </div>
 
@@ -353,7 +355,7 @@
           </div>
           <div class="form-group">
             <label>สาขา</label>
-            <input type="text" id="qcBranch" class="form-control" value="สำนักงานใหญ่">
+            <input type="text" id="qcBranch" class="form-control" placeholder="ไม่ระบุ">
           </div>
         </div>
         <div id="qcAlert" class="modal-alert"></div>
@@ -474,6 +476,7 @@
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
   var WEB_APP_URL = "<?= webAppUrl ?>";
+  var USER_ROLE = "<?= userRole ?>";
 
 /* ══════════════════════════════════════════════════════════════
    แปลงตัวเลขเป็นคำอ่านภาษาไทย (บาทถ้วน) — ใช้ตอนพิมพ์ใบกำกับภาษี
@@ -525,6 +528,7 @@ var sellerInfo     = { name: '', branch: '', address: '', taxId: '' };
 var currentPageYear   = null;
 var availableYearsCache = [];
 var taxInvoiceBootstrapped = false;
+var invoiceSaving = false;
 var editingDocId   = null;
 var targetDeleteId = null;
 var itemRowSeq     = 0;
@@ -652,7 +656,7 @@ function switchTab(which) {
 
 /* ═══ โหลดข้อมูล ═══ */
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
-function loadAll(yearParam, onDone) {
+function loadAll(yearParam, onDone, onError) {
   var tbody = document.getElementById('taxBody');
   tbody.innerHTML = skeletonRows(9,5);
   document.getElementById('recordCount').innerText = 'กำลังโหลด';
@@ -660,6 +664,9 @@ function loadAll(yearParam, onDone) {
 
   var apiName = taxInvoiceBootstrapped ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
   callApi(apiName, [yearParam || ''], function(data) {
+      if (!data || data.success === false || !Array.isArray(data.invoices)) {
+        failedLoad({message:data && data.message || 'ข้อมูลใบกำกับภาษีไม่ถูกต้อง'}); return;
+      }
       invoicesCache = (data && data.invoices) || [];
       if (data && data.seller) sellerInfo = data.seller;
       if (data && data.customers) customersCache = data.customers;
@@ -669,6 +676,9 @@ function loadAll(yearParam, onDone) {
 
       // ★ บันทึกว่าตอนนี้กำลังดูปีไหนอยู่ (ใช้ทั้งใน dashboard และ drill-down)
       currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || availableYearsCache[0]);
+      if (currentPageYear !== 'all' && availableYearsCache.indexOf(Number(currentPageYear)) < 0) {
+        availableYearsCache.push(Number(currentPageYear)); availableYearsCache.sort(function(a,b){return b-a;});
+      }
 
       populatePageYearDropdown();
       renderSellerInfoBox();
@@ -678,17 +688,20 @@ function loadAll(yearParam, onDone) {
 
       // ★ เลือก "ทุกปี" แล้ว -> บังคับซ่อนแท็บแดชบอร์ด กลับไปแท็บรายการเสมอ (ตามที่ตกลง)
       updateDashTabAvailability();
+      renderDashboard();
 
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดข้อมูลเสร็จแล้ว พร้อมรับรายการจากหน้าตัดสต๊อกมาเติมใบกำกับภาษี
       try { window.parent.postMessage({ action: 'TAXINVOICE_READY' }, '*'); } catch (e) {}
 
       if (typeof onDone === 'function') onDone();
-    }, function(err) {
+    }, failedLoad);
+  function failedLoad(err) {
       tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
       document.getElementById('recordCount').innerText = 'ผิดพลาด';
       document.getElementById('pageYearLoadingBadge').style.display = 'none';
-    });
+      if (typeof onError === 'function') onError(err);
+  }
 }
 
 // ★ สร้าง dropdown ปีจาก availableYears ที่ backend ส่งมา (อ่านแค่ 1 document metadata ไม่ใช่ทุกใบ)
@@ -763,7 +776,7 @@ function onCustomerSelect() {
   document.getElementById('modalBuyerName').value    = c.Customer_Name || '';
   document.getElementById('modalBuyerAddress').value = c.Address      || '';
   document.getElementById('modalBuyerTaxId').value   = c.Tax_ID       || '';
-  document.getElementById('modalBuyerBranch').value  = c.Branch       || 'สำนักงานใหญ่';
+  document.getElementById('modalBuyerBranch').value  = c.Branch       || 'ไม่ระบุ';
   clearFieldError('modalBuyerName');
   clearFieldError('modalBuyerTaxId');
 }
@@ -780,19 +793,21 @@ function updateInvoiceNoPreview() {
 
 /* ═══ Quick-Add Customer — เพิ่มลูกค้าใหม่จากในฟอร์มใบกำกับภาษี ไม่ต้องออกไปหน้า Master_Customers ═══ */
 function openQuickAddCustomer() {
+  if (USER_ROLE !== 'staff' && USER_ROLE !== 'admin') { toast('สิทธิ์ของคุณไม่เพียงพอสำหรับเพิ่มลูกค้า', 'err'); return; }
   ['qcName','qcPhone','qcTaxId','qcAddressNo','qcAddressMoo','qcAddressRoad'].forEach(function(id) {
     document.getElementById(id).value = '';
   });
-  document.getElementById('qcBranch').value = 'สำนักงานใหญ่';
+  document.getElementById('qcBranch').value = '';
   setAddressDropdowns('qc', '', '', '', '');
   clearFieldError('qcName');
   clearFieldError('qcTaxId');
   document.getElementById('qcAlert').style.display = 'none';
   openModal('quickCustomerModal');
 }
-function closeQuickAddCustomer() { closeModal('quickCustomerModal'); }
+function closeQuickAddCustomer() { if (!document.getElementById('qcBtnSave').disabled) closeModal('quickCustomerModal'); }
 
 function submitQuickAddCustomer() {
+  if (document.getElementById('qcBtnSave').disabled) return;
   var alertEl = document.getElementById('qcAlert');
   alertEl.style.display = 'none';
   clearFieldError('qcName');
@@ -828,7 +843,7 @@ function submitQuickAddCustomer() {
     province    : document.getElementById('qcProvince').value.trim(),
     postalCode  : document.getElementById('qcPostalCode').value.trim(),
     taxId       : taxIdVal,
-    branch      : document.getElementById('qcBranch').value.trim() || 'สำนักงานใหญ่',
+    branch      : document.getElementById('qcBranch').value.trim() || 'ไม่ระบุ',
     status      : 'Active'
   };
 
@@ -845,7 +860,7 @@ function submitQuickAddCustomer() {
           Address_Road:raw.Address_Road || payload.addressRoad || '', Subdistrict:raw.Subdistrict || payload.subdistrict || '',
           District:raw.District || payload.district || '', Province:raw.Province || payload.province || '',
           Postal_Code:raw.Postal_Code || payload.postalCode || '', Tax_ID:raw.Tax_ID || payload.taxId || '',
-          Branch:raw.Branch || payload.branch || 'สำนักงานใหญ่', Phone:raw.Phone || payload.phone || '', Status:raw.Status || 'Active'
+          Branch:raw.Branch || payload.branch || 'ไม่ระบุ', Phone:raw.Phone || payload.phone || '', Status:raw.Status || 'Active'
         };
         customer.Address=[customer.Address_No?'เลขที่ '+customer.Address_No:'',customer.Address_Moo?'หมู่ '+customer.Address_Moo:'',
           customer.Address_Road?'ถนน'+customer.Address_Road:'',customer.Subdistrict?'ตำบล/แขวง'+customer.Subdistrict:'',
@@ -1125,6 +1140,7 @@ function applyInvoicePrefill(d) {
 }
 
 function openAddModal() {
+  if (invoiceSaving) return;
   editingDocId = null;
   document.getElementById('modalDocId').value = '';
   document.getElementById('modalInvoiceNo').value = '';
@@ -1133,7 +1149,7 @@ function openAddModal() {
   document.getElementById('modalBuyerName').value = '';
   document.getElementById('modalBuyerAddress').value = '';
   document.getElementById('modalBuyerTaxId').value = '';
-  document.getElementById('modalBuyerBranch').value = 'สำนักงานใหญ่';
+  document.getElementById('modalBuyerBranch').value = 'ไม่ระบุ';
   document.getElementById('modalNote').value = '';
   document.getElementById('itemBasket').innerHTML = '';
   addItemRow();
@@ -1146,6 +1162,7 @@ function openAddModal() {
 }
 
 function openEditModal(docId) {
+  if (invoiceSaving) return;
   var item = invoicesCache.find(function(x) { return x.id === docId; });
   if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
   editingDocId = docId;
@@ -1156,7 +1173,7 @@ function openEditModal(docId) {
   document.getElementById('modalBuyerName').value = item.buyerName || '';
   document.getElementById('modalBuyerAddress').value = item.buyerAddress || '';
   document.getElementById('modalBuyerTaxId').value = item.buyerTaxId || '';
-  document.getElementById('modalBuyerBranch').value = item.buyerBranch || 'สำนักงานใหญ่';
+  document.getElementById('modalBuyerBranch').value = item.buyerBranch || 'ไม่ระบุ';
   document.getElementById('modalNote').value = item.note || '';
   document.getElementById('itemBasket').innerHTML = '';
   (item.items || []).forEach(function(it) { addItemRow(it); });
@@ -1168,9 +1185,10 @@ function openEditModal(docId) {
   openModal('invoiceModal');
 }
 
-function closeInvoiceModal() { closeModal('invoiceModal'); editingDocId = null; }
+function closeInvoiceModal() { if (invoiceSaving) return; closeModal('invoiceModal'); editingDocId = null; }
 
 function handleSubmit() {
+  if (invoiceSaving) return;
   var alertEl = document.getElementById('modalAlert');
   alertEl.style.display = 'none';
 
@@ -1185,6 +1203,7 @@ function handleSubmit() {
   }
 
   var btn = document.getElementById('modalBtnSave');
+  invoiceSaving = true;
   btn.disabled = true;
   btn.innerText = 'กำลังบันทึก...';
 
@@ -1200,29 +1219,34 @@ function handleSubmit() {
   };
 
   callApi('saveTaxInvoice', [payload], function(res) {
-      btn.disabled = false;
-      btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
       alertEl.style.display = 'block';
       if (res.success) {
-        alertEl.className = 'modal-alert success';
-        var savedYearBE = new Date(document.getElementById('modalInvoiceDate').value + 'T00:00:00').getFullYear() + 543;
-        var noteYearShift = (currentPageYear !== 'all' && savedYearBE !== currentPageYear)
-          ? ' (หมายเหตุ: ใบนี้อยู่ปี พ.ศ. ' + savedYearBE + ' จะไม่แสดงในมุมมองปี พ.ศ. ' + currentPageYear + ' ปัจจุบัน)' : '';
-        alertEl.innerText = '' + res.message + (res.id ? ' (' + res.id + ')' : '') + noteYearShift;
-        var savedId = res.id || editingDocId;
-        setTimeout(function() {
-          closeInvoiceModal();
-          // ★ โหลดข้อมูลใหม่ให้เสร็จก่อน แล้วค่อยเปิดหน้าตัวอย่างพิมพ์ทันที (เหมือนกดปุ่ม "ดูรายงาน/สั่งพิมพ์ย้อนหลัง")
-          //   ต้องรอ loadAll เสร็จก่อนเพราะ openViewModal อ่านจาก invoicesCache ที่เพิ่งโหลดใหม่
-          loadAll(currentPageYear === 'all' ? 'all' : currentPageYear, function() {
-            if (savedId) openViewModal(savedId);
-          });
-        }, 1400);
+        invoiceSaving = false;
+        btn.disabled = false;
+        closeInvoiceModal();
+        var savedYearBE = new Date(payload.invoiceDate + 'T00:00:00').getFullYear() + 543;
+        var savedId = res.id || payload.docId;
+        if (res.invoice) {
+          var pos = invoicesCache.findIndex(function(x) { return x.id === savedId; });
+          if (pos >= 0) invoicesCache[pos] = res.invoice; else invoicesCache.push(res.invoice);
+          openViewModal(savedId, res.invoice);
+        }
+        toast('บันทึกใบกำกับภาษีเรียบร้อย');
+        loadAll(currentPageYear === 'all' ? 'all' : savedYearBE, function() {
+          // Saved response remains available even if a bounded list omits the record.
+          if (savedId) openViewModal(savedId, res.invoice);
+        }, function() {
+          toast('บันทึกสำเร็จแล้ว แต่รีเฟรชทะเบียนไม่สำเร็จ กรุณารีเฟรชโดยไม่บันทึกซ้ำ', 'warn');
+        });
       } else {
+        invoiceSaving = false;
+        btn.disabled = false;
+        btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
         alertEl.className = 'modal-alert error';
         alertEl.innerText = '' + res.message;
       }
     }, function(err) {
+      invoiceSaving = false;
       btn.disabled = false;
       btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
       alertEl.className = 'modal-alert error';
@@ -1296,8 +1320,8 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage) {
   '</div>';
 }
 
-function openViewModal(docId) {
-  var item = invoicesCache.find(function(x) { return x.id === docId; });
+function openViewModal(docId, savedInvoice) {
+  var item = savedInvoice || invoicesCache.find(function(x) { return x.id === docId; });
   if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
   currentPrintInvoice = item;
 
