@@ -44,4 +44,8 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 - [Staging UAT / measurement / rollout / rollback](docs/STAGING-UAT-2026-10-12.md)
 - [Live result template](docs/STAGING-RESULTS.template.json)
 
-งานค้างที่ต้องใช้บริการจริง: Staging UAT, OAuth/Mail/IAM/index/trigger confirmation, Firestore/latency measurements และ rollout ที่ได้รับอนุมัติ. Public PR #2 ของ daily backlog เป็นงานเดิม ไม่ได้รวม changes ทั้งหมดบน branch ปัจจุบัน
+งานค้างที่ต้องใช้บริการจริง: Staging UAT, OAuth/Mail/IAM/index/trigger confirmation, Firestore/latency measurements และ rollout ที่ได้รับอนุมัติ. สถานะส่ง source ล่าสุดอยู่ใน [Main delivery](docs/MAIN-DELIVERY-2026-10-12.md); รายงานรอบก่อนบันทึกสถานะ ณ เวลาที่จัดทำ
+
+## แนวทาง Git ปัจจุบัน
+
+ตามคำสั่งผู้ใช้วันที่ 12 ตุลาคม 2569 ให้ทำงานบน `main` และอัปเดต `origin/main` ทุกครั้งหลังตรวจและ commit งานที่เสร็จ จนกว่าจะมีคำสั่งเปลี่ยนแปลง ดูคำสั่งถาวรใน [AGENTS.md](AGENTS.md) การ push source ไม่ใช่การ deploy Apps Script หรือการอนุมัติเปลี่ยนข้อมูล Production
