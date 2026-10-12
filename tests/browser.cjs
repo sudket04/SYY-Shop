@@ -17,7 +17,7 @@ function render(file, role, channel = '') {
   return html;
 }
 const fixture = `<script>
-window.apiCalls=[];window.alerts=[];window.apiFailure='';window.apiHold='';window.apiPending=[];
+window.apiCalls=[];window.alerts=[];window.apiFailure='';window.apiHold='';window.apiPending=[];window.fixtureMovements=[];window.fixtureMovementDetails={};
 window.Swal={fire:function(o){alerts.push(o);return Promise.resolve({isConfirmed:true});}};
 window.fixtureProduct={id:'P1',productCode:'P1',productName:'Test Part',partNumber:'PN1',barcode:'123',sellingPrice:200,costPrice:100,currentStock:10,minStock:2,zoneId:'Z1',zoneName:'A (Rack R1)',status:'Active',imageUrls:[]};
 window.fixtureCustomer={id:'C1',Customer_Name:'Buyer',Customer_Type:'ลูกค้าทั่วไป',Address:'Saved address',Branch:'สาขา 2',Tax_ID:'1234567890123'};
@@ -25,7 +25,9 @@ window.fixtureInvoice={id:'TX1',invoiceNo:'SYY 0001/10/69',invoiceDate:'2026-10-
 window.respond=function(fn,args){
  if(fn==='getDashboardBootstrap')return {products:[fixtureProduct],movements:[],poVendorMap:{},serverTime:'2026-10-11T05:00:00Z'};
  if(fn==='getDashboardDelta')return {success:true,productStocks:[],movements:[],serverTime:'2026-10-11T05:01:00Z'};
- if(['getBrands','getCategories','getVendorsFull','getCustomersFull','getCarsFull','getAllUsers','getActivityLog','getStockMovements'].includes(fn))return [];
+ if(['getBrands','getCategories','getVendorsFull','getCustomersFull','getCarsFull','getAllUsers','getActivityLog'].includes(fn))return [];
+ if(fn==='getStockMovements')return fixtureMovements;
+ if(fn==='getStockMovementDetail')return fixtureMovementDetails[args[0]]||{docNo:args[0],complete:true,movements:fixtureMovements.filter(m=>m.docNo===args[0])};
  if(fn==='getPurchaseOrderPageData')return {lowStockItems:[],purchaseOrders:[]};
  if(fn==='saveMasterData')return {success:true,id:'NEW',data:args[3]};
  if(fn==='getQuotationPageData')return {products:[fixtureProduct],customers:[fixtureCustomer],quotations:[],availableYears:[2569],seller:{name:'Seller'},statuses:['ร่าง'],marginMin:15};
@@ -96,17 +98,64 @@ async function main(){
     for(const width of [390,320]){await p.setViewportSize({width,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'stock '+width);await p.screenshot({path:path.join(output,'stock-layout-'+width+'.png')});}
     assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('Shared page and compact tables fill wide screens, with separated sticky headers and contained mobile scroll',async()=>{
+  await check('Pages center stable widths by information density, with separated sticky headers and contained mobile scroll',async()=>{
     for(const file of ['Master_Brands.html','Master_Categories.html','Master_Cars.html','Master_Zones.html','Master_Vendors.html','Master_Customers.html','StockIssue.html','Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html','Master_Products.html','Manage_Users.html']) {
       const p=await pageFor(file);await p.setViewportSize({width:1920,height:1080});
-      const frame=await p.locator('.page,.app-container').count();if(frame){const b=await p.locator('.page,.app-container').first().boundingBox();assert(b.width>=1920-60,file+' wide frame');}
+      const frame=await p.locator('.page,.app-container').count();if(frame){const b=await p.locator('.page,.app-container').first().boundingBox();const expected=await p.evaluate(()=>Number.parseFloat(getComputedStyle(document.body).getPropertyValue('--syy-content-width')));assert(Math.abs(b.width-expected)<2,file+' content width '+JSON.stringify(b));assert(Math.abs(b.x-(1920-b.width)/2)<2,file+' centered frame');}
       for(const table of await p.locator('table.table-compact').all()){const widths=await table.evaluate(t=>[t.getBoundingClientRect().width,t.parentElement.clientWidth]);assert(Math.abs(widths[0]-widths[1])<3,file+' compact table');}
       await p.setViewportSize({width:320,height:844});const overflow=await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth);if(!overflow)console.log('OVERFLOW '+file,await p.evaluate(()=>Array.from(document.body.querySelectorAll('*')).filter(x=>{const r=x.getBoundingClientRect();return r.right>innerWidth+1&&r.width>0&&!x.closest('.table-wrap,.table-container,.modal-overlay');}).slice(0,12).map(x=>({tag:x.tagName,id:x.id,class:x.className,right:x.getBoundingClientRect().right,width:x.getBoundingClientRect().width}))));assert.equal(overflow,true,file+' mobile');assert.deepEqual(p.errors,[]);await p.close();
     }
     const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{cache=Array.from({length:100},(_,i)=>({id:'B'+i,Name:'แบรนด์ '+i}));renderRows();});await p.waitForTimeout(30);
+    const type=await p.evaluate(()=>({body:getComputedStyle(document.body).fontSize,font:getComputedStyle(document.body).fontFamily,table:getComputedStyle(document.querySelector('table')).fontSize,title:getComputedStyle(document.querySelector('.crumb b')).fontSize}));assert.equal(type.body,'15px');assert.match(type.font,/Noto Sans Thai/);assert.equal(type.table,'14px');assert.equal(type.title,'17px');
     await p.evaluate(()=>{document.querySelector('.table-wrap').scrollTop=400;});
     const sticky=await p.evaluate(()=>{const head=document.querySelector('thead th').getBoundingClientRect(),box=document.querySelector('.table-wrap').getBoundingClientRect();return {gap:box.top-document.querySelector('.page-head').getBoundingClientRect().bottom,top:head.top-box.top};});assert(sticky.gap>=8);assert(Math.abs(sticky.top)<2);
     await p.screenshot({path:path.join(output,'brands-layout-desktop.png')});assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Viewer opens Products on desktop/mobile and reads details without edit, delete or draft controls',async()=>{
+    const shell=await pageFor('index.html','viewer');assert.equal(await shell.locator('#menu-products').count(),1);
+    await shell.evaluate(()=>switchPage('products'));assert.equal(await shell.locator('.main>.page-head').isVisible(),false);
+    assert.equal(await shell.locator('#productsForm').isVisible(),true);
+    for(const width of [800,390,320]){await shell.setViewportSize({width,height:844});assert.equal(await shell.locator('#mobile-products').isDisabled(),false);assert.equal(await shell.locator('#mobile-stockissue').isDisabled(),true);assert.equal(await shell.locator('#mobileNav').isVisible(),true);}
+    await shell.evaluate(()=>switchPage('home'));assert.equal(await shell.locator('.main>.page-head').isVisible(),true);assert.deepEqual(shell.errors,[]);await shell.close();
+    const p=await pageFor('Master_Products.html','viewer');
+    assert.equal(await p.locator('#btnAddProduct').isVisible(),false);assert.equal(await p.locator('#productReadOnlyLabel').isVisible(),true);
+    assert.equal(await p.locator('#productBody .edit,#productBody .del').count(),0);assert.equal(await p.locator('#productBody .view').count(),1);
+    await p.locator('#productBody .view').click();assert.equal(await p.locator('#viewProductModal').isVisible(),true);assert.equal(await p.locator('#viewProductName').innerText(),'Test Part');
+    await p.keyboard.press('Escape');await p.evaluate(()=>{openAddModal();openEditModal('P1');editingDocId='P1';handleSubmit({preventDefault(){}});generateBarcodeInForm();confirmDeleteModal('P1');targetDeleteDocId='P1';execDeleteProduct();pickProductImage(0);stageProductImageNow('x','x',0);deleteProductImageNow(0);setPrimaryProductImageNow(0);moveProductImageNow(0,1);});
+    assert.equal(await p.locator('#productModal').isVisible(),false);assert.equal(await p.evaluate(()=>apiCalls.some(x=>/save|delete|commit|upload|generate|move|setPrimary/i.test(x.fn))),false);
+    await p.locator('#tableSearchInput').fill('missing');assert.equal(await p.locator('#productBody').getByRole('button',{name:'+ เพิ่มสินค้า',exact:true}).count(),0);
+    await p.evaluate(()=>{productsCache=[];filterAndRenderTable();});assert.equal(await p.locator('#productBody').getByRole('button',{name:'+ เพิ่มสินค้า',exact:true}).count(),0);
+    assert.deepEqual(p.errors,[]);await p.close();
+    for(const [role,canEdit,canDelete] of [['staff',true,false],['admin',true,true]]){const q=await pageFor('Master_Products.html',role);assert.equal(await q.locator('#btnAddProduct').isVisible(),canEdit);assert.equal(await q.locator('#productBody .edit').count(),1);assert.equal(await q.locator('#productBody .del').count(),canDelete?1:0);await q.locator('#productBody .edit').click();assert.equal(await q.locator('#productModal').isVisible(),true);assert.deepEqual(q.errors,[]);await q.close();}
+  });
+  await check('Stock history searches and opens a whole transaction, caches details, and preserves basket and read-only behavior',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{
+      addToBasket('P1');
+      const line={id:'SI-test-1',docNo:'SI-test',type:'OUT',productCode:'P1',productName:'อะไหล่',qty:2,stockBefore:10,stockAfter:8,unitPrice:150,hasUnitPrice:true,reason:'ขายหน้าร้าน',refNo:'INV1',quoteId:'QT1',note:'หมายเหตุ',user:'Staff',timestamp:'2026-10-12T01:00:00Z'};
+      fixtureMovements=[line];fixtureMovementDetails['SI-test']={docNo:'SI-test',complete:true,movements:[line,{...line,id:'SI-test-2',productCode:'P2',productName:'สินค้าบรรทัดที่ไม่อยู่ในประวัติหน้าแรก',qty:1,unitPrice:0}]};switchTab('history');
+    });await p.waitForTimeout(30);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),0);
+    await p.locator('#mvSearchInput').fill('SI-test');assert.equal(await p.locator('#mvBody tr').count(),1);await p.locator('#mvBody .movement-link').click();await p.waitForTimeout(30);
+    const detail=p.locator('#movementDetailBody');assert.match(await detail.innerText(),/สินค้าบรรทัดที่ไม่อยู่/);assert.match(await detail.innerText(),/QT1/);assert.match(await detail.innerText(),/2 บรรทัด \/ 3 ชิ้น/);assert.match(await detail.innerText(),/300\.00/);
+    assert.equal(await detail.locator('input,select,textarea').count(),0);assert.equal(await p.evaluate(()=>basket.length),1);
+    await p.keyboard.press('F4');assert.equal(await p.evaluate(()=>apiCalls.some(x=>x.fn==='issueStock')),false);assert.equal(await p.evaluate(()=>alerts.length),0);
+    for(const width of [1920,1365,800,390,320]){await p.setViewportSize({width,height:950});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);const b=await p.locator('#movementDetailModal .modal-box').boundingBox();assert(b.x>=0&&b.x+b.width<=width+1);}
+    await p.screenshot({path:path.join(output,'stock-detail-mobile.png')});await p.setViewportSize({width:1365,height:950});await p.screenshot({path:path.join(output,'stock-detail-desktop.png')});
+    await p.keyboard.press('Escape');await p.locator('#mvBody .movement-link').click();await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),1);
+    await p.evaluate(()=>loadMovements());await p.waitForTimeout(25);await p.locator('#mvBody .movement-link').click();await p.waitForTimeout(25);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),2);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('History handles legacy data, injection, incomplete results, failed reads and out-of-order responses',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{
+      const a={id:'A',docNo:'SI-A',type:'IN',productCode:'P1',productName:'<img src=x onerror="window.injected=true">',qty:1,stockBefore:'',stockAfter:1,hasUnitPrice:false,note:'<script>window.injected=true</script>'};
+      movements=[a,{...a,id:'B',docNo:'SI-B'},{...a,id:'old',docNo:''}];fixtureMovementDetails['SI-A']={docNo:'SI-A',movements:[a],complete:false};fixtureMovementDetails['SI-B']={docNo:'SI-B',movements:[{...a,id:'B',docNo:'SI-B'}],complete:true};document.getElementById('panelHistory').classList.add('active');document.getElementById('panelIssue').classList.remove('active');renderMovements();
+      openMovementDetail('old');
+    });assert.match(await p.locator('#movementDetailBody').innerText(),/เฉพาะบรรทัดที่เลือก/);assert.match(await p.locator('#movementDetailBody').innerText(),/ไม่ได้บันทึก/);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),0);
+    await p.evaluate(()=>{apiHold='getStockMovementDetail';openMovementDetail('A');openMovementDetail('A');openMovementDetail('B');});assert.equal(await p.evaluate(()=>apiPending.length),2);
+    await p.evaluate(()=>apiPending[1]());assert.match(await p.locator('#movementDetailBody').innerText(),/SI-B/);await p.evaluate(()=>apiPending[0]());assert.match(await p.locator('#movementDetailBody').innerText(),/SI-B/);
+    await p.evaluate(()=>{apiHold='';openMovementDetail('A');});assert.match(await p.locator('#movementDetailBody').innerText(),/ข้อมูลที่แสดงยังไม่ครบ/);assert.equal(await p.locator('#movementDetailBody img,#movementDetailBody script').count(),0);assert.equal(await p.evaluate(()=>!!window.injected),false);
+    await p.evaluate(()=>{movementDetailCache=Object.create(null);apiFailure='getStockMovementDetail';openMovementDetail('B');});await p.waitForTimeout(25);assert.match(await p.locator('#movementDetailBody').innerText(),/โหลดรายละเอียดไม่สำเร็จ/);
+    await p.evaluate(()=>apiFailure='');await p.locator('#movementDetailBody').getByRole('button',{name:'ลองอีกครั้ง'}).click();await p.waitForTimeout(25);assert.match(await p.locator('#movementDetailBody').innerText(),/SI-B/);
+    await p.evaluate(()=>{movementDetailCache=Object.create(null);apiHold='getStockMovementDetail';apiPending=[];openMovementDetail('A');loadMovements();apiPending[0]();});assert.equal(await p.locator('#movementDetailModal').isVisible(),false);assert.equal(await p.evaluate(()=>Object.keys(movementDetailCache).length),0);
+    assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Brands and Categories keep saveMasterData operation through gateway',async()=>{
     for(const [file,collection] of [['Master_Brands.html','Master_Brands'],['Master_Categories.html','Master_Categories']]) {
@@ -359,7 +408,7 @@ async function main(){
     assert.equal(await p.evaluate(()=>syyModalStack.at(-1).dialog.getAttribute('aria-modal')),'true');assert.equal(await p.evaluate(()=>!!document.querySelector('.page-body .toolbar').closest('[inert]')),true,JSON.stringify(await p.evaluate(()=>({children:Array.from(document.body.children).map(x=>[x.tagName,x.id,x.className,x.inert]),top:syyModalStack.at(-1).element.id}))));
     await p.evaluate(()=>syyModalFocusables(syyModalStack.at(-1).element).at(-1).focus());await p.keyboard.press('Tab');assert.equal(await p.evaluate(()=>document.activeElement===syyModalFocusables(syyModalStack.at(-1).element)[0]),true);await p.keyboard.press('Shift+Tab');assert.equal(await p.evaluate(()=>document.activeElement===syyModalFocusables(syyModalStack.at(-1).element).at(-1)),true);
     await p.keyboard.press('Escape');assert.equal(await p.locator('.modal-overlay.active').count(),1);
-    await p.locator('#inp_brandId').locator('..').locator('.syy-select-control').click();await p.waitForTimeout(25);assert.equal(await p.evaluate(()=>document.activeElement.classList.contains('syy-select-search')),true);await p.keyboard.press('Escape');
+    await p.locator('#inp_brandId').locator('..').locator('.syy-select-control').click();await p.waitForFunction(()=>document.activeElement.classList.contains('syy-select-search'),{},{timeout:5000});await p.keyboard.press('Escape');
     await p.evaluate(()=>{const box=document.createElement('div');box.className='swal2-container';box.innerHTML='<button id="testSwalButton">Confirm</button>';document.body.appendChild(box);document.getElementById('testSwalButton').focus();});assert.equal(await p.evaluate(()=>document.activeElement.id),'testSwalButton');await p.evaluate(()=>{document.querySelector('.swal2-container').remove();closeModal(syyModalStack.at(-1).element.id);});assert.equal(await trigger.evaluate(x=>x===document.activeElement),true);assert.equal(await p.evaluate(()=>document.querySelector('.page-body').inert),false);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Trusted cross-page deltas update stock without changing negotiated draft and inactive frames do not poll',async()=>{

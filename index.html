@@ -163,7 +163,7 @@
     .dash-field-tile{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:#fff}
   </style>
 </head>
-<body>
+<body data-syy-layout="shell">
 
 <!-- ═══════════ SIDEBAR ═══════════ -->
 <div class="sidebar" id="sidebar">
@@ -496,7 +496,7 @@
     { group:'ภาพรวม',      items:[ {id:'home',       ic:'home', label:'Dashboard สต๊อก', dot:true} ] },
     { group:'งานประจำวัน', items:[
         {id:'stockissue', ic:'stock', label:'ตัดสต๊อก / ขายหน้าร้าน', roles:['admin','staff']},
-        {id:'products',   ic:'products', label:'จัดการสินค้า', badge:'products', roles:['admin','staff']},
+        {id:'products',   ic:'products', label:'จัดการสินค้า', badge:'products', roles:['admin','staff','viewer']},
         {id:'orders',     ic:'clipboard', label:'สั่งซื้อสินค้า', badge:'orders', roles:['admin','staff']},
         {id:'quotation',  ic:'file-text', label:'ใบเสนอราคา'},
         {id:'taxinvoice', ic:'receipt', label:'ใบกำกับภาษี'}
@@ -713,7 +713,7 @@
       {id:'more',label:'เพิ่มเติม',ic:'more'}
     ];
     document.getElementById('mobileNav').innerHTML=entries.map(function(it){
-      var disabled=(it.id==='stockissue'||it.id==='products') && ['admin','staff'].indexOf(USER_ROLE)<0;
+      var disabled=it.id==='stockissue' && ['admin','staff'].indexOf(USER_ROLE)<0;
       var action=it.id==='documents'?'openDocPicker()':it.id==='more'?'openCmdk()':"switchPage('"+it.id+"')";
       return '<button type="button" id="mobile-'+it.id+'" class="'+(it.id==='home'?'active':'')+'" '+(disabled?'disabled aria-disabled="true" style="opacity:.4"':'onclick="'+action+'"')+'>'+icon(it.ic)+'<span>'+it.label+'</span></button>';
     }).join('');
@@ -746,6 +746,7 @@
     document.getElementById('crumbPage').innerText  = LABEL_OF[id]||'';
 
     var isHome = id==='home';
+    document.body.classList.toggle('syy-child-page',!isHome);
     document.getElementById('homeScreen').style.display = isHome?'flex':'none';
     document.getElementById('headActions').style.display = isHome?'flex':'none';
     document.querySelectorAll('.form-wrapper').forEach(function(f){ f.classList.remove('active'); });

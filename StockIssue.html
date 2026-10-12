@@ -17,6 +17,18 @@
   .tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
   .tab-panel{display:none}
   .tab-panel.active{display:block}
+  .movement-link{border:0;background:var(--primary-soft);color:var(--primary);border-radius:6px;padding:6px 9px;cursor:pointer;font:inherit;font-size:13px;text-align:left;overflow-wrap:anywhere;white-space:normal;max-width:260px}
+  .movement-link:hover{background:#d6e6f5;text-decoration:underline}
+  .movement-link:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+  .movement-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px}
+  .movement-meta>div{padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:9px;min-width:0}
+  .movement-meta .label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .movement-meta .value{color:var(--ink);overflow-wrap:anywhere;white-space:pre-wrap}
+  .movement-summary{margin-top:16px;padding:12px 14px;border:1px solid var(--primary-line);background:var(--primary-soft);border-radius:9px;display:flex;gap:14px;justify-content:space-between;flex-wrap:wrap}
+  #movementDetailBody .table-wrap{max-height:360px}
+  #movementDetailBody .product-name-cell{min-width:180px;max-width:320px;white-space:normal}
+  .movement-scroll-hint{display:none}
+  @media(max-width:640px){.movement-meta{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.movement-meta>div{padding:10px}.movement-meta .value{font-size:14px}.movement-scroll-hint{display:block;font-size:12px;color:var(--muted);margin:8px 0}}
 
   .issue-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,1fr);gap:18px;align-items:start}
   @media (max-width:1000px){.issue-grid{grid-template-columns:1fr}}
@@ -110,7 +122,7 @@
   .view-price-pill .vpp-value{font-size:15px;font-weight:700;margin-top:2px}
   </style>
 </head>
-<body>
+<body data-syy-layout="workspace">
 
 <div class="page">
   <div class="page-head">
@@ -223,7 +235,7 @@
         <div class="toolbar">
           <div class="search">
             <span class="ico">⌕</span>
-            <input type="text" id="mvSearchInput" class="input" placeholder="ค้นหาสินค้า / รหัส / เหตุผล / อ้างอิง / ผู้ทำรายการ" oninput="renderMovements()" autocomplete="off">
+            <input type="text" id="mvSearchInput" class="input" placeholder="ค้นหาเลขรายการ / สินค้า / รหัส / เหตุผล / อ้างอิง / ผู้ทำรายการ" oninput="renderMovements()" autocomplete="off">
           </div>
           <span class="count" id="mvCount"></span>
         </div>
@@ -231,16 +243,27 @@
           <table>
             <thead>
               <tr>
-                <th>เวลา</th><th>ประเภท</th><th>สินค้า</th>
+                <th>เลขรายการ · คลิกดูรายละเอียด</th><th>เวลา</th><th>ประเภท</th><th>สินค้า</th>
                 <th class="text-center">จำนวน</th><th class="text-center">คงเหลือหลังทำ</th>
                 <th class="text-right">มูลค่า</th><th>เหตุผล / อ้างอิง</th><th>ผู้ทำรายการ</th>
               </tr>
             </thead>
-            <tbody id="mvBody"><tr><td colspan="8">⏳ กำลังโหลด...</td></tr></tbody>
+            <tbody id="mvBody"><tr><td colspan="9">⏳ กำลังโหลด...</td></tr></tbody>
           </table>
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="movementDetailModal">
+  <div class="modal-box" style="width:960px">
+    <div class="modal-header">
+      <span>📜 รายละเอียดรายการเข้า-ออก</span>
+      <button type="button" class="modal-close" onclick="closeMovementDetail()" aria-label="ปิดรายละเอียดรายการ">×</button>
+    </div>
+    <div class="modal-body" id="movementDetailBody" aria-live="polite"></div>
+    <div class="modal-footer"><button type="button" class="btn btn-ghost" onclick="closeMovementDetail()">ปิด</button></div>
   </div>
 </div>
 
@@ -349,6 +372,15 @@
   }
 
   document.addEventListener('keydown', function (e) {
+    if(document.getElementById('movementDetailModal').classList.contains('active')){
+      if(e.key==='Escape'){e.preventDefault();closeMovementDetail();}
+      return;
+    }
+    if(document.querySelector('.modal-overlay.active,.swal2-container'))return;
+    if(!document.getElementById('panelIssue').classList.contains('active')){
+      if(e.key==='F2'){e.preventDefault();switchTab('issue');}
+      return;
+    }
     if (e.key === 'F2') { e.preventDefault(); focusScanInput(); return; }
     if (e.key === 'F4') { e.preventDefault(); confirmIssue(); return; }
     if (document.getElementById('panelIssue').classList.contains('active')) {
@@ -855,12 +887,16 @@
   }
 
   function loadMovements() {
-    document.getElementById('mvBody').innerHTML = skeletonRows(8, 6);
+    movementDetailGeneration++;
+    movementDetailCache = Object.create(null);
+    movementDetailPending = Object.create(null);
+    closeMovementDetail();
+    document.getElementById('mvBody').innerHTML = skeletonRows(9, 6);
     callApi('getStockMovements', [MV_LIMIT, ''], function (data) {
       movements = data || [];
       renderMovements();
     }, function (err) {
-      document.getElementById('mvBody').innerHTML = emptyStateHtml(8, {
+      document.getElementById('mvBody').innerHTML = emptyStateHtml(9, {
         icon: '⚠️', title: 'โหลดประวัติไม่สำเร็จ', sub: syyErrorMessage(err),
         actions: [{ label: 'ลองอีกครั้ง', primary: true, onclick: 'loadMovements()' }]
       });
@@ -880,7 +916,7 @@
     var rows = mvFilter === 'all' ? movements.slice() : movements.filter(function (m) { return m.type === mvFilter; });
     if (q) {
       rows = rows.filter(function (m) {
-        return [m.productName, m.productCode, m.reason, m.refNo, m.user, m.note]
+        return [m.docNo, m.productName, m.productCode, m.reason, m.refNo, m.user, m.note]
           .map(function (x) { return String(x || '').toLowerCase(); }).join(' | ').indexOf(q) > -1;
       });
     }
@@ -891,27 +927,83 @@
 
     var tbody = document.getElementById('mvBody');
     if (!rows.length) {
-      tbody.innerHTML = emptyStateHtml(8, movements.length
+      tbody.innerHTML = emptyStateHtml(9, movements.length
         ? { title: 'ไม่พบรายการที่ตรงกับที่ค้นหา', sub: 'ลองลดคำค้นหรือเปลี่ยนตัวกรอง' }
         : { icon: '📭', title: 'ยังไม่มีประวัติเข้า-ออก', sub: 'รายการจะขึ้นทันทีที่มีการตัดสต๊อกหรือรับของเข้า' });
       return;
     }
     tbody.innerHTML = rows.map(function (m) {
       var isIn = m.type === 'IN';
-      // ★ มูลค่า: ตัดสต๊อก (OUT) เก็บ Unit_Price ไว้ทุกครั้งจึงคำนวณได้เสมอ
-      //   รับของเข้า (IN) ยังไม่ได้บันทึกราคาต่อหน่วยไว้ในระบบ จึงโชว์ "-" ตามจริง ไม่กะเกณฑ์เอาเอง
-      var value = isIn ? null : num(m.unitPrice) * Math.abs(num(m.qty));
+      // Show recorded prices only; a missing legacy/receipt price is not a zero price.
+      var value = m.hasUnitPrice ? num(m.unitPrice) * Math.abs(num(m.qty)) : null;
       return '<tr>' +
+        '<td><button type="button" class="movement-link" data-movement-id="' + esc(m.id) + '" title="ดูรายละเอียดรายการ">' + esc(m.docNo || 'ดูบรรทัดนี้ · ไม่มีเลขรายการ') + '</button></td>' +
         '<td style="white-space:nowrap">' + esc(fmtTime(m.timestamp)) + '</td>' +
         '<td><span class="' + (isIn ? 'mv-in' : 'mv-out') + '">' + (isIn ? '📥 เข้า' : '📤 ออก') + '</span></td>' +
         '<td>' + esc(m.productName) + ' <span class="pn-badge">' + esc(m.productCode) + '</span></td>' +
         '<td class="text-center" style="font-weight:600;color:' + (isIn ? 'var(--ok)' : 'var(--danger-dark)') + '">' + (isIn ? '+' : '−') + Math.abs(num(m.qty)) + '</td>' +
-        '<td class="text-center">' + (m.stockAfter === '' || m.stockAfter == null ? '-' : m.stockAfter) + '</td>' +
+        '<td class="text-center">' + esc(m.stockAfter === '' || m.stockAfter == null ? '-' : m.stockAfter) + '</td>' +
         '<td class="text-right mono">' + (value == null ? '<span class="cell-empty">—</span>' : money(value)) + '</td>' +
         '<td>' + esc(m.reason || '-') + (m.refNo ? ' · <span class="mono" style="font-size:11.5px">' + esc(m.refNo) + '</span>' : '') + '</td>' +
         '<td>' + esc(m.user || '-') + '</td>' +
       '</tr>';
     }).join('');
+  }
+
+  var movementDetailCache = Object.create(null), movementDetailPending = Object.create(null);
+  var movementDetailGeneration = 0, movementDetailDocNo = '';
+  document.getElementById('mvBody').addEventListener('click',function(e){
+    var button=e.target.closest('[data-movement-id]');
+    if(button)openMovementDetail(button.dataset.movementId);
+  });
+  function closeMovementDetail(){movementDetailDocNo='';closeModal('movementDetailModal');}
+  function openMovementDetail(id){
+    var row=movements.find(function(m){return m.id===id;});if(!row)return;
+    movementDetailDocNo=row.docNo||'';
+    openModal('movementDetailModal');
+    if(!row.docNo){renderMovementDetail({docNo:'',movements:[row],complete:true,legacy:true});return;}
+    requestMovementDetail(row.docNo);
+  }
+  function retryMovementDetail(){if(movementDetailDocNo)requestMovementDetail(movementDetailDocNo);}
+  function requestMovementDetail(docNo){
+    if(movementDetailCache[docNo]){renderMovementDetail(movementDetailCache[docNo]);return;}
+    document.getElementById('movementDetailBody').innerHTML='<div class="empty-state">⏳ กำลังโหลดรายละเอียด <b>'+esc(docNo)+'</b></div>';
+    if(movementDetailPending[docNo])return;
+    movementDetailPending[docNo]=true;
+    var generation=movementDetailGeneration;
+    callApi('getStockMovementDetail',[docNo],function(data){
+      if(generation!==movementDetailGeneration)return;
+      delete movementDetailPending[docNo];
+      if(!data||data.docNo!==docNo||!Array.isArray(data.movements)||!data.movements.length){showMovementDetailError(docNo,'ไม่พบข้อมูลรายการนี้');return;}
+      movementDetailCache[docNo]=data;
+      if(movementDetailDocNo===docNo&&document.getElementById('movementDetailModal').classList.contains('active'))renderMovementDetail(data);
+    },function(err){
+      if(generation!==movementDetailGeneration)return;
+      delete movementDetailPending[docNo];showMovementDetailError(docNo,syyErrorMessage(err));
+    });
+  }
+  function showMovementDetailError(docNo,message){
+    if(movementDetailDocNo!==docNo||!document.getElementById('movementDetailModal').classList.contains('active'))return;
+    document.getElementById('movementDetailBody').innerHTML='<div class="empty-state"><b>โหลดรายละเอียดไม่สำเร็จ</b><p>'+esc(message)+'</p><button type="button" class="btn btn-primary" onclick="retryMovementDetail()">ลองอีกครั้ง</button></div>';
+  }
+  function renderMovementDetail(data){
+    var rows=data.movements,complete=data.complete!==false;
+    function values(key,format){var out=[];rows.forEach(function(m){var value=format?format(m[key]):String(m[key]||'');if(value&&out.indexOf(value)<0)out.push(value);});return out.join('\n')||'—';}
+    function field(label,value){return '<div><span class="label">'+esc(label)+'</span><div class="value">'+esc(value)+'</div></div>';}
+    var totalQty=0,totalValue=0,priced=0;
+    var lines=rows.map(function(m,i){
+      var qty=Math.abs(num(m.qty)),hasPrice=m.hasUnitPrice===true,value=hasPrice?num(m.unitPrice)*qty:null;
+      totalQty+=qty;if(hasPrice){priced++;totalValue+=value;}
+      function stock(v){return v==null||v===''?'—':esc(v);}
+      return '<tr><td class="rownum">'+(i+1)+'</td><td class="product-name-cell">'+esc(m.productName||'—')+'<div><span class="pn-badge">'+esc(m.productCode||'—')+'</span></div></td><td class="text-center">'+(m.type==='IN'?'+':'−')+qty+'</td><td class="text-right">'+(hasPrice?money(m.unitPrice):'<span class="cell-empty">ไม่ได้บันทึก</span>')+'</td><td class="text-right">'+(value==null?'—':money(value))+'</td><td class="text-center">'+stock(m.stockBefore)+'</td><td class="text-center">'+stock(m.stockAfter)+'</td></tr>';
+    }).join('');
+    var summaryLabel=complete&&!data.legacy?'ยอดรวมรายการ':'ยอดรวมเฉพาะบรรทัดที่แสดง';
+    var html='<div class="movement-meta">'+field('เลขรายการ',data.docNo||'ไม่มีเลขรายการ (ข้อมูลเดิม)')+field('ประเภท',values('type',function(t){return t==='IN'?'รับสินค้าเข้า':'ตัดสต๊อก / ขายหน้าร้าน';}))+field('เวลาที่ทำรายการ',values('timestamp',fmtTime))+field('ผู้ทำรายการ',values('user'))+field('เหตุผล',values('reason'))+field('เลขอ้างอิง',values('refNo'))+field('ใบเสนอราคาที่เกี่ยวข้อง',values('quoteId'))+field('หมายเหตุ',values('note'))+'</div>';
+    if(data.legacy)html+='<div class="alert alert-warn">ข้อมูลเดิมไม่มีเลขรายการ จึงแสดงรายละเอียดเฉพาะบรรทัดที่เลือก</div>';
+    if(!complete)html+='<div class="alert alert-warn">รายการนี้มีมากกว่า 1,000 บรรทัด ข้อมูลที่แสดงยังไม่ครบ กรุณาติดต่อผู้ดูแล</div>';
+    html+='<p class="movement-scroll-hint">เลื่อนตารางซ้าย–ขวาเพื่อดูราคาและสต๊อก</p><div class="table-wrap"><table><thead><tr><th>#</th><th>สินค้า</th><th>จำนวน</th><th>ราคาต่อหน่วยที่บันทึก</th><th>มูลค่า</th><th>สต๊อกก่อนทำ</th><th>สต๊อกหลังทำ</th></tr></thead><tbody>'+lines+'</tbody></table></div>';
+    html+='<div class="movement-summary"><span>'+summaryLabel+' · '+rows.length+' บรรทัด / '+totalQty.toLocaleString('th-TH')+' ชิ้น</span><b>'+(priced===rows.length?money(totalValue)+' บาท':priced?'มูลค่าเฉพาะ '+priced+' บรรทัดที่บันทึกราคา: '+money(totalValue)+' บาท':'ไม่ได้บันทึกมูลค่า')+'</b></div>';
+    document.getElementById('movementDetailBody').innerHTML=html;
   }
 </script>
 <script>

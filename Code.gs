@@ -3371,6 +3371,7 @@ var API_REGISTRY = {
   updatePurchaseOrderStatus: "staff",
   issueStock               : "staff",
   getStockMovements        : "viewer",
+  getStockMovementDetail   : "staff",
   getDashboardBootstrap    : "viewer",
   getDashboardDelta        : "viewer",
 
@@ -3454,6 +3455,7 @@ var API_FUNCTIONS = {
   updatePurchaseOrderStatus : updatePurchaseOrderStatus_,
   issueStock                : issueStock_,
   getStockMovements         : getStockMovements_,
+  getStockMovementDetail    : getStockMovementDetail_,
   getDashboardBootstrap     : getDashboardBootstrap_,
   getDashboardDelta         : getDashboardDelta_,
   saveTaxInvoice            : saveTaxInvoice_,
@@ -4529,9 +4531,57 @@ function logStockIn_(additions, reason, refNo, callerUsername) {
   return committed;
 }
 
-/**
- * ★ ดึงประวัติเข้า-ออก (ล่าสุดก่อน) — ใส่ productCode เพื่อดูรายสินค้า
- */
+/** Shared DTO for recent history and an individual transaction; no additional reads. */
+function stockMovementDto_(document) {
+  var f = document.fields || {};
+  var recordedPrice = parseFirestoreValue_(f.Unit_Price);
+  return {
+    id          : document.name.split("/").pop(),
+    docNo       : parseFirestoreValue_(f.Doc_No),
+    type        : parseFirestoreValue_(f.Type) || "OUT",
+    productCode : parseFirestoreValue_(f.Product_Code),
+    productName : parseFirestoreValue_(f.Product_Name),
+    qty         : parseFloat(parseFirestoreValue_(f.Qty)) || 0,
+    stockBefore : parseFirestoreValue_(f.Stock_Before),
+    stockAfter  : parseFirestoreValue_(f.Stock_After),
+    unitPrice   : parseFloat(parseFirestoreValue_(f.Unit_Price)) || 0,
+    costPrice   : parseFloat(parseFirestoreValue_(f.Cost_Price)) || 0,
+    hasUnitPrice: !!f.Unit_Price && recordedPrice !== "" && recordedPrice != null && isFinite(Number(recordedPrice)) && Number(recordedPrice) >= 0,
+    reason      : parseFirestoreValue_(f.Reason),
+    refNo       : parseFirestoreValue_(f.Ref_No),
+    quoteId     : parseFirestoreValue_(f.Quote_Id),
+    note        : parseFirestoreValue_(f.Note),
+    user        : parseFirestoreValue_(f.User),
+    timestamp   : parseFirestoreValue_(f.Timestamp)
+  };
+}
+
+/** Read one transaction on demand; never group an incomplete recent-history page. */
+function getStockMovementDetail_(docNo) {
+  if (typeof docNo !== "string" || !docNo.trim() || docNo.length > 160 || /[\x00-\x1f\x7f]/.test(docNo)) {
+    throw new Error("เลขรายการไม่ถูกต้อง");
+  }
+  var q = {
+    from: [{ collectionId: STOCK_MOVEMENT_COLLECTION }],
+    where: { fieldFilter: { field: { fieldPath: "Doc_No" }, op: "EQUAL", value: { stringValue: docNo } } },
+    limit: 1001
+  };
+  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
+  var res = UrlFetchApp.fetch(url, {
+    method: "post", headers: getAuthHeader_(), payload: JSON.stringify({ structuredQuery: q }), muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) throw new Error("โหลดรายละเอียดไม่สำเร็จ (" + res.getResponseCode() + ")");
+  var rows = (JSON.parse(res.getContentText()) || []).filter(function(row) { return !!row.document; });
+  if (!rows.length) throw new Error("ไม่พบเลขรายการนี้ กรุณารีเฟรชประวัติแล้วลองอีกครั้ง");
+  return {
+    docNo: docNo, complete: rows.length <= 1000,
+    movements: rows.slice(0, 1000).map(function(row) { return stockMovementDto_(row.document); }).sort(function(a,b) {
+      return a.id.localeCompare(b.id, "en", { numeric: true });
+    })
+  };
+}
+
+/** Recent history, newest first; productCode optionally narrows the query. */
 function getStockMovements_(limit, productCode) {
   var out = [];
   try {
@@ -4553,30 +4603,9 @@ function getStockMovements_(limit, productCode) {
       muteHttpExceptions: true
     });
     if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
-    if (res.getResponseCode() !== 200) {
-      console.error("getStockMovements HTTP " + res.getResponseCode() + ": " + res.getContentText());
-      return out;
-    }
-
     (JSON.parse(res.getContentText()) || []).forEach(function (row) {
       if (!row.document) return;
-      var f = row.document.fields || {};
-      out.push({
-        id          : row.document.name.split("/").pop(),
-        docNo       : parseFirestoreValue_(f.Doc_No),
-        type        : parseFirestoreValue_(f.Type) || "OUT",
-        productCode : parseFirestoreValue_(f.Product_Code),
-        productName : parseFirestoreValue_(f.Product_Name),
-        qty         : parseFloat(parseFirestoreValue_(f.Qty)) || 0,
-        stockAfter  : parseFirestoreValue_(f.Stock_After),
-        unitPrice   : parseFloat(parseFirestoreValue_(f.Unit_Price)) || 0,
-        costPrice   : parseFloat(parseFirestoreValue_(f.Cost_Price)) || 0,
-        reason      : parseFirestoreValue_(f.Reason),
-        refNo       : parseFirestoreValue_(f.Ref_No),
-        note        : parseFirestoreValue_(f.Note),
-        user        : parseFirestoreValue_(f.User),
-        timestamp   : parseFirestoreValue_(f.Timestamp)
-      });
+      out.push(stockMovementDto_(row.document));
     });
   } catch (e) { console.error("getStockMovements_ read failed", e); throw e; }
   return out;

@@ -1,4 +1,32 @@
 <style>
+/* Stable content widths follow the information on each page, even after filtering. */
+[hidden]{display:none!important}
+@media screen{
+  body[data-syy-layout]{--syy-content-width:1360px;font-family:'Noto Sans Thai','Inter',system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.65;letter-spacing:0}
+  body[data-syy-layout="compact"]{--syy-content-width:1040px}
+  body[data-syy-layout="workspace"]{--syy-content-width:1560px}
+  body[data-syy-layout="wide"]{--syy-content-width:1800px}
+  body[data-syy-layout="profile"]{--syy-content-width:1000px}
+  body[data-syy-layout]>.page,body[data-syy-layout]>.page-head,body[data-syy-layout]>.page-body,body[data-syy-layout]>.syy-data-status,body[data-syy-layout]>.app-container{width:100%;max-width:var(--syy-content-width);margin-left:auto;margin-right:auto;min-width:0}
+  body[data-syy-layout]>.page{padding-top:12px}
+  body[data-syy-layout]>.page-head{margin-top:12px;border:1px solid var(--line,#dfe7ef);border-radius:12px}
+  body[data-syy-layout]>.page>.page-head{border:1px solid var(--line,#dfe7ef);border-radius:12px}
+  body[data-syy-layout] .page-body{gap:16px;padding-top:18px}
+  body[data-syy-layout] .mono{font-variant-numeric:tabular-nums}
+  body[data-syy-layout] .view-field-tile .vft-label,body[data-syy-layout] .view-price-pill .vpp-label{font-size:12.5px}
+  body[data-syy-layout] .view-field-tile .vft-value{font-size:14px;line-height:1.6}
+  body[data-syy-layout="users"]{font-size:15px;background:#f3f6fa}
+  body[data-syy-layout="users"] .page-header{font-size:17px}
+  body[data-syy-layout="users"] th{font-size:12.5px}
+  body[data-syy-layout="users"] td{font-size:14px}
+  body[data-syy-layout="users"] .card{border:1px solid #dfe7ef;box-shadow:0 1px 2px rgba(15,23,42,.04),0 5px 18px rgba(15,23,42,.06)}
+  body[data-syy-layout="shell"].syy-child-page .main>.page-head,body[data-syy-layout="shell"].syy-child-page .main>.syy-data-status{display:none}
+  @media(max-width:767px){
+    body[data-syy-layout]>.page{padding-top:8px}
+    body[data-syy-layout]>.page-head{margin-top:8px;border-radius:0}
+    body[data-syy-layout]>.page>.page-head{border-radius:0}
+  }
+}
 /* Shared, dependency-free line icon system. */
 .syy-icon{width:1.25em;height:1.25em;display:inline-block;vertical-align:-.22em;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .btn .syy-icon,.btn-icon .syy-icon,.row-actions .syy-icon{width:18px;height:18px}

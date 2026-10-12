@@ -83,7 +83,7 @@ test('all V1 operations retain names, private dispatch, response and existing ro
     'updateQuotationStatus','authGetMyProfile','authChangePassword','authLogout'],
     staff:['saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveProduct','uploadProductImage',
     'deleteProductImage','setPrimaryProductImage','moveProductImage','commitProductImageDraft','generateProductBarcode',
-    'saveMasterData','savePurchaseOrder','receiveGoods','updatePurchaseOrderStatus','issueStock','markQuotationStockIssued'],
+    'saveMasterData','savePurchaseOrder','receiveGoods','updatePurchaseOrderStatus','issueStock','getStockMovementDetail','markQuotationStockIssued'],
     admin:['deleteTaxInvoice','deleteQuotation','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone',
     'deleteCar','deleteProduct','deletePurchaseOrder','backupNow','listBackupFiles','getActivityLog','getAllUsers',
     'createUserAccount','updateUserAccount','resetUserPassword','toggleUserStatus','authStartTotpSetup','authConfirmTotpSetup','authDisableTotp']};

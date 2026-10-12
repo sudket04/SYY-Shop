@@ -5,6 +5,31 @@ const {setup, plain} = require('./support/services.cjs');
 function fresh(){const s=setup();s.c.readTime=new Date().toISOString();return s;}
 const queries=s=>s.calls.filter(x=>x.url.endsWith(':runQuery')).map(x=>JSON.parse(x.options.payload));
 
+test('stock detail reads only the selected transaction, including lines outside recent history, and never writes',()=>{
+  const s=fresh(),col='Stock_Movements/';
+  for(let i=0;i<1500;i++)s.put(col+'OTHER'+i,{Doc_No:'OTHER',Timestamp:'2026-10-12T01:00:00Z',Type:'OUT',Qty:1});
+  for(const i of [10,2,1])s.put(col+'SI-selected-'+i,{Doc_No:'SI-selected',Timestamp:'2026-10-10T01:00:00Z',Type:'OUT',Product_Code:'P'+i,Qty:2,Stock_Before:10,Stock_After:8,Unit_Price:i===1?0:150,Quote_Id:'Q1'});
+  assert(!s.c.getStockMovements_(1000,'').some(m=>m.docNo==='SI-selected'));
+  const before=s.calls.length,r=s.c.getStockMovementDetail_('SI-selected');
+  assert.equal(r.complete,true);assert.equal(r.movements.length,3);
+  assert.deepEqual(plain(r.movements.map(m=>m.id)),['SI-selected-1','SI-selected-2','SI-selected-10']);
+  assert.equal(r.movements[0].stockBefore,10);assert.equal(r.movements[0].hasUnitPrice,true);assert.equal(r.movements[0].unitPrice,0);assert.equal(r.movements[0].quoteId,'Q1');
+  const q=queries(s).at(-1).structuredQuery;assert.equal(q.where.fieldFilter.field.fieldPath,'Doc_No');assert.equal(q.where.fieldFilter.value.stringValue,'SI-selected');assert.equal(q.limit,1001);assert.equal(q.orderBy,undefined);
+  assert.equal(s.calls.length-before,1);assert.equal(s.commits.length,0);
+});
+test('stock detail preserves legacy missing fields, rejects bad identifiers before reads, and reports errors and truncation honestly',()=>{
+  const s=fresh();s.put('Stock_Movements/SR-old-1',{Doc_No:'SR-old',Type:'IN',Qty:1});
+  const line=s.c.getStockMovementDetail_('SR-old').movements[0];assert.equal(line.hasUnitPrice,false);assert.equal(line.stockBefore,'');
+  s.put('Stock_Movements/SR-old-2',{Doc_No:'SR-old',Type:'IN',Qty:1,Unit_Price:'invalid'});
+  assert.equal(s.c.getStockMovementDetail_('SR-old').movements.find(m=>m.id==='SR-old-2').hasUnitPrice,false);
+  const before=s.calls.length;
+  for(const invalid of ['',null,{},'  ','x'.repeat(161),'bad\nnumber'])assert.throws(()=>s.c.getStockMovementDetail_(invalid),/ไม่ถูกต้อง/);
+  assert.equal(s.calls.length,before);assert.throws(()=>s.c.getStockMovementDetail_('MISSING'),/ไม่พบ/);
+  for(let i=0;i<1002;i++)s.put('Stock_Movements/HUGE-'+i,{Doc_No:'HUGE',Type:'OUT',Qty:1});
+  const huge=s.c.getStockMovementDetail_('HUGE');assert.equal(huge.complete,false);assert.equal(huge.movements.length,1000);
+  s.c.failRequest=url=>url.endsWith(':runQuery')?503:0;assert.throws(()=>s.c.getStockMovementDetail_('SR-old'),/โหลดรายละเอียดไม่สำเร็จ/);assert.equal(s.commits.length,0);
+});
+
 test('exact invoice and quote search finds documents beyond the initial page without collection scans or writes',()=>{
   for(const [collection,dateField,numberField,api,key] of [
     ['Master_Tax_Invoice','Invoice_Date','Invoice_No','getTaxInvoiceListData_','invoices'],
