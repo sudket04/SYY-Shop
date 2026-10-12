@@ -56,6 +56,7 @@ function doGet(e) {
   if (page === 'login') {
     var loginTemplate = HtmlService.createTemplateFromFile(files['login']);
     loginTemplate.webAppUrl = getWebAppUrl_();
+    loginTemplate.frameChannel = "";
     loginTemplate.resetMode = mode;
     loginTemplate.resetToken = rtoken;
     return loginTemplate

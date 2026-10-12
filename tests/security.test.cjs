@@ -233,10 +233,10 @@ test('every channel-aware page evaluates without a channel and preserves a suppl
   }
 });
 
-function routingSetup() {
+function routingSetup(requireLegacyChannel=false) {
   const s=setup();
   s.c.HtmlService={XFrameOptionsMode:{ALLOWALL:'ALLOWALL'},createTemplateFromFile(name){
-    const template={evaluate(){const output={file:name,html:evaluateTemplate(name+'.html',template),setTitle(){return output;},setXFrameOptionsMode(){return output;}};return output;}};
+    const template={evaluate(){if(requireLegacyChannel){const channel=vm.runInNewContext('frameChannel',template);if(name==='login')assert.equal(channel,'');}const output={file:name,html:evaluateTemplate(name+'.html',template),setTitle(){return output;},setXFrameOptionsMode(){return output;}};return output;}};
     return template;
   }};
   return s;
@@ -260,4 +260,21 @@ test('doGet never renders authenticated templates for absent or expired sessions
     assert.equal(output.file,'login');assert.doesNotMatch(output.html,/<meta name="syy-frame-channel"/);
   }
   assert.equal(s.c.doGet().file,'login');assert.equal(s.network.length+s.writes.length+s.mail.length,0);
+});
+
+test('legacy direct frameChannel scriptlets work in login, reset and every authenticated route',()=>{
+  const s=routingSetup(true);s.c.getSession_=()=>null;
+  for(const event of [undefined,{}, {parameter:{}}, {parameter:{page:'login'}},
+    {parameter:{page:'home',token:'expired'}},
+    {parameter:{page:'login',mode:'reset',rtoken:'reset-fixture',channel:'<invalid>'}}]) {
+    const output=s.c.doGet(event);assert.equal(output.file,'login');
+    if(event?.parameter?.mode==='reset')assert.match(output.html,/reset-fixture/);
+  }
+  s.c.getSession_=()=>s.session('staff');
+  for(const page of ['home','brands','categories','vendors','zones','products','cars','orders',
+    'taxinvoice','quotation','customers','profile','manageusers','stockissue','unknown']) {
+    assert.doesNotThrow(()=>s.c.doGet({parameter:{page,token:'fixture',channel:'fixture-channel-123456'}}),page);
+    assert.doesNotThrow(()=>s.c.doGet({parameter:{page,token:'fixture'}}),page+' without channel');
+  }
+  assert.equal(s.network.length+s.writes.length+s.mail.length,0);
 });
