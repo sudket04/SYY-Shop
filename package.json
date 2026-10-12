@@ -2,10 +2,11 @@
   "name": "syy-shop-regression",
   "private": true,
   "scripts": {
-    "test": "node --test tests/backend.test.cjs tests/security.test.cjs tests/integrity.test.cjs tests/audit.test.cjs",
+    "test": "node --test tests/backend.test.cjs tests/security.test.cjs tests/integrity.test.cjs tests/audit.test.cjs tests/recovery.test.cjs tests/release.test.cjs",
     "test:reads": "node tests/read-model.cjs",
     "test:browser": "node tests/browser.cjs",
-    "check": "node tests/syntax.cjs"
+    "check": "node tests/syntax.cjs",
+    "release:prepare": "node scripts/prepare-release.cjs"
   },
   "devDependencies": {"playwright": "1.62.1"}
 }

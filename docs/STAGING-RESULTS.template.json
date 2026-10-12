@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "status": "pending_live_uat",
+  "warning": "Template only. Never store passwords, OAuth tokens, reset links, TOTP secrets, customer records or backup contents here.",
+  "release": {
+    "commit": null,
+    "sourceDirty": null,
+    "scriptId": null,
+    "deploymentVersion": null,
+    "stagingProjectId": null,
+    "mailboxVerified": false,
+    "targetIsolationVerified": false,
+    "approvedActions": [],
+    "operator": null,
+    "testedAt": null
+  },
+  "dataset": {
+    "syntheticOnly": true,
+    "collectionCounts": {},
+    "totalBytes": null,
+    "concurrentSessions": null,
+    "cacheState": null,
+    "indexesVerified": false
+  },
+  "checks": [
+    {"id":"target_oauth","status":"pending","evidence":[]},
+    {"id":"account_mail","status":"pending","evidence":[]},
+    {"id":"role_rpc_matrix","status":"pending","evidence":[]},
+    {"id":"stock_receipt_concurrency","status":"pending","evidence":[]},
+    {"id":"document_master_image_versions","status":"pending","evidence":[]},
+    {"id":"snapshot_paging_indexes","status":"pending","evidence":[]},
+    {"id":"cache_properties_locks","status":"pending","evidence":[]},
+    {"id":"htmlservice_frames","status":"pending","evidence":[]},
+    {"id":"mobile_keyboard_scanner","status":"pending","evidence":[]},
+    {"id":"print_pdf_export","status":"pending","evidence":[]},
+    {"id":"empty_target_recovery","status":"pending","evidence":[]},
+    {"id":"performance_billing","status":"pending","evidence":[]},
+    {"id":"trigger_rehearsal","status":"pending","evidence":[]}
+  ],
+  "measurements": [{
+    "scenario": null,
+    "role": null,
+    "cacheState": null,
+    "samples": null,
+    "baseline": {"documentReads":null,"indexEntryReads":null,"writes":null,"deletes":null,"gasRpc":null,"payloadBytes":null,"p50Ms":null,"p95Ms":null,"errors":null},
+    "candidate": {"documentReads":null,"indexEntryReads":null,"writes":null,"deletes":null,"gasRpc":null,"payloadBytes":null,"p50Ms":null,"p95Ms":null,"errors":null},
+    "metricSource": null,
+    "matchedWorkloadVerified": false,
+    "evidence": []
+  }],
+  "unresolvedFailures": [],
+  "productionRolloutApproved": false,
+  "productionDeployed": false
+}

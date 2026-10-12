@@ -2419,7 +2419,7 @@ function backupAllDataToBackup_() {
     validateBackupBundle_(bundle);
     result.fileName="syy-shop-backup_"+suffix+".json";
     var text=JSON.stringify(bundle);manifest=folder.createFile(result.fileName,text,MimeType.PLAIN_TEXT);assertPrivateBackupItem_(manifest);
-    result.fileSizeKB=Math.round(text.length/1024);result.fileId=manifest.getId();result.success=true;
+    result.fileSizeKB=Math.round(manifest.getSize()/1024);result.fileId=manifest.getId();result.success=true;
     cleanupOldBackups_(folder);
   } catch(e) {
     result.errors.push(e.message);
@@ -2543,12 +2543,22 @@ function restoreFromBackup_(fileId, restoreMode, options) {
       var fields=JSON.parse(JSON.stringify(doc.fields));
       if(n==="Product_Images"){
         var data=imageDataFromFields_(fields),ids=data.ids.map(function(id){return remap[id];}),urls=ids.map(function(id){return "https://lh3.googleusercontent.com/d/"+id;});
-        fields=mapToFirestoreFields_({Image_Url:urls[data.primaryIndex]||"",Drive_File_Id:ids[data.primaryIndex]||"",Image_Urls:urls,Drive_File_Ids:ids,Primary_Index:data.primaryIndex,Images_JSON:JSON.stringify(urls.map(function(url,i){return {url:url,fileId:ids[i]};}))});
+        var imageFields=mapToFirestoreFields_({Image_Url:urls[data.primaryIndex]||"",Drive_File_Id:ids[data.primaryIndex]||"",Image_Urls:urls,Drive_File_Ids:ids,Primary_Index:data.primaryIndex,Images_JSON:JSON.stringify(urls.map(function(url,i){return {url:url,fileId:ids[i]};}))});
+        Object.keys(imageFields).forEach(function(key){fields[key]=imageFields[key];});
       }
       if(n==="Master_Users")fields.Session_Version={stringValue:Utilities.getUuid()};
       writes.push({update:{name:"projects/"+target+"/databases/(default)/documents/"+n+"/"+doc.id,fields:fields},currentDocument:{exists:false}});
     });});
-    for(var i=0;i<writes.length;i+=450){var part=writes.slice(i,i+450),res=UrlFetchApp.fetch(endpoint+":commit",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({writes:part}),muteHttpExceptions:true});
+    // Keep below Firestore's request limit even when documents contain large UTF-8 fields.
+    for(var i=0;i<writes.length;){
+      var part=[],bytes=13,maxBytes=8*1024*1024;
+      while(i<writes.length && part.length<450){
+        var writeBytes=Utilities.newBlob(JSON.stringify(writes[i])).getBytes().length;
+        if(writeBytes+13>maxBytes)throw new Error("เอกสารใน Backup ใหญ่เกินขนาดคำขอกู้คืน");
+        if(part.length && bytes+1+writeBytes>maxBytes)break;
+        bytes+=writeBytes+(part.length?1:0);part.push(writes[i++]);
+      }
+      var res=UrlFetchApp.fetch(endpoint+":commit",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({writes:part}),muteHttpExceptions:true});
       if(res.getResponseCode()!==200)throw new Error("กู้คืนไม่ครบ: หยุดก่อนชุดถัดไป กรุณาตรวจ Staging");
       part.forEach(function(w){var n=w.update.name.split('/documents/')[1].split('/')[0];result.restored[n].restored++;});}
     if(options.restoreProperties){
@@ -4834,7 +4844,7 @@ function validateBackupBundle_(bundle, sourceProjectId) {
   var names=Object.keys(bundle.collections);
   if(names.length!==BACKUP_COLLECTIONS.length || names.some(function(n){return BACKUP_COLLECTIONS.indexOf(n)<0;})) throw new Error("Backup มีชุดข้อมูลไม่ครบหรือมีชุดข้อมูลที่ไม่อนุญาต");
   BACKUP_COLLECTIONS.forEach(function(n){
-    var docs=bundle.collections[n],seen={};
+    var docs=bundle.collections[n],seen=Object.create(null);
     if(!Array.isArray(docs)) throw new Error("Backup collection ไม่ถูกต้อง");
     docs.forEach(function(doc){if(!doc||typeof doc.id!=="string"||!doc.id||doc.id.indexOf('/')>=0||seen[doc.id]||!doc.fields||typeof doc.fields!=="object"||Array.isArray(doc.fields)) throw new Error("Backup document ไม่ถูกต้อง");seen[doc.id]=true;});
   });
