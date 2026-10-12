@@ -33,8 +33,8 @@ a:hover{color:var(--primary-dark);text-decoration:underline}
 .mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums;letter-spacing:0}
 
 /* ── โครงหน้า: header แถวเดียว (breadcrumb + action) ── */
-.page{max-width:1400px;margin:0 auto;padding:0 0 20px}
-.page-head{position:sticky;top:0;z-index:30;background:#fff;border-bottom:1px solid var(--line);
+.page{width:100%;min-width:0;margin:0 auto;padding:0 0 20px}
+.page-head{position:sticky;top:0;z-index:40;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 8px 0 var(--bg);margin-bottom:8px;
   display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px;flex-wrap:wrap;min-height:52px}
 .crumb{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--faint);min-width:0}
 .crumb b{color:var(--ink);font-size:15px;font-weight:600}
@@ -119,13 +119,13 @@ a:hover{color:var(--primary-dark);text-decoration:underline}
 .stat .clear{position:absolute;right:8px;bottom:7px;font-size:10.5px;color:var(--primary)}
 
 /* ── ตาราง: หัวสีอ่อน, hover ไม่ทำให้แถวขยับ ── */
-.table-wrap{overflow:auto;max-height:62vh;overscroll-behavior:contain;scrollbar-gutter:stable}
+.table-wrap{overflow:auto;max-height:calc(100dvh - 220px);overscroll-behavior:contain;scrollbar-gutter:stable;border-radius:0 0 var(--r) var(--r);scroll-padding-block:8px}
 table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;table-layout:auto}
-.table-wrap table.table-compact,.table-container table.table-compact{width:auto;min-width:min(100%,720px);margin-right:auto}
+.table-wrap table.table-compact,.table-container table.table-compact{width:100%;min-width:min(100%,720px)}
 .table-wrap table.table-standard,.table-container table.table-standard{width:100%;min-width:840px}
 .table-wrap table.table-wide,.table-container table.table-wide{min-width:max-content}
 th{position:sticky;top:0;z-index:10;background:var(--line-soft);color:#475569;font-weight:600;font-size:11.5px;
-  text-align:left;padding:10px 13px;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+  text-align:left;padding:10px 13px;border-bottom:1px solid #e2e8f0;box-shadow:0 6px 0 #fff;white-space:nowrap}
 td{padding:11px 13px;border-bottom:1px solid var(--line-soft);color:var(--text);vertical-align:middle;line-height:1.55}
 .table-compact th,.table-compact td{white-space:nowrap}
 .table-compact tbody td.col-sticky-right{position:static;box-shadow:none}

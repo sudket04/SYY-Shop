@@ -30,22 +30,22 @@
   .pill-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 4px}
 
   .result-count{font-size:11.5px;color:var(--faint);margin:10px 0 8px}
-  .result-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto}
+  .result-list{position:relative;display:flex;flex-direction:column;gap:8px;max-height:calc(100dvh - 310px);min-height:160px;overflow-y:auto;padding:8px 4px;scroll-padding-block:8px;overscroll-behavior:contain;scrollbar-gutter:stable;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
   .res-row{border:1px solid var(--line);border-radius:10px;padding:11px 13px;display:flex;gap:12px;align-items:center;background:#fff;cursor:pointer}
   .res-row:hover{border-color:#94a3b8}
-  .res-row.sel{border:2px solid var(--primary);background:#f0f9ff}
+  .res-row.sel{border-color:var(--primary);box-shadow:inset 3px 0 0 var(--primary);background:#f0f9ff}
   .res-row.out{background:var(--bg);opacity:.75;cursor:not-allowed}
   .res-main{flex:1;min-width:0}
-  .res-name{font-size:14px;font-weight:600;color:var(--ink)}
+  .res-name{font-size:14px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   .res-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
   .res-side{text-align:right;flex-shrink:0}
   .res-price{font-size:16px;font-weight:600;color:var(--ok)}
   .btn-add{background:var(--primary-soft);color:var(--primary);border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;flex-shrink:0}
-  .res-row.sel .btn-add{background:var(--primary);color:#fff}
-  /* ★ สถานะ "หมด" ต้องดูจางกว่าเสมอ แม้แถวนั้นจะถูกเลือกด้วยคีย์บอร์ด (.sel) ก็ตาม
-     — .is-disabled ต้องชนะกฎ .res-row.sel .btn-add เสมอ (ระบุ selector ให้ specificity สูงกว่าตรงๆ แทนพึ่ง source order) */
+  .btn-add:hover:not(.is-disabled){background:#d6e6f5}
+  /* Stock availability retains the same muted button even on the selected row. */
   .btn-add.is-disabled,
   .res-row.sel .btn-add.is-disabled{background:var(--line-soft);color:var(--faint);cursor:not-allowed}
+  @media(max-width:640px){.res-row{flex-wrap:wrap}.res-main{flex:1 1 calc(100% - 64px)}.res-side{margin-left:auto}.btn-add{min-height:44px}}
 
   .code-badge{font-family:'Courier New',monospace;font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid var(--primary-line);border-radius:6px;padding:2px 8px}
   .pn-badge{font-family:'Courier New',monospace;font-size:11px;color:#475569;background:var(--line-soft);border:1px solid var(--line);border-radius:6px;padding:2px 8px}
@@ -541,14 +541,17 @@
 
   function moveSel(delta) {
     if (!results.length) return;
+    var previous = selIdx;
     selIdx = Math.max(0, Math.min(results.length - 1, selIdx + delta));
-    renderResults();
     var rows = document.querySelectorAll('#resultList .res-row');
+    if (rows[previous]) rows[previous].classList.remove('sel');
+    if (rows[selIdx]) rows[selIdx].classList.add('sel');
     if (rows[selIdx]) {
       var box = document.getElementById('resultList');
       var r = rows[selIdx];
-      if (r.offsetTop < box.scrollTop) box.scrollTop = r.offsetTop - 4;
-      else if (r.offsetTop + r.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = r.offsetTop + r.offsetHeight - box.clientHeight + 4;
+      var bounds = box.getBoundingClientRect(), row = r.getBoundingClientRect();
+      if (row.top < bounds.top + 8) box.scrollTop += row.top - bounds.top - 8;
+      else if (row.bottom > bounds.bottom - 8) box.scrollTop += row.bottom - bounds.bottom + 8;
     }
   }
 

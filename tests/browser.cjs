@@ -71,8 +71,42 @@ async function main(){
     for(const file of ['index.html','Master_Products.html','StockIssue.html','Purchase_Orders.html','Quotation.html',
       'Master_Tax_Invoice.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html',
       'Master_Zones.html','Master_Cars.html','Profile.html','Manage_Users.html','login.html']) {
-      const p=await pageFor(file);assert.deepEqual(p.errors,[],file);await p.close();
+      const p=await pageFor(file);assert.deepEqual(p.errors,[],file);assert.doesNotMatch(await p.locator('body').innerText(),/<\?!=\s*include_\(/,file);await p.close();
     }
+  });
+  await check('SweetAlert confirmations have no generated dropdown, retain native input and draft decisions',async()=>{
+    const p=await pageFor('Quotation.html');await p.evaluate(()=>{
+      const box=document.createElement('div');box.className='swal2-container';box.innerHTML='<select class="swal2-select" style="display:none"><option value="">เลือก...</option></select><button>ทำร่างต่อ</button>';document.body.appendChild(box);
+    });await p.waitForTimeout(30);
+    assert.equal(await p.locator('.swal2-container .syy-select').count(),0);
+    assert.equal(await p.locator('.swal2-select').isVisible(),false);
+    await p.evaluate(()=>{const sel=document.querySelector('.swal2-select');sel.style.display='block';sel.innerHTML='<option value="yes">เลือกจริง</option>';SYYSelect.init(document);});
+    assert.equal(await p.locator('.swal2-container .syy-select').count(),0);await p.selectOption('.swal2-select','yes');assert.equal(await p.locator('.swal2-select').inputValue(),'yes');
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Stock buttons share color; arrow navigation retains rows and scrolls selection inside the list',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{products=Array.from({length:80},(_,i)=>({...fixtureProduct,productCode:'P'+String(i).padStart(3,'0'),productName:'อะไหล่ '+i+' ชื่อสินค้ายาวสำหรับทดสอบ',currentStock:i===79?0:10}));renderResults();window.firstResult=document.querySelector('.res-row');window.readsBefore=apiCalls.length;});
+    const colors=await p.locator('.btn-add:not(.is-disabled)').evaluateAll(xs=>xs.map(x=>getComputedStyle(x).backgroundColor));assert.equal(new Set(colors).size,1);
+    await p.evaluate(()=>{for(let i=0;i<50;i++)moveSel(1);});
+    assert.equal(await p.evaluate(()=>document.querySelector('.res-row')===firstResult),true);
+    const geometry=await p.evaluate(()=>{const list=document.getElementById('resultList').getBoundingClientRect(),row=document.querySelector('.res-row.sel').getBoundingClientRect();return {top:row.top-list.top,bottom:list.bottom-row.bottom,scroll:document.getElementById('resultList').scrollTop};});
+    assert(geometry.scroll>0);assert(geometry.top>=7&&geometry.bottom>=7,JSON.stringify(geometry));
+    await p.evaluate(()=>moveSel(-50));assert.equal(await p.evaluate(()=>selIdx),0);assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>readsBefore));
+    await p.screenshot({path:path.join(output,'stock-layout-desktop.png')});
+    for(const width of [390,320]){await p.setViewportSize({width,height:844});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'stock '+width);await p.screenshot({path:path.join(output,'stock-layout-'+width+'.png')});}
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Shared page and compact tables fill wide screens, with separated sticky headers and contained mobile scroll',async()=>{
+    for(const file of ['Master_Brands.html','Master_Categories.html','Master_Cars.html','Master_Zones.html','Master_Vendors.html','Master_Customers.html','StockIssue.html','Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html','Master_Products.html','Manage_Users.html']) {
+      const p=await pageFor(file);await p.setViewportSize({width:1920,height:1080});
+      const frame=await p.locator('.page,.app-container').count();if(frame){const b=await p.locator('.page,.app-container').first().boundingBox();assert(b.width>=1920-60,file+' wide frame');}
+      for(const table of await p.locator('table.table-compact').all()){const widths=await table.evaluate(t=>[t.getBoundingClientRect().width,t.parentElement.clientWidth]);assert(Math.abs(widths[0]-widths[1])<3,file+' compact table');}
+      await p.setViewportSize({width:320,height:844});const overflow=await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth);if(!overflow)console.log('OVERFLOW '+file,await p.evaluate(()=>Array.from(document.body.querySelectorAll('*')).filter(x=>{const r=x.getBoundingClientRect();return r.right>innerWidth+1&&r.width>0&&!x.closest('.table-wrap,.table-container,.modal-overlay');}).slice(0,12).map(x=>({tag:x.tagName,id:x.id,class:x.className,right:x.getBoundingClientRect().right,width:x.getBoundingClientRect().width}))));assert.equal(overflow,true,file+' mobile');assert.deepEqual(p.errors,[]);await p.close();
+    }
+    const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{cache=Array.from({length:100},(_,i)=>({id:'B'+i,Name:'แบรนด์ '+i}));renderRows();});await p.waitForTimeout(30);
+    await p.evaluate(()=>{document.querySelector('.table-wrap').scrollTop=400;});
+    const sticky=await p.evaluate(()=>{const head=document.querySelector('thead th').getBoundingClientRect(),box=document.querySelector('.table-wrap').getBoundingClientRect();return {gap:box.top-document.querySelector('.page-head').getBoundingClientRect().bottom,top:head.top-box.top};});assert(sticky.gap>=8);assert(Math.abs(sticky.top)<2);
+    await p.screenshot({path:path.join(output,'brands-layout-desktop.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Brands and Categories keep saveMasterData operation through gateway',async()=>{
     for(const [file,collection] of [['Master_Brands.html','Master_Brands'],['Master_Categories.html','Master_Categories']]) {

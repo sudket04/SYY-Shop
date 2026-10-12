@@ -207,7 +207,7 @@ var SYYSelect=(function(){
   }
   function close(inst){inst=inst||active;if(!inst)return;inst.wrap.classList.remove('open');inst.panel.removeAttribute('data-syy-open');inst.control.setAttribute('aria-expanded','false');if(active===inst)active=null;}
   function enhance(sel){
-    if(!sel||registry.has(sel)||sel.multiple||sel.dataset.syyNoSearch==='true')return;
+    if(!sel||registry.has(sel)||sel.multiple||sel.size>1||sel.dataset.syyNoSearch==='true'||sel.closest('.swal2-container')||sel.classList.contains('swal2-select'))return;
     var wrap=document.createElement('div');wrap.className='syy-select';
     if(sel.closest('.form-group,.form-grid'))wrap.classList.add('syy-select-block');
     if(sel.closest('.toolbar,.pagination-bar,.pill-row,.page-head')||sel.classList.contains('page-size-select')||sel.classList.contains('dash-picksel'))wrap.classList.add('syy-select-compact');

@@ -61,7 +61,6 @@
   new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType===1)run(n);});});}).observe(document.documentElement,{childList:true,subtree:true});
 })();
 </script>
-<?!= include_('UiEnhancements'); ?>
 <script>
 /* Presentation only: keep the same input, value, autocomplete and auth handlers. */
 (function(){
