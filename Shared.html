@@ -66,7 +66,7 @@ function addCalendarDays(value,days){
 }
 var syyFreshState=null;
 function syyDataRevision(){return syyFreshState?syyFreshState.revision:0;}
-function syyDataLoaded(){if(syyFreshState){syyFreshState.busy=false;syyFreshState.lastLoaded=Date.now();syyFreshState.dirty=syyFreshState.startRevision!==syyFreshState.revision;}setTimeout(function(){syyViewStart();syyDraftStart();},0);}
+function syyDataLoaded(asOf){if(syyFreshState){syyFreshState.busy=false;syyFreshState.lastLoaded=Math.min(Date.now(),Number(asOf)||Date.now());syyFreshState.dirty=syyFreshState.startRevision!==syyFreshState.revision;}setTimeout(function(){syyViewStart();syyDraftStart();},0);}
 function syyDataFailed(){if(syyFreshState)syyFreshState.busy=false;}
 function syyRegisterFreshness(options){
   var state=syyFreshState={revision:0,startRevision:0,lastLoaded:Date.now(),lastAttempt:0,busy:false,dirty:false,active:window.parent===window};

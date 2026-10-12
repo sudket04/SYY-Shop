@@ -27,6 +27,7 @@ window.respond=function(fn,args){
  if(fn==='getDashboardDelta')return {success:true,productStocks:[],movements:[],serverTime:'2026-10-11T05:01:00Z'};
  if(['getBrands','getCategories','getVendorsFull','getCustomersFull','getCarsFull','getAllUsers','getActivityLog'].includes(fn))return [];
  if(fn==='getStockMovements')return fixtureMovements;
+ if(fn==='getStockMovementPage'){var offset=Number(args[0].cursor||0),size=args[0].pageSize||50,end=Math.min(offset+size,Math.min(fixtureMovements.length,1000));return {movements:fixtureMovements.slice(offset,end),pageInfo:{hasMore:end<Math.min(fixtureMovements.length,1000),nextCursor:end<Math.min(fixtureMovements.length,1000)?String(end):''}};}
  if(fn==='getStockMovementDetail')return fixtureMovementDetails[args[0]]||{docNo:args[0],complete:true,movements:fixtureMovements.filter(m=>m.docNo===args[0])};
  if(fn==='getPurchaseOrderPageData')return {lowStockItems:[],purchaseOrders:[]};
  if(fn==='saveMasterData')return {success:true,id:'NEW',data:args[3]};
@@ -156,6 +157,41 @@ async function main(){
     await p.evaluate(()=>apiFailure='');await p.locator('#movementDetailBody').getByRole('button',{name:'ลองอีกครั้ง'}).click();await p.waitForTimeout(25);assert.match(await p.locator('#movementDetailBody').innerText(),/SI-B/);
     await p.evaluate(()=>{movementDetailCache=Object.create(null);apiHold='getStockMovementDetail';apiPending=[];openMovementDetail('A');loadMovements();apiPending[0]();});assert.equal(await p.locator('#movementDetailModal').isVisible(),false);assert.equal(await p.evaluate(()=>Object.keys(movementDetailCache).length),0);
     assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('History initially loads 50 rows, searches the full 1000-row scope and keeps detail access',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{fixtureMovements=Array.from({length:1200},(_,i)=>({id:'M'+i,docNo:'SI-'+i,type:i===799?'IN':'OUT',productName:i===799?'needle':'Part '+i,productCode:'P1',qty:1,timestamp:'2026-10-12T00:00:00Z',hasUnitPrice:true,unitPrice:10}));switchTab('history');});
+    await p.waitForFunction(()=>mvPage.initialized&&!mvPage.busy);assert.equal(await p.evaluate(()=>movements.length),50);assert.equal(await p.locator('#mvBody .movement-link').count(),50);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementPage').length),1);
+    await p.locator('#mvSearchInput').fill('needle');await p.waitForFunction(()=>mvPage.complete);assert.equal(await p.evaluate(()=>movements.length),1000);assert.equal(await p.locator('#mvBody .movement-link').count(),1);
+    assert.match(await p.locator('#mvBody').innerText(),/SI-799/);assert.equal(await p.locator('#mvMore').isVisible(),false);
+    await p.locator('#mvBody .movement-link').click();await p.waitForTimeout(30);assert.match(await p.locator('#movementDetailBody').innerText(),/SI-799/);
+    await p.evaluate(()=>{closeMovementDetail();document.getElementById('mvSearchInput').value='';setMvFilter('IN',document.querySelector('[data-mv="IN"]'));});assert.equal(await p.locator('#mvBody .movement-link').count(),1);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Partial history errors retain rows, disclose incomplete search and retry the same snapshot cursor',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{fixtureMovements=Array.from({length:250},(_,i)=>({id:'M'+i,docNo:'SI-'+i,type:'OUT',productName:i===220?'needle':'Part',qty:1,timestamp:'2026-10-12T00:00:00Z'}));switchTab('history');});await p.waitForFunction(()=>mvPage.initialized&&!mvPage.busy);
+    await p.evaluate(()=>apiFailure='getStockMovementPage');await p.locator('#mvSearchInput').fill('needle');await p.waitForFunction(()=>!!mvPage.error);
+    assert.equal(await p.evaluate(()=>movements.length),50);assert.equal(await p.evaluate(()=>mvPage.complete),false);assert.match(await p.locator('#mvPageStatus').innerText(),/ยังไม่ครบ/);assert.doesNotMatch(await p.locator('#mvBody').innerText(),/ไม่พบรายการที่ตรง/);
+    await p.evaluate(()=>apiFailure='');await p.locator('#mvMore').click();await p.waitForFunction(()=>mvPage.complete);assert.match(await p.locator('#mvBody').innerText(),/SI-220/);
+    const cursors=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementPage').map(x=>x.args[0].cursor));assert.deepEqual(cursors,['','50','50']);
+    await p.setViewportSize({width:390,height:844});assert.equal(await p.locator('#mvPageStatus').isVisible(),true);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Refreshing history ignores a previous pending generation without coalescing it into the new view',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{apiHold='getStockMovementPage';apiPending=[];loadMovements();loadMovements();});assert.equal(await p.evaluate(()=>apiPending.length),2);
+    await p.evaluate(()=>apiPending[0]());assert.equal(await p.evaluate(()=>mvPage.initialized),false);await p.evaluate(()=>apiPending[1]());assert.equal(await p.evaluate(()=>mvPage.initialized),true);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Dashboard drains all delta pages before updating data/watermark and keeps old state after a failed page',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{DASH.lastSync='old-watermark';DASH.lastFullLoad=Date.now();DASH.nextReconcile=Date.now()+300000;DASH.movements=[];window.deltaFail=true;const original=respond;respond=(fn,args)=>{if(fn!=='getDashboardDelta')return original(fn,args);var next=!!args[1].cursor;if(!next&&deltaFail)apiFailure='getDashboardDelta';return {success:true,movements:[{id:next?'B':'A',type:'OUT',productCode:'P1',timestamp:new Date().toISOString(),qty:1}],productStocks:[{productCode:'P1',currentStock:next?7:8,minStock:2,costPrice:100,sellingPrice:200}],poVendorMap:{},serverTime:'new-watermark',hasMore:!next,nextCursor:next?'':'next'};};dashRefreshDelta();});
+    await p.waitForFunction(()=>!DASH.loading);assert.equal(await p.evaluate(()=>DASH.lastSync),'old-watermark');assert.equal(await p.evaluate(()=>DASH.movements.length),0);assert.equal(await p.evaluate(()=>DASH.products[0].currentStock),10);
+    await p.evaluate(()=>{apiFailure='';deltaFail=false;dashRefreshDelta();});await p.waitForFunction(()=>!DASH.loading);assert.equal(await p.evaluate(()=>DASH.lastSync),'new-watermark');assert.equal(await p.evaluate(()=>DASH.movements.length),2);assert.equal(await p.evaluate(()=>DASH.products[0].currentStock),7);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('A manual refresh queued during a failed delta still runs once and bypasses the cached snapshot',async()=>{
+    const p=await pageFor('index.html');await p.waitForFunction(()=>!DASH.loading);await p.evaluate(()=>{DASH.lastFullLoad=Date.now();DASH.nextReconcile=Date.now()+300000;apiHold='getDashboardDelta';apiPending=[];dashRefreshDelta();dashLoad(true);apiFailure='getDashboardDelta';apiPending[0]();});
+    await p.waitForFunction(()=>!DASH.loading);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDashboardBootstrap').length),2);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDashboardBootstrap').at(-1).args[0].force),true);assert.equal(await p.evaluate(()=>DASH.reloadRequested),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Manual dashboard/PO refresh bypasses result snapshots and cached timestamps keep their original age',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{const original=respond;respond=(fn,args)=>{const r=original(fn,args);if(fn==='getDashboardBootstrap')r.snapshotLoadedAt=Date.now()-45000;return r;};dashLoad(true);});await p.waitForFunction(()=>!DASH.loading);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDashboardBootstrap').at(-1).args[0].force),true);assert(await p.evaluate(()=>Date.now()-DASH.lastFullLoad>=45000));assert.deepEqual(p.errors,[]);await p.close();
+    const po=await pageFor('Purchase_Orders.html');await po.evaluate(()=>{const original=respond;respond=(fn,args)=>{const r=original(fn,args);if(fn==='getPurchaseOrderPageData')r.snapshotLoadedAt=Date.now()-45000;return r;};loadAll(true);});await po.waitForTimeout(50);assert.equal(await po.evaluate(()=>apiCalls.filter(x=>x.fn==='getPurchaseOrderPageData').at(-1).args[0].force),true);assert(await po.evaluate(()=>Date.now()-syyFreshState.lastLoaded>=45000));assert.deepEqual(po.errors,[]);await po.close();
   });
   await check('Brands and Categories keep saveMasterData operation through gateway',async()=>{
     for(const [file,collection] of [['Master_Brands.html','Master_Brands'],['Master_Categories.html','Master_Categories']]) {

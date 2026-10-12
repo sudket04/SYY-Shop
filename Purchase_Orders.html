@@ -101,7 +101,7 @@
     <div class="crumb"><span>เอกสาร</span><span class="sep">›</span><b>สั่งซื้อสินค้า</b></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
-      <button class="btn btn-ghost" id="btnRefresh" onclick="loadAll()">🔄 รีเฟรช</button>
+      <button class="btn btn-ghost" id="btnRefresh" onclick="loadAll(true)">🔄 รีเฟรช</button>
     </div>
   </div>
 
@@ -348,7 +348,7 @@
 
   XLF.bindHeaderClicks('#historyThead', function() { return purchaseOrders; }, renderHistoryTab);
 
-  function loadAll() {
+  function loadAll(force) {
     var revision=syyDataRevision();if(documentPager)documentPager.cancel();
     var btn = document.getElementById('btnRefresh');
     btn.classList.add('is-loading');
@@ -356,9 +356,9 @@
     // ★ ใช้ endpoint รวม getPurchaseOrderPageData() แทนการเรียก getLowStockProductsForOrder()
     //   + getPurchaseOrders() แยกกัน 2 รอบ (ซึ่งแต่ละรอบดึงข้อมูลผู้จัดจำหน่ายซ้ำกันเอง)
     //   ฝั่ง server ดึงข้อมูลผู้จัดจำหน่ายแค่ครั้งเดียว ใช้ร่วมกันทั้ง 2 ส่วน
-    callApi('getPurchaseOrderPageData', [], function(data) {
+    callApi('getPurchaseOrderPageData', [{force:force===true}], function(data) {
         if(revision!==syyDataRevision()){syyDataFailed();btn.classList.remove('is-loading');return;}
-        syyDataLoaded();
+        syyDataLoaded(data&&data.snapshotLoadedAt);
         lowStockItems  = (data && data.lowStockItems)  || [];
         purchaseOrders = (data && data.purchaseOrders) || [];
         pendingSummary=data.pendingSummary||{codes:{},pendingCount:purchaseOrders.filter(function(po){return po.status==='Pending';}).length};if(documentPager){documentPager.reset(data.pageInfo);var saved=syyLocalGet('view','purchaseOrders');if(saved&&saved.search&&(saved.search.number||saved.search.from||saved.search.to))document.querySelector('.syy-document-search').requestSubmit();}

@@ -57,7 +57,7 @@ function setup(){
       const store=body.readTime?snapshots.get(body.readTime)||docs:docs;
       let list=[...store].filter(([k])=>k.startsWith((project!=='syy-shop'?project+'::':'')+col+'/')).map(([,v])=>v);
       let filters=q.where?.compositeFilter?.filters || (q.where?[q.where]:[]);
-      for(const f of filters){const x=f.fieldFilter,k=x.field.fieldPath,want=x.value.referenceValue||c.parseFirestoreValue_(x.value);list=list.filter(doc=>{const v=k==='__name__'?doc.name:c.parseFirestoreValue_(doc.fields[k]);return v!=null && (x.op==='IN'?want.includes(v):x.op==='EQUAL'?v===want:x.op==='LESS_THAN'?v<want:x.op==='LESS_THAN_OR_EQUAL'?v<=want:x.op==='GREATER_THAN'?v>want:v>=want);});}
+      for(const f of filters){const x=f.fieldFilter,k=x.field.fieldPath,want=x.value.referenceValue||c.parseFirestoreValue_(x.value);list=list.filter(doc=>{const v=k==='__name__'?doc.name:c.parseFirestoreValue_(doc.fields[k]);return v!=null && (x.op==='ARRAY_CONTAINS'?Array.isArray(v)&&v.includes(want):x.op==='IN'?want.includes(v):x.op==='EQUAL'?v===want:x.op==='LESS_THAN'?v<want:x.op==='LESS_THAN_OR_EQUAL'?v<=want:x.op==='GREATER_THAN'?v>want:v>=want);});}
       if(q.orderBy){const get=(doc,k)=>k==='__name__'?doc.name:c.parseFirestoreValue_(doc.fields[k]);
         list=list.filter(doc=>q.orderBy.every(order=>get(doc,order.field.fieldPath)!=null));
         list.sort((a,b)=>{for(const order of q.orderBy){const av=get(a,order.field.fieldPath),bv=get(b,order.field.fieldPath);if(av!==bv)return (av<bv?-1:1)*(order.direction==='DESCENDING'?-1:1);}return 0;});

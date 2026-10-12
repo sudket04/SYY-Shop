@@ -21,7 +21,7 @@ function setup() {
     CacheService:{getScriptCache:()=>({get:key=>cache.get(key)||null,put:(key,value)=>cache.set(key,value),remove:key=>cache.delete(key)})},
     PropertiesService:{getScriptProperties:()=>({getProperty:key=>props[key]||null,setProperty:(key,value)=>props[key]=value,setProperties:values=>Object.assign(props,values)})},
     LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock(){}})},
-    Utilities:{DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,value)=>Array.from(require('node:crypto').createHash('sha256').update(String(value)).digest()),getUuid:()=> 'dummy-'+(++sequence),formatDate:()=> '2026-10-11'},
+    Utilities:{base64Encode:v=>Buffer.from(v).toString('base64'),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,value)=>Array.from(require('node:crypto').createHash('sha256').update(String(value)).digest()),getUuid:()=> 'dummy-'+(++sequence),formatDate:()=> '2026-10-11'},
     ScriptApp:{getOAuthToken:()=> 'dummy-oauth',getService:()=>({getUrl:()=> 'https://example.invalid/shop'}),
       WeekDay:{SUNDAY:'SUNDAY'},getProjectTriggers:()=>[],deleteTrigger:t=>removed.push(t),
       newTrigger(handler){const config={handler}; const builder={
@@ -79,7 +79,7 @@ test('all V1 operations retain names, private dispatch, response and existing ro
   const s=setup();
   const expected={viewer: ['getAllProducts','getAllMasterDropdowns','getBrands','getCategories','getVendorsFull','getCustomersFull',
     'getZonesFull','getCarsFull','getPurchaseOrderPageData','getTaxInvoicePageData','getTaxInvoiceListData','getQuotationPageData',
-    'getQuotationListData','getStockMovements','getDashboardBootstrap','getDashboardDelta','saveTaxInvoice','saveQuotation',
+    'getQuotationListData','getStockMovements','getStockMovementPage','getDashboardBootstrap','getDashboardDelta','saveTaxInvoice','saveQuotation',
     'updateQuotationStatus','authGetMyProfile','authChangePassword','authLogout'],
     staff:['saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveProduct','uploadProductImage',
     'deleteProductImage','setPrimaryProductImage','moveProductImage','commitProductImageDraft','generateProductBarcode',

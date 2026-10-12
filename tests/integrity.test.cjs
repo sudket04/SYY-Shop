@@ -116,14 +116,14 @@ test('read failures never cache empty products, PO, movements, audit logs or dro
   s.c.failRequest=null;assert.equal(s.c.getAllProducts_().length,1);s.c.failRequest=()=>503;assert.equal(s.c.getAllProducts_().length,1);
 });
 test('dashboard delta uses commit time, includes late business timestamps and fails without advancing',()=>{
-  const s=setup();s.seed();s.put('Stock_Movements/late',{Doc_No:'SI-late',Type:'OUT',Product_Code:'P1',Qty:1,Timestamp:'2026-10-11T04:00:00Z',Committed_At:'2026-10-11T05:09:50.000Z'});
-  const data=s.c.getDashboardDelta_('2026-10-11T05:09:40.000Z');assert.equal(data.movements.length,1);assert.equal(data.serverTime,s.c.readTime);
+  const s=setup();s.c.readTime=new Date().toISOString();s.seed();s.put('Stock_Movements/late',{Doc_No:'SI-late',Type:'OUT',Product_Code:'P1',Qty:1,Timestamp:'2026-10-11T04:00:00Z',Committed_At:new Date(Date.now()-10000).toISOString()});
+  const data=s.c.getDashboardDelta_(new Date(Date.now()-20000).toISOString());assert.equal(data.movements.length,1);assert.equal(data.serverTime,s.c.readTime);
   s.c.failRequest=url=>url.endsWith(':runQuery')?503:0;assert.throws(()=>s.c.getDashboardDelta_(data.serverTime));
 });
 test('historic receiving cost comes from PO snapshot, including zero; missing cost remains unknown',()=>{
   const s=setup();s.seed();po(s);const rows=[{type:'IN',refNo:'PO1',productCode:'P1',costPrice:null},{type:'IN',refNo:'MISSING',productCode:'P1',costPrice:null}];
   assert.equal(s.c.buildPoVendorMapForMovements_(rows).PO1,'Vendor');assert.equal(rows[0].costPrice,75);assert.equal(rows[1].costPrice,null);
-  s.put('Purchase_Orders/PO1',{Vendor_ID:'V1',Items_JSON:JSON.stringify([{productCode:'P1',costPrice:0}])});rows[0].costPrice=null;s.c.buildPoVendorMapForMovements_(rows);assert.equal(rows[0].costPrice,0);
+  s.put('Purchase_Orders/PO1',{Vendor_ID:'V1',Items_JSON:JSON.stringify([{productCode:'P1',costPrice:0}])});s.c.clearCollectionCache_('Purchase_Orders');rows[0].costPrice=null;s.c.buildPoVendorMapForMovements_(rows);assert.equal(rows[0].costPrice,0);
 });
 test('atomic year append survives concurrent writers and refuses read/write failures',()=>{
   const s=setup(),id=s.c.TAX_INVOICE_YEARS_ID;s.put('Meta_Counters/'+id,{Years:[2567]});

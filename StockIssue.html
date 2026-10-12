@@ -235,7 +235,7 @@
         <div class="toolbar">
           <div class="search">
             <span class="ico">⌕</span>
-            <input type="text" id="mvSearchInput" class="input" placeholder="ค้นหาเลขรายการ / สินค้า / รหัส / เหตุผล / อ้างอิง / ผู้ทำรายการ" oninput="renderMovements()" autocomplete="off">
+            <input type="text" id="mvSearchInput" class="input" placeholder="ค้นหาเลขรายการ / สินค้า / รหัส / เหตุผล / อ้างอิง / ผู้ทำรายการ" oninput="searchMovements()" autocomplete="off">
           </div>
           <span class="count" id="mvCount"></span>
         </div>
@@ -250,6 +250,13 @@
             </thead>
             <tbody id="mvBody"><tr><td colspan="9">⏳ กำลังโหลด...</td></tr></tbody>
           </table>
+        </div>
+        <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <span id="mvPageStatus" role="status" aria-live="polite"></span>
+          <span style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-ghost" id="mvMore" onclick="loadMovementPage(false)">โหลดเพิ่ม</button>
+            <button type="button" class="btn btn-ghost" id="mvAll" onclick="loadMovementPage(true)">โหลดครบขอบเขตประวัติ</button>
+          </span>
         </div>
       </div>
     </div>
@@ -311,6 +318,7 @@
   var movements   = [];
   var searchTimer = null;
   var MV_LIMIT    = 1000;   // ค่าสูงสุดที่ getStockMovements ยอมให้ดึง — เอาประวัติให้ครบที่สุดเท่าที่ทำได้
+  var mvPage={generation:0,busy:false,cursor:'',complete:false,initialized:false,all:false,error:''},mvSearchTimer;
   var pendingQuoteId = null; // ใบเสนอราคาที่ส่งรายการมาเติมตะกร้า (ถ้ามี) — ใช้ทำเครื่องหมายว่าตัดสต๊อกแล้วหลังยืนยันสำเร็จ
   var searchInputEl  = document.getElementById('searchInput');
 
@@ -409,7 +417,7 @@
     document.getElementById('panelHistory').classList.toggle('active', !isIssue);
     document.getElementById('tabBtnIssue').classList.toggle('active', isIssue);
     document.getElementById('tabBtnHistory').classList.toggle('active', !isIssue);
-    if (!isIssue && !movements.length) loadMovements();
+    if (!isIssue && !mvPage.initialized && !mvPage.busy) loadMovements();
     if (isIssue) focusScanInput();
   }
 
@@ -855,6 +863,7 @@
           updateCounts();
           renderResults();
           movements = [];
+          mvPage.generation++;mvPage.initialized=false;mvPage.busy=false;mvPage.complete=false;mvPage.cursor='';
           // ส่งค่าคงเหลือที่ server ยืนยันแล้วไปยังหน้าจัดการสินค้าโดยไม่อ่าน Firestore ซ้ำ
           var stockDelta = currentStocks.map(function(r) {
             return { productCode: r.productCode, currentStock: num(r.currentStock) };
@@ -884,6 +893,7 @@
     document.querySelectorAll('[data-mv]').forEach(function (b) { b.classList.remove('active'); });
     el.classList.add('active');
     renderMovements();
+    if(v!=='all'&&!mvPage.complete)loadMovementPage(true);
   }
 
   function loadMovements() {
@@ -891,16 +901,37 @@
     movementDetailCache = Object.create(null);
     movementDetailPending = Object.create(null);
     closeMovementDetail();
-    document.getElementById('mvBody').innerHTML = skeletonRows(9, 6);
-    callApi('getStockMovements', [MV_LIMIT, ''], function (data) {
-      movements = data || [];
+    clearTimeout(mvSearchTimer);movements=[];
+    mvPage={generation:mvPage.generation+1,busy:false,cursor:'',complete:false,initialized:false,all:false,error:''};
+    loadMovementPage(false);
+  }
+
+  function searchMovements(){
+    renderMovements();clearTimeout(mvSearchTimer);
+    mvSearchTimer=setTimeout(function(){if(document.getElementById('mvSearchInput').value.trim()&&!mvPage.complete)loadMovementPage(true);},250);
+  }
+  function updateMovementPager(){
+    var state=mvPage,searching=!!document.getElementById('mvSearchInput').value.trim()||mvFilter!=='all';
+    document.getElementById('mvPageStatus').innerText=state.error||
+      (state.busy?(searching?'กำลังค้นหาให้ครบประวัติล่าสุด '+MV_LIMIT+' รายการ…':'กำลังโหลดประวัติ…'):
+      state.complete?'โหลดครบขอบเขตประวัติแล้ว · '+movements.length+' รายการล่าสุด':'โหลดแล้ว '+movements.length+' รายการ · ค้นหาครอบคลุมประวัติล่าสุด '+MV_LIMIT+' รายการ');
+    ['mvMore','mvAll'].forEach(function(id){var btn=document.getElementById(id);btn.hidden=state.complete;btn.disabled=state.busy;});
+    document.getElementById('mvMore').textContent=state.error?'ลองโหลดต่ออีกครั้ง':'โหลดเพิ่ม';
+  }
+  function loadMovementPage(all){
+    if(all)mvPage.all=true;if(mvPage.busy||mvPage.complete)return;
+    mvPage.busy=true;mvPage.error='';var generation=mvPage.generation;
+    if(!movements.length)document.getElementById('mvBody').innerHTML=skeletonRows(9,6);
+    updateMovementPager();
+    callApi('getStockMovementPage',[{pageSize:mvPage.all?200:50,cursor:mvPage.cursor,view:generation}],function(data){
+      if(generation!==mvPage.generation)return;
+      if(!data||!Array.isArray(data.movements)||!data.pageInfo||data.pageInfo.hasMore&&(!data.pageInfo.nextCursor||data.pageInfo.nextCursor===mvPage.cursor||!data.movements.length)){failed({message:'ข้อมูลประวัติไม่ครบ กรุณาลองใหม่'});return;}
+      var seen={};movements.forEach(function(m){seen[m.id]=true;});data.movements.forEach(function(m){if(!seen[m.id]){movements.push(m);seen[m.id]=true;}});
+      mvPage.initialized=true;mvPage.busy=false;mvPage.cursor=data.pageInfo.nextCursor||'';mvPage.complete=!data.pageInfo.hasMore;
       renderMovements();
-    }, function (err) {
-      document.getElementById('mvBody').innerHTML = emptyStateHtml(9, {
-        icon: '⚠️', title: 'โหลดประวัติไม่สำเร็จ', sub: syyErrorMessage(err),
-        actions: [{ label: 'ลองอีกครั้ง', primary: true, onclick: 'loadMovements()' }]
-      });
-    });
+      if(!mvPage.complete&&(mvPage.all||mvFilter!=='all'||document.getElementById('mvSearchInput').value.trim()))loadMovementPage(true);
+    },failed);
+    function failed(err){if(generation!==mvPage.generation)return;mvPage.busy=false;mvPage.error='โหลดประวัติยังไม่ครบ: '+syyErrorMessage(err);renderMovements();}
   }
 
   var TH_MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
@@ -912,6 +943,7 @@
   }
 
   function renderMovements() {
+    updateMovementPager();
     var q = document.getElementById('mvSearchInput').value.toLowerCase().trim();
     var rows = mvFilter === 'all' ? movements.slice() : movements.filter(function (m) { return m.type === mvFilter; });
     if (q) {
@@ -924,9 +956,11 @@
     document.getElementById('mvCount').innerText = movements.length
       ? 'แสดง ' + rows.length + ' จาก ' + movements.length + ' รายการล่าสุด'
       : '';
+    if(!mvPage.complete)document.getElementById('mvCount').innerText+=' · ข้อมูลยังไม่ครบ';
 
     var tbody = document.getElementById('mvBody');
     if (!rows.length) {
+      if(!mvPage.complete){tbody.innerHTML=emptyStateHtml(9,{title:mvPage.error?'โหลดประวัติยังไม่ครบ':'กำลังเตรียมผลการค้นหา',sub:mvPage.error||'ผลการค้นหาจะครบเมื่อโหลดประวัติล่าสุดเสร็จ'});return;}
       tbody.innerHTML = emptyStateHtml(9, movements.length
         ? { title: 'ไม่พบรายการที่ตรงกับที่ค้นหา', sub: 'ลองลดคำค้นหรือเปลี่ยนตัวกรอง' }
         : { icon: '📭', title: 'ยังไม่มีประวัติเข้า-ออก', sub: 'รายการจะขึ้นทันทีที่มีการตัดสต๊อกหรือรับของเข้า' });

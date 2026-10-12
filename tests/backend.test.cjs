@@ -29,7 +29,7 @@ function setup() {
       throw new Error('Unexpected call: '+url);
     }}});
   vm.runInContext(source, c);
-  Object.assign(c, {getAuthHeader_:()=>({}), clearCollectionCache_:()=>{}, queryByEqualityField_:()=>[], peekCollectionDocsCache_:()=>null,
+  Object.assign(c, {collectionGeneration_:()=>"fixture",getAuthHeader_:()=>({}), clearCollectionCache_:()=>{}, queryByEqualityField_:()=>[], peekCollectionDocsCache_:()=>null,
     fetchCollectionDocsCached_:name=>[...docs].filter(([key])=>key.startsWith(name+"/")).map(([key,doc])=>({id:key.split("/")[1],...doc})),getFirestoreRawList_:()=>[], updateTaxInvoiceYearsMeta_:()=>{}, updateQuotationYearsMeta_:()=>{}, logActivity_:()=>{},
     getProductById_:id=>({id, productCode:id, currentStock:c.parseFirestoreValue_(docs.get('Master_Products/'+id).fields.Current_Stock)}),
     hashPassword_:(value,salt)=>require('node:crypto').createHash('sha256').update(String(value)+salt).digest('hex'),getCurrentUsername_:()=> 'staff'});

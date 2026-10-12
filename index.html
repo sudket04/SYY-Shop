@@ -207,7 +207,7 @@
       <button class="btn btn-ghost" onclick="dashJumpNow()">ปัจจุบัน</button>
       <span class="count" id="lastUpdated"></span>
       <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()"><span data-icon="list"></span></button>
-      <button class="btn btn-ghost" id="btnRefresh" onclick="dashLoad()"><span data-icon="more"></span> รีเฟรช</button>
+      <button class="btn btn-ghost" id="btnRefresh" onclick="dashLoad(true)"><span data-icon="more"></span> รีเฟรช</button>
       <button class="btn btn-ok" onclick="exportToExcel()">Export</button>
     </div>
   </div>
@@ -830,14 +830,14 @@
   var DASH_M_FULL=['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var DASH_CAT_PALETTE=['#005088','#0a6fb8','#2a8fd4','#5ba9de','#7cb3d4','#93c5fd','#b6d7ef'];
 
-  function dashLoad(){
-    if(DASH.loading){DASH.reloadRequested=true;return;}
+  function dashLoad(force){
+    if(DASH.loading){DASH.reloadRequested=true;DASH.forceReload=DASH.forceReload||force===true;return;}
     DASH.loading=true;DASH.nextReconcile=Date.now()+300000;
     var btn=document.getElementById('btnRefresh');
     btnBusy(btn,'กำลังโหลด...');
     if(!DASH.loaded) document.getElementById('dashHealthBody').innerHTML = skeletonRows(9,6);
     var requestedYear=DASH.year;
-    callApi('getDashboardBootstrap', [{year:requestedYear}], function(data){
+    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true}], function(data){
       btnDone(btn);
       DASH.loading=false;
       data = data||{};
@@ -848,12 +848,12 @@
       DASH.poVendorMap = data.poVendorMap||{};
       DASH.lastSync = data.serverTime || (DASH.movements.length ? DASH.movements[0].timestamp : new Date().toISOString());
       allProducts = DASH.products; // ใช้ร่วมกับ openView/openEdit/editModal เดิม
-      DASH.loaded = true; DASH.lastLoad = Date.now(); DASH.lastFullLoad = Date.now();
+      DASH.loaded = true; DASH.lastLoad = Date.now(); DASH.lastFullLoad = Number(data.snapshotLoadedAt)||Date.now();DASH.nextReconcile=DASH.lastFullLoad+300000;
       document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
       dashBuildAggregates();
       dashUpdateSidebarBadges();
       dashRenderAll();
-      if(DASH.reloadRequested){DASH.reloadRequested=false;setTimeout(dashLoad,0);}else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
+      if(DASH.reloadRequested){DASH.reloadRequested=false;var queuedForce=!!DASH.forceReload;DASH.forceReload=false;setTimeout(function(){dashLoad(queuedForce);},0);}else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
     }, function(err){
       btnDone(btn);
       DASH.loading=false;
@@ -881,26 +881,38 @@
 
   function dashRefreshDelta(){
     if(DASH.loading){DASH.pendingDelta=true;return;}
-    if(!DASH.loaded || !DASH.lastSync || (Date.now()-DASH.lastFullLoad >= 300000 && Date.now()>=DASH.nextReconcile)){ dashLoad(); return; }
+    if(!DASH.loaded||!DASH.lastSync||(Date.now()-DASH.lastFullLoad>=300000&&Date.now()>=DASH.nextReconcile)){dashLoad();return;}
     DASH.loading=true;DASH.pendingDelta=false;
-    callApi('getDashboardDelta',[DASH.lastSync],function(data){
-      DASH.loading=false;data=data||{};
-      if(data.fullRefresh){dashLoad();return;}
-      if(data.success===false){document.getElementById('lastUpdated').innerText='ซิงก์ไม่สำเร็จ · แสดงข้อมูลเดิม';return;}
-      var seen={};
-      DASH.movements.forEach(function(m){seen[m.id||[m.docNo,m.productCode,m.type,m.timestamp].join('|')]=true;});
-      (data.movements||[]).forEach(function(m){
-        var key=m.id||[m.docNo,m.productCode,m.type,m.timestamp].join('|');if(seen[key])return;seen[key]=true;m.ts=new Date(m.timestamp);DASH.movements.push(m);
-      });
-      DASH.movements.sort(function(a,b){return b.ts-a.ts;});
-      var byCode={};DASH.products.forEach(function(p){byCode[p.productCode]=p;});
-      (data.productStocks||[]).forEach(function(x){var p=byCode[x.productCode];if(!p)return;p.currentStock=num(x.currentStock);p.minStock=num(x.minStock);p.costPrice=num(x.costPrice);p.sellingPrice=num(x.sellingPrice);});
-      Object.keys(data.poVendorMap||{}).forEach(function(k){DASH.poVendorMap[k]=data.poVendorMap[k];});
-      DASH.lastSync=data.serverTime||DASH.lastSync;DASH.lastLoad=Date.now();allProducts=DASH.products;
-      document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
-      dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();
-      if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
-    },function(err){DASH.loading=false;console.error('dashRefreshDelta error:',syyErrorMessage(err));document.getElementById('lastUpdated').innerText='ซิงก์ไม่สำเร็จ · แสดงข้อมูลเดิม';});
+    var since=DASH.lastSync,year=DASH.year,rows=[],stocks={},vendors={};
+    request('');
+    function request(cursor){
+      callApi('getDashboardDelta',[since,{cursor:cursor}],function(data){
+        data=data||{};
+        if(data.fullRefresh){DASH.loading=false;dashLoad(true);return;}
+        if(data.success===false){failed();return;}
+        rows=rows.concat(data.movements||[]);
+        (data.productStocks||[]).forEach(function(x){stocks[x.productCode]=x;});
+        Object.keys(data.poVendorMap||{}).forEach(function(k){vendors[k]=data.poVendorMap[k];});
+        if(data.hasMore){if(!data.nextCursor||data.nextCursor===cursor){failed();return;}request(data.nextCursor);return;}
+        DASH.loading=false;
+        if(year!==DASH.year){DASH.reloadRequested=false;dashLoad();return;}
+        var seen={};DASH.movements.forEach(function(m){seen[m.id||[m.docNo,m.productCode,m.type,m.timestamp].join('|')]=true;});
+        rows.forEach(function(m){var key=m.id||[m.docNo,m.productCode,m.type,m.timestamp].join('|');if(!seen[key]){seen[key]=true;m.ts=new Date(m.timestamp);DASH.movements.push(m);}});
+        DASH.movements.sort(function(a,b){return b.ts-a.ts;});
+        DASH.products.forEach(function(p){var x=stocks[p.productCode];if(x){p.currentStock=num(x.currentStock);p.minStock=num(x.minStock);p.costPrice=num(x.costPrice);p.sellingPrice=num(x.sellingPrice);}});
+        Object.keys(vendors).forEach(function(k){DASH.poVendorMap[k]=vendors[k];});
+        // Advance only after every page succeeds. A failed drain retries the same watermark.
+        DASH.lastSync=data.serverTime||since;DASH.lastLoad=Date.now();allProducts=DASH.products;
+        document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
+        dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();
+        if(DASH.reloadRequested){DASH.reloadRequested=false;var force=!!DASH.forceReload;DASH.forceReload=false;dashLoad(force);}
+        else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
+      },failed);
+    }
+    function failed(){
+      DASH.loading=false;document.getElementById('lastUpdated').innerText='ซิงก์ยังไม่ครบ · แสดงข้อมูลเดิม กรุณารีเฟรช';
+      if(DASH.reloadRequested){DASH.reloadRequested=false;var force=!!DASH.forceReload;DASH.forceReload=false;dashLoad(force);}
+    }
   }
 
   function dashUpdateSidebarBadges(){
