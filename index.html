@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -322,7 +324,7 @@
 
         <div class="pager">
           <div class="info" id="dashHealthFoot">—</div>
-          <span style="font-size:12px;color:var(--faint)">อัปเดตจากใบเบิก / ใบขาย / ใบรับเข้า แบบเรียลไทม์</span>
+          <span style="font-size:12px;color:var(--faint)">อัปเดตจากใบเบิก / ใบขาย / ใบรับเข้า อัปเดตตามรอบและการทำรายการ</span>
         </div>
       </div>
     </div>
@@ -532,7 +534,7 @@
     if(poPicker) poPicker.style.display=['admin','staff'].indexOf(USER_ROLE)>-1?'flex':'none';
     hydrateIcons();
     document.querySelectorAll('iframe[data-src]').forEach(function(frame){frame.dataset.channel=crypto.randomUUID();frame.dataset.src+='&channel='+encodeURIComponent(frame.dataset.channel);});
-    dashLoad();
+    syyInitNavigation();
     setInterval(function(){if(!document.hidden && document.getElementById('homeScreen').style.display!=='none' && DASH.loaded && Date.now()-DASH.lastFullLoad>=300000 && Date.now()>=DASH.nextReconcile) dashLoad();},60000);
   });
 
@@ -639,6 +641,7 @@
     else if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
     else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }
     else if(d.action==='REFRESH_STOCK_FULL'){ dashRefreshDelta(); }
+    else if(d.action==='SESSION_EXPIRED'){syyDraftFlush();document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});}
     else if(d.action==='OPEN_STOCK_ISSUE'){
       switchPage('stockissue');
       var payload = { items:d.items, refNo:d.refNo, note:d.note, quoteId:d.quoteId };
@@ -725,11 +728,13 @@
     localStorage.setItem('syy_sidebar', sb.classList.contains('mini')?'mini':'full');
   }
 
-  function switchPage(id){
+  function switchPage(id,fromHistory){
     document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'PAGE_HIDDEN'});});
     var target=null;
     MENU.some(function(g){ return g.items.some(function(it){ if(it.id===id){target=it;return true;} return false; }); });
     if(target && !canSee(target)) return;
+    if(!target&&id!=='home'&&id!=='profile')return;
+    if(!fromHistory&&window.syyNavCurrent!==id)syyRecordNavigation(id,false);window.syyNavCurrent=id;syyLocalSet('view','navigation',id);
     document.querySelectorAll('.menu-item').forEach(function(m){ m.classList.remove('active'); });
     var mi=document.getElementById('menu-'+id); if(mi) mi.classList.add('active');
     document.querySelectorAll('#mobileNav button').forEach(function(b){ b.classList.remove('active'); });
@@ -854,7 +859,7 @@
       document.getElementById('lastUpdated').innerText='โหลดไม่สำเร็จ · แสดงข้อมูลล่าสุดที่โหลดสำเร็จ';
       if(DASH.loaded) {DASH.year=DASH.loadedYear||DASH.year;dashRenderAll();return;}
       document.getElementById('dashHealthBody').innerHTML=emptyStateHtml(9,{
-        icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
+        icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'dashLoad()'}]
       });
     });
@@ -869,7 +874,7 @@
       allProducts = DASH.products;
       if(DASH.loaded){ dashBuildAggregates(); dashRenderAll(); }
       dashUpdateSidebarBadges();
-    }, function(err){ console.error('refreshDashboardProductsOnly error:', JSON.stringify(err)); });
+    }, function(err){ console.error('refreshDashboardProductsOnly error:', syyErrorMessage(err)); });
   }
 
 
@@ -894,7 +899,7 @@
       document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
       dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();
       if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
-    },function(err){DASH.loading=false;console.error('dashRefreshDelta error:',JSON.stringify(err));document.getElementById('lastUpdated').innerText='ซิงก์ไม่สำเร็จ · แสดงข้อมูลเดิม';});
+    },function(err){DASH.loading=false;console.error('dashRefreshDelta error:',syyErrorMessage(err));document.getElementById('lastUpdated').innerText='ซิงก์ไม่สำเร็จ · แสดงข้อมูลเดิม';});
   }
 
   function dashUpdateSidebarBadges(){
@@ -1706,7 +1711,7 @@
       }, function(err){
         btnDone(btn);
         alertEl.className='modal-alert error';
-        alertEl.innerText=''+JSON.stringify(err);
+        alertEl.innerText=''+syyErrorMessage(err);
       });
   }
 
@@ -1753,7 +1758,7 @@
         toast('สำรองข้อมูลสำเร็จ ('+n+' รายการ · '+res.fileSizeKB+' KB)');
       } else toast('สำรองสำเร็จบางส่วน — '+((res&&res.errors)||[]).join(', '),'warn',5000);
       loadBackupList();
-    }, function(err){ btnDone(btn); swyError('สำรองข้อมูลไม่สำเร็จ',esc(JSON.stringify(err))); });
+    }, function(err){ btnDone(btn); swyError('สำรองข้อมูลไม่สำเร็จ',esc(syyErrorMessage(err))); });
   }
 
   /* ═══ Activity log ═══ */
@@ -1782,15 +1787,19 @@
 
   /* ═══ Logout ═══ */
   function doLogout(){
-    swyConfirm({icon:'question',title:'ออกจากระบบ?',html:'คุณต้องการออกจากระบบตอนนี้ใช่หรือไม่',confirmText:'ออกจากระบบ',danger:true})
+    swyConfirm({icon:'question',title:'ออกจากระบบ?',html:'ร่างที่ยังไม่บันทึกจะถูกล้าง · รายการสต๊อกที่ยังไม่ยืนยันผลจะเก็บ request ID ไว้สำหรับตรวจสอบด้วยบัญชีเดิม',confirmText:'ออกจากระบบ',danger:true})
       .then(function(ok){
-        if(!ok) return;
+        if(!ok) return;window.syyIntentionalExit=true;syyClearAccountState();document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'CLEAR_LOCAL_STATE'});});
         google.script.run
           .withSuccessHandler(function(){ window.top.location.href=WEB_APP_URL+'?page=login'; })
           .withFailureHandler(function(){ window.top.location.href=WEB_APP_URL+'?page=login'; })
           .apiGateway(AUTH_TOKEN,'authLogout',[AUTH_TOKEN],navigator.userAgent);
       });
   }
+</script>
+<script>
+function syyRecordNavigation(id,replace){var state={syyPage:id};if(google.script.history){google.script.history[replace?'replace':'push'](state,undefined,'view='+id);}else history[replace?'replaceState':'pushState'](state,'','#view='+id);}
+function syyInitNavigation(){var initial=syyLocalGet('view','navigation')||'home';if(!LABEL_OF[initial]&&initial!=='home')initial='home';syyRecordNavigation(initial,true);switchPage(initial,true);if(google.script.history)google.script.history.setChangeHandler(function(event){switchPage(event.state&&event.state.syyPage||'home',true);});else window.addEventListener('popstate',function(event){switchPage(event.state&&event.state.syyPage||'home',true);});}
 </script>
 </body>
 </html>

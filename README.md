@@ -40,6 +40,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 - [Integrity/Performance 3–18](docs/INTEGRITY-PERFORMANCE-2026-10-11.md)
 - [Audit 19–40](docs/AUDIT-19-40-2026-10-11.md)
 - [Recovery และ readiness รอบล่าสุด](docs/CONTINUATION-2026-10-12.md)
+- [UI/UX 15 รายการ: implementation, tests และ Firestore impact](docs/UI-UX-2026-10-12.md)
 - [Staging UAT / measurement / rollout / rollback](docs/STAGING-UAT-2026-10-12.md)
 - [Live result template](docs/STAGING-RESULTS.template.json)
 

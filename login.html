@@ -210,31 +210,8 @@
   var pendingPassword  = "";
   var pendingTempToken = "";
 
-  // ★ NEW: แสดง popup ยืนยันเข้าสู่ระบบสำเร็จแบบสวยงาม ก่อน redirect ไปหน้าหลัก
-  //   ใช้ setTimeout สั้นๆ ให้ผู้ใช้เห็น popup ก่อนเปลี่ยนหน้า (ไม่กระทบกับข้อจำกัด sandboxed navigation
-  //   เพราะ redirect เกิดจาก event ของปุ่ม "ตกลง" ใน popup ซึ่งนับเป็น user gesture)
-  function showLoginSuccessThenRedirect(token) {
-    Swal.fire({
-      icon              : 'success',
-      title             : 'เข้าสู่ระบบสำเร็จ',
-      html              : 'กำลังพาคุณไปยังหน้าหลัก...',
-      confirmButtonText : 'เข้าสู่ระบบ',
-      allowOutsideClick : false,
-      allowEscapeKey    : false,
-      timer             : 1400,
-      timerProgressBar  : true,
-      customClass: {
-        popup         : 'swy-popup',
-        icon          : 'swy-icon-success',
-        title         : 'swy-title',
-        htmlContainer : 'swy-html',
-        confirmButton : 'swy-confirm-btn'
-      },
-      buttonsStyling: false
-    }).then(function() {
-      redirectToHome(token);
-    });
-  }
+  // Successful authentication can enter the application immediately.
+  function showLoginSuccessThenRedirect(token){redirectToHome(token);}
 
   // ★ NEW: escape ก่อนใส่ innerHTML กัน XSS (defense in depth)
   function escHtml(str) {
@@ -253,8 +230,11 @@
     });
   }
 
-  function redirectToHome(token) {
-    window.top.location.href = WEB_APP_URL + '?page=home&token=' + encodeURIComponent(token) + '&ua=' + encodeURIComponent(navigator.userAgent);
+  function redirectToHome(token){
+    var url=WEB_APP_URL+'?page=home&token='+encodeURIComponent(token)+'&ua='+encodeURIComponent(navigator.userAgent);
+    try{window.top.location.href=url;}catch(error){
+      var message=document.querySelector('.view.active .alert')||document.getElementById('loginAlert');message.className='alert show';message.textContent='เข้าสู่ระบบสำเร็จ ';var link=document.createElement('a');link.href=url;link.target='_top';link.textContent='กดเพื่อเข้าสู่หน้าหลัก';message.appendChild(link);
+    }
   }
 
   // ตรวจสอบ token จากลิงก์อีเมลทันทีตอนโหลดหน้า (ถ้ามี)
@@ -272,7 +252,7 @@
         }
       })
       .withFailureHandler(function(err) {
-        document.getElementById('resetUsernameDisplay').innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+        document.getElementById('resetUsernameDisplay').innerText = 'เกิดข้อผิดพลาด: ' + (err&&err.message||'การเชื่อมต่อขัดข้อง กรุณาลองใหม่');
       })
       .authVerifyResetToken(RESET_TOKEN);
   }
@@ -312,7 +292,7 @@
         btn.disabled  = false;
         btn.innerText = 'เข้าสู่ระบบ';
         alertEl.className = 'alert error show';
-        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + (err&&err.message||'การเชื่อมต่อขัดข้อง กรุณาลองใหม่');
       })
       .authLogin(username, password, undefined, navigator.userAgent);
   }
@@ -347,7 +327,7 @@ if (res.success) { showLoginSuccessThenRedirect(res.token); return; }
         btn.disabled  = false;
         btn.innerText = 'ยืนยัน';
         alertEl.className = 'alert error show';
-        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + (err&&err.message||'การเชื่อมต่อขัดข้อง กรุณาลองใหม่');
       })
       .authLogin(pendingUsername, pendingPassword, otp, navigator.userAgent);
   }
@@ -374,7 +354,7 @@ if (res.success) { showLoginSuccessThenRedirect(res.token); return; }
         btn.disabled  = false;
         btn.innerText = 'ส่งลิงก์ตั้งรหัสผ่านใหม่';
         alertEl.className = 'alert error show';
-        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + (err&&err.message||'การเชื่อมต่อขัดข้อง กรุณาลองใหม่');
       })
       .authForgotPassword(email);
   }
@@ -418,7 +398,7 @@ if (res.success) { showLoginSuccessThenRedirect(res.token); return; }
         btn.disabled  = false;
         btn.innerText = 'ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ';
         alertEl.className = 'alert error show';
-        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + (err&&err.message||'การเชื่อมต่อขัดข้อง กรุณาลองใหม่');
       })
       .authChangePasswordForced(pendingTempToken, newPw, navigator.userAgent);
   }
@@ -464,7 +444,7 @@ if (res.success) { showLoginSuccessThenRedirect(res.token); return; }
         btn.disabled  = false;
         btn.innerText = 'ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ';
         alertEl.className = 'alert error show';
-        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + JSON.stringify(err);
+        alertEl.innerText = 'เกิดข้อผิดพลาด: ' + (err&&err.message||'การเชื่อมต่อขัดข้อง กรุณาลองใหม่');
       })
       .authResetPassword(RESET_TOKEN, newPw);
   }

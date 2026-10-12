@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -227,7 +229,7 @@
     }, function(err){
       syyDataFailed();
       document.getElementById('tbodyMain').innerHTML = emptyStateHtml(10,{
-        icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:JSON.stringify(err),
+        icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]
       });
       document.getElementById('recordCount').innerText='ผิดพลาด';
@@ -519,7 +521,7 @@
     }, function(err){
       btnDone(btn);
       alertEl.className='modal-alert error';
-      alertEl.innerText=''+JSON.stringify(err);
+      alertEl.innerText=''+syyErrorMessage(err);
     });
   }
 
@@ -554,7 +556,7 @@
       deleteId=null;
     },function(err){
       btnDone(btn); closeModal('deleteModal');
-      swyError('เกิดข้อผิดพลาด',esc(JSON.stringify(err)));
+      swyError('เกิดข้อผิดพลาด',esc(syyErrorMessage(err)));
     });
   }
 </script>

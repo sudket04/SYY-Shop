@@ -1881,7 +1881,7 @@ function getTaxInvoiceListByYear_(yearBE){var out=[],cursor='';do{var p=getTaxIn
 //   เพราะร้านที่ออกใบกำกับภาษีเกิน 1,500 ใบสะสม ปกติจะกรองดูทีละปีอยู่แล้วไม่ได้ใช้มุมมอง "ทั้งหมด" นี้
 function getTaxInvoiceList_(){var out=[],cursor='';do{var p=getTaxInvoiceListData_('all',{pageSize:200,cursor:cursor});out=out.concat(p.invoices);cursor=p.pageInfo.nextCursor;}while(cursor);return out;}
 
-function getTaxInvoiceListData_(yearFilter,options){var page=queryDocumentPage_('Master_Tax_Invoice','Invoice_Date',yearFilter,options);return {invoices:page.docs.map(function(doc){return mapTaxInvoiceQueryDoc_(doc);}),pageInfo:page.pageInfo,availableYears:options&&options.cursor?undefined:getTaxInvoiceAvailableYears_()};}
+function getTaxInvoiceListData_(yearFilter,options){var page=queryDocumentPage_('Master_Tax_Invoice','Invoice_Date',yearFilter,options);return {invoices:page.docs.map(function(doc){return mapTaxInvoiceQueryDoc_(doc);}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getTaxInvoiceAvailableYears_()};}
 
 function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=getAllProducts_();result.seller=TAX_INVOICE_SELLER;return result;}
 
@@ -2186,7 +2186,7 @@ function seedQuotationYearsMeta_() {
 
 // ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
 //   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
-function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(function(doc){return mapQuotationDoc_({id:doc.name.split('/').pop(),fields:doc.fields||{}});}),pageInfo:page.pageInfo,availableYears:options&&options.cursor?undefined:getQuotationAvailableYears_()};}
+function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(function(doc){return mapQuotationDoc_({id:doc.name.split('/').pop(),fields:doc.fields||{}});}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getQuotationAvailableYears_()};}
 
 function getQuotationPageData_(yearFilter,options){var result=getQuotationListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=getAllProducts_();result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
 
@@ -2731,7 +2731,15 @@ function getPurchaseOrders_() {
 //   และตอน dashboard เรียก getDashboardBootstrap) เปลี่ยนเป็น runQuery + orderBy + limit เหมือนจุดอื่น
 function buildPurchaseOrderList_(vendorMap){var out=[],cursor='';do{var page=queryDocumentPage_('Purchase_Orders','Order_Date','all',{pageSize:200,cursor:cursor});out=out.concat(page.docs.map(function(doc){return purchaseOrderDto_({id:doc.name.split('/').pop(),fields:doc.fields},vendorMap);}));cursor=page.pageInfo.nextCursor;}while(cursor);return out;}
 
-function getPurchaseOrderPageData_(options){options=options||{};if(options.poId)return {po:getPurchaseOrderById_(options.poId)};var vendors=buildVendorMap_(),page=queryDocumentPage_('Purchase_Orders','Order_Date','all',options),result={purchaseOrders:page.docs.map(function(doc){return purchaseOrderDto_({id:doc.name.split('/').pop(),fields:doc.fields},vendors);}),pageInfo:page.pageInfo};if(!options.cursor){result.lowStockItems=buildLowStockList_(vendors);result.pendingSummary=getPendingPurchaseOrderSummary_(page.pageInfo.readTime);}return result;}
+function getPurchaseOrderPageData_(options){
+  options=options||{};if(options.poId)return {po:getPurchaseOrderById_(options.poId)};
+  var page=queryDocumentPage_('Purchase_Orders','Order_Date','all',options),vendors={};
+  if(options.cursor||options.search){var ids=[];page.docs.forEach(function(doc){var id=parseFirestoreValue_((doc.fields||{}).Vendor_ID);if(id&&ids.indexOf(id)<0)ids.push(id);});
+    readProductReferenceDocs_({Master_Vendors:ids}).Master_Vendors.forEach(function(doc){var vendor={};Object.keys(doc.fields||{}).forEach(function(key){vendor[key]=parseFirestoreValue_(doc.fields[key]);});vendors[doc.id]=vendor;});
+  }else vendors=buildVendorMap_();
+  var result={purchaseOrders:page.docs.map(function(doc){return purchaseOrderDto_({id:doc.name.split('/').pop(),fields:doc.fields},vendors);}),pageInfo:page.pageInfo};
+  if(!options.cursor&&!options.search){result.lowStockItems=buildLowStockList_(vendors);result.pendingSummary=getPendingPurchaseOrderSummary_(page.pageInfo.readTime);}return result;
+}
 
 function updatePurchaseOrderStatus_(docId, newStatus) {
   try {
@@ -5029,24 +5037,36 @@ function getPurchaseOrderById_(id){
 
 // Bounded pages share one Firestore snapshot; a cursor never means a complete total.
 function queryDocumentPage_(collection,dateField,yearFilter,options) {
-  options=options||{};var year=yearFilter==='all'?'all':String(parseInt(yearFilter,10)||Number(businessDate_().slice(0,4))+543);
-  if(year!=='all' && (!/^\d{4}$/.test(year)||Number(year)<2400||Number(year)>3000))throw new Error('ปีไม่ถูกต้อง');
+  options=options||{};
+  var year=yearFilter==='all'?'all':String(parseInt(yearFilter,10)||Number(businessDate_().slice(0,4))+543);
+  if(year!=='all'&&(!/^\d{4}$/.test(year)||Number(year)<2400||Number(year)>3000))throw new Error('ปีไม่ถูกต้อง');
   var size=Number(options.pageSize||50);if(!Number.isInteger(size)||size<1||size>200)throw new Error('ขนาดหน้าไม่ถูกต้อง');
-  var q={from:[{collectionId:collection}],orderBy:[{field:{fieldPath:dateField},direction:'DESCENDING'},{field:{fieldPath:'__name__'},direction:'DESCENDING'}],limit:size+1},body={structuredQuery:q};
-  if(year!=='all'){var y=Number(year)-543;q.where={compositeFilter:{op:'AND',filters:[{fieldFilter:{field:{fieldPath:dateField},op:'GREATER_THAN_OR_EQUAL',value:{stringValue:y+'-01-01'}}},{fieldFilter:{field:{fieldPath:dateField},op:'LESS_THAN_OR_EQUAL',value:{stringValue:y+'-12-31'}}}]}};}
-  var prefix='projects/'+PROJECT_ID+'/databases/(default)/documents/'+collection+'/';
+  var search=options.search||{},number=String(search.number||'').trim(),from=String(search.from||''),to=String(search.to||'');
+  if(number.length>120||/[\x00-\x1f]/.test(number))throw new Error('เลขเอกสารไม่ถูกต้อง');
+  [from,to].forEach(function(value){if(value&&(!/^\d{4}-\d{2}-\d{2}$/.test(value)||isNaN(Date.parse(value+'T00:00:00Z'))||new Date(value+'T00:00:00Z').toISOString().slice(0,10)!==value))throw new Error('วันที่ไม่ถูกต้อง');});
+  if(from&&to&&from>to)throw new Error('วันที่เริ่มต้องไม่เกินวันที่สิ้นสุด');
+  var low=from,high=to;
+  if(year!=='all'){var y=Number(year)-543;low=low&&low>y+'-01-01'?low:y+'-01-01';high=high&&high<y+'-12-31'?high:y+'-12-31';}
+  var criteria=JSON.stringify({number:number,from:from,to:to}),prefix='projects/'+PROJECT_ID+'/databases/(default)/documents/'+collection+'/';
+  // Exact numbers use their existing single-field index; date-only searches use the existing date index.
+  // Applying dates to bounded exact-number pages avoids requiring a new composite index or backfill.
+  var numberField={Master_Tax_Invoice:'Invoice_No',Quotations:'Quote_No',Purchase_Orders:'__name__'}[collection];
+  var q={from:[{collectionId:collection}],orderBy:number?[{field:{fieldPath:'__name__'},direction:'ASCENDING'}]:[{field:{fieldPath:dateField},direction:'DESCENDING'},{field:{fieldPath:'__name__'},direction:'DESCENDING'}],limit:size+1},body={structuredQuery:q};
+  if(number){if(!numberField)throw new Error('ไม่รองรับการค้นหาเลขเอกสาร');if(numberField==='__name__'&&number.indexOf('/')>=0)throw new Error('เลขใบสั่งซื้อไม่ถูกต้อง');q.where={fieldFilter:{field:{fieldPath:numberField},op:'EQUAL',value:numberField==='__name__'?{referenceValue:prefix+number}:{stringValue:number}}};}
+  else {var filters=[];if(low)filters.push({fieldFilter:{field:{fieldPath:dateField},op:'GREATER_THAN_OR_EQUAL',value:{stringValue:low}}});if(high)filters.push({fieldFilter:{field:{fieldPath:dateField},op:'LESS_THAN_OR_EQUAL',value:{stringValue:high}}});if(filters.length)q.where=filters.length===1?filters[0]:{compositeFilter:{op:'AND',filters:filters}};}
   if(options.cursor){try{
     var cursor=JSON.parse(Utilities.newBlob(Utilities.base64Decode(String(options.cursor))).getDataAsString());
-    if(cursor.collection!==collection||cursor.year!==year||!/^\d{4}-\d{2}-\d{2}$/.test(cursor.date)||typeof cursor.name!=='string'||cursor.name.indexOf(prefix)!==0||cursor.name.slice(prefix.length).indexOf('/')>=0||!cursor.readTime||isNaN(Date.parse(cursor.readTime))||Date.now()-Date.parse(cursor.readTime)>3300000||Date.parse(cursor.readTime)>Date.now()+60000)throw new Error('invalid');
-    body.readTime=cursor.readTime;q.startAt={before:false,values:[{stringValue:cursor.date},{referenceValue:cursor.name}]};
-  }catch(e){throw new Error('หน้าข้อมูลหมดอายุหรือไม่ถูกต้อง กรุณารีเฟรชรายการ');}}
+    if(cursor.collection!==collection||cursor.year!==year||(cursor.criteria||JSON.stringify({number:'',from:'',to:''}))!==criteria||!/^\d{4}-\d{2}-\d{2}$/.test(cursor.date)||typeof cursor.name!=='string'||cursor.name.indexOf(prefix)!==0||cursor.name.slice(prefix.length).indexOf('/')>=0||!cursor.readTime||isNaN(Date.parse(cursor.readTime))||Date.now()-Date.parse(cursor.readTime)>3300000||Date.parse(cursor.readTime)>Date.now()+60000)throw new Error('invalid');
+    body.readTime=cursor.readTime;q.startAt={before:false,values:number?[{referenceValue:cursor.name}]:[{stringValue:cursor.date},{referenceValue:cursor.name}]};
+  }catch(e){throw new Error('หน้าข้อมูลหมดอายุหรือไม่ถูกต้อง กรุณาค้นหาใหม่หรือรีเฟรชรายการ');}}
   var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});
   if(res.getResponseCode()!==200)throw new Error('โหลดหน้าข้อมูลไม่สำเร็จ กรุณาลองใหม่หรือรีเฟรชรายการ');
   var rows=JSON.parse(res.getContentText()),docs=[],readTime=body.readTime||'';
   rows.forEach(function(row){if(row.document)docs.push(row.document);if(!readTime&&row.readTime)readTime=row.readTime;});
   var more=docs.length>size;docs=docs.slice(0,size);var next='';
-  if(more){if(!readTime)throw new Error('ไม่พบเวลายืนยันหน้าข้อมูล');var last=docs[docs.length-1];next=Utilities.base64Encode(JSON.stringify({collection:collection,year:year,date:parseFirestoreValue_(last.fields[dateField]),name:last.name,readTime:readTime}));}
-  return {docs:docs,pageInfo:{hasMore:more,nextCursor:next,readTime:readTime,year:year,complete:!more}};
+  if(more){if(!readTime)throw new Error('ไม่พบเวลายืนยันหน้าข้อมูล');var last=docs[docs.length-1];next=Utilities.base64Encode(JSON.stringify({collection:collection,year:year,criteria:criteria,date:parseFirestoreValue_(last.fields[dateField]),name:last.name,readTime:readTime}));}
+  if(number)docs=docs.filter(function(doc){var date=parseFirestoreValue_(doc.fields[dateField]);return (!low||date>=low)&&(!high||date<=high);});
+  return {docs:docs,pageInfo:{hasMore:more,nextCursor:next,readTime:readTime,year:year,search:{number:number,from:from,to:to},complete:!more}};
 }
 function getPendingPurchaseOrderSummary_(readTime){
  var codes={},pendingCount=0,orders={},statuses=['Pending','Ordered','PartiallyReceived'];

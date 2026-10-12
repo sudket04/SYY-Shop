@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -199,7 +201,7 @@
             <button class="btn-confirm" id="btnConfirm" onclick="confirmIssue()" disabled>💾 ยืนยันตัดสต๊อก (F4)</button>
             <div style="display:flex;gap:8px">
               <button class="btn-soft-ghost" onclick="clearBasket()">ล้างบิล</button>
-              <button class="btn-soft-green" onclick="confirmIssue(true)">ตัด + ออกใบกำกับ</button>
+              <button class="btn-soft-green" onclick="confirmIssue(true)">ตัดสต๊อก + เปิดร่างใบกำกับ</button>
             </div>
           </div>
         </div>
@@ -340,7 +342,7 @@
       }
       if(missing.length){swyWarning('บางรายการไม่พบในระบบสินค้า',esc(missing.join(', '))+' — ตะกร้าเดิมยังอยู่ กรุณาตรวจสอบก่อนนำเข้า');return;}
       if(!next.length)return;
-      basket=next;issueRetry=null;clearRememberedIssue();pendingQuoteId=d.quoteId||null;
+      basket=next;issueRetry=null;clearRememberedIssue();pendingQuoteId=d.quoteId||null;if(d.reason)document.getElementById('inpReason').value=d.reason;
       document.getElementById('inpRefNo').value=d.refNo||'';document.getElementById('inpNote').value=d.note||'';
       switchTab('issue');renderBasket();swySuccess('ดึงรายการจากใบเสนอราคาแล้ว','ตรวจสอบจำนวนและราคาก่อนยืนยัน');
     } finally {prefillBusy=false;}
@@ -395,7 +397,7 @@
     }, function (err) {
       syyDataFailed();
       document.getElementById('resultCount').innerText = 'โหลดข้อมูลสินค้าไม่สำเร็จ';
-      document.getElementById('resultList').innerHTML = '<div class="empty-box">' + esc(JSON.stringify(err)) + '</div>';
+      document.getElementById('resultList').innerHTML = '<div class="empty-box">' + esc(syyErrorMessage(err)) + '</div>';
     });
   }
 
@@ -668,14 +670,15 @@
     focusScanInput();
   }
 
-  function clearBasket() {
+  function clearBasket(discard) {
     if(issueBusy||issueUncertain())return;
-    if (!basket.length) return;
+    if (!basket.length&&!document.getElementById('inpRefNo').value&&!document.getElementById('inpNote').value) return;
+    if(!discard&&syyGuardDraft(function(){clearBasket(true);},'stockissue'))return;
     basket = [];
     pendingQuoteId = null;
     document.getElementById('inpRefNo').value = '';
     document.getElementById('inpNote').value  = '';
-    renderBasket();
+    renderBasket();syyDraftClean('stockissue');
     focusScanInput();
   }
 
@@ -739,12 +742,13 @@
   /* ═══ ยืนยันตัดสต๊อก ═══ */
   var issueBusy = false, issueRetry = null;
   var issueStorageKey='syy_pending_issue_<?= username ?>';
-  function rememberIssue(){try{sessionStorage.setItem(issueStorageKey,JSON.stringify({request:issueRetry,basket:basket}));}catch(e){}}
+  function rememberIssue(){try{sessionStorage.setItem(issueStorageKey,JSON.stringify({request:issueRetry,basket:basket,role:USER_ROLE}));}catch(e){}}
   function clearRememberedIssue(){try{sessionStorage.removeItem(issueStorageKey);}catch(e){}}
   function issueUncertain(){return !!(issueRetry&&issueRetry.uncertain);}
   function lockIssueInputs(locked){['inpReason','inpRefNo','inpNote'].forEach(function(id){document.getElementById(id).disabled=locked;});}
   function restorePendingIssue(){
     try{var raw=sessionStorage.getItem(issueStorageKey);if(!raw)return;var saved=JSON.parse(raw);
+      if(!['staff','admin'].includes(USER_ROLE)||(saved.role&&saved.role!==USER_ROLE)){toast('รายการสต๊อกที่รอยืนยันผลต้องตรวจด้วยสิทธิ์เดิม กรุณาติดต่อผู้ดูแล','warn');return;}
       if(!saved.request||!saved.request.payload||!Array.isArray(saved.basket))return;
       issueRetry=saved.request;issueRetry.uncertain=true;basket=saved.basket;
       document.getElementById('inpReason').value=issueRetry.payload.reason;document.getElementById('inpRefNo').value=issueRetry.payload.refNo;document.getElementById('inpNote').value=issueRetry.payload.note;pendingQuoteId=issueRetry.payload.quoteId;
@@ -793,7 +797,7 @@
           issueRetry = null;clearRememberedIssue();lockIssueInputs(false);
           var summary = (res.results || []).map(function (r) { return esc(r.productCode) + ': ' + r.before + ' → ' + r.after; }).join('<br>');
           if(res.refreshWarning)toast(res.refreshWarning,'warn');
-          swySuccess('ตัดสต๊อกสำเร็จ', 'เลขที่รายการ <b>' + esc(res.docNo || '-') + '</b><br>' + summary);
+          swySuccess(alsoInvoice?'ขั้นตอน 1/2 ตัดสต๊อกสำเร็จ':'ตัดสต๊อกสำเร็จ', 'เลขที่รายการ <b>' + esc(res.docNo || '-') + '</b><br>' + summary+(alsoInvoice?'<br>ขั้นตอน 2/2: เปิดร่างใบกำกับ ตรวจข้อมูลแล้วกดบันทึกที่หน้าใบกำกับ':''));
           if (alsoInvoice) {
             // ★ payload.items ไม่มีราคา (ราคาที่ issueStock ใช้จริงคำนวณฝั่ง server ทั้งหมด) —
             //   ใบกำกับภาษีเป็นเอกสารอิสระไม่ผูกกับสต๊อก จึงส่งราคาจาก basket (ที่พนักงานเห็นอยู่แล้ว
@@ -807,7 +811,7 @@
           basket = [];
           document.getElementById('inpRefNo').value = '';
           document.getElementById('inpNote').value  = '';
-          renderBasket();
+          renderBasket();syyDraftClean('stockissue');
           var currentStocks=res.productStocks || (res.results||[]).map(function(r){return {productCode:r.productCode,currentStock:r.after};});
           currentStocks.forEach(function(r) {
             var p = products.find(function(x) { return x.productCode === r.productCode; });
@@ -833,7 +837,7 @@
         btn.disabled = false;
         btn.innerHTML = '💾 ยืนยันตัดสต๊อก (F4)';
         rememberIssue();
-        swyError('ยังไม่ยืนยันผลรายการ', 'กดยืนยันซ้ำเพื่อตรวจสอบรายการเดิม · '+esc(JSON.stringify(err)));
+        swyError('ยังไม่ยืนยันผลรายการ', 'กดยืนยันซ้ำเพื่อตรวจสอบรายการเดิม · '+esc(syyErrorMessage(err)));
         focusScanInput();
       });
     });
@@ -854,7 +858,7 @@
       renderMovements();
     }, function (err) {
       document.getElementById('mvBody').innerHTML = emptyStateHtml(8, {
-        icon: '⚠️', title: 'โหลดประวัติไม่สำเร็จ', sub: JSON.stringify(err),
+        icon: '⚠️', title: 'โหลดประวัติไม่สำเร็จ', sub: syyErrorMessage(err),
         actions: [{ label: 'ลองอีกครั้ง', primary: true, onclick: 'loadMovements()' }]
       });
     });
@@ -911,6 +915,16 @@
 function reconcileStockBasket(){basket.forEach(function(line){var product=products.find(function(p){return p.productCode===line.productCode;});if(product){line.stock=num(product.currentStock);line.productName=product.productName;line.minStock=num(product.minStock);}});updateCounts();renderResults();renderBasket();}
 syyRegisterFreshness({reload:loadProducts,canRefresh:function(){return !issueBusy&&!issueUncertain()&&!prefillBusy;},
   stock:function(stocks){syyApplyStockRows(products,stocks);reconcileStockBasket();},product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();reconcileStockBasket();}});
+</script>
+<script>
+window.addEventListener('load',function(){syyDraftRegister('stockissue',{
+ blocked:function(){return issueBusy||issueUncertain();},
+ capture:function(){return {reason:document.getElementById('inpReason').value,refNo:document.getElementById('inpRefNo').value,note:document.getElementById('inpNote').value,basket:basket.map(function(b){var copy=Object.assign({},b);delete copy.stock;return copy;}),quoteId:pendingQuoteId};},
+ restore:function(d){if(issueBusy||issueUncertain()||!d||!Array.isArray(d.basket)||d.basket.length>200)return;basket=d.basket.map(function(b){var p=products.find(function(x){return x.productCode===b.productCode;});return Object.assign({},b,{stock:p?num(p.currentStock):0});});pendingQuoteId=d.quoteId||null;document.getElementById('inpRefNo').value=d.refNo||'';document.getElementById('inpNote').value=d.note||'';renderBasket();}
+});});
+</script>
+<script>
+window.addEventListener('load',function(){syyViewRegister('stockissue',function(){return {search:searchInputEl.value,category:document.getElementById('filterCategory').value,stockFilter:stockFilter,mvFilter:mvFilter,tab:document.getElementById('panelHistory').classList.contains('active')?'history':'issue',scroll:window.scrollY};},function(v){searchInputEl.value=v.search||'';document.getElementById('filterCategory').value=v.category||'';stockFilter=v.stockFilter||'all';mvFilter=v.mvFilter||'all';renderResults();switchTab(v.tab==='history'?'history':'issue');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

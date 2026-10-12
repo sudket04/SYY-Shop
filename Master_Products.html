@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -147,7 +149,7 @@
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
     <button class="btn btn-ghost" onclick="loadTable()">🔄 รีเฟรช</button>
-    <button class="btn btn-ghost" onclick="exportAllProductFields()">📥 Export CSV</button>
+    <button class="btn btn-ghost" onclick="exportAllProductFields()">📥 Export CSV ตามตัวกรอง</button>
     <button class="btn btn-primary" onclick="openAddModal()">+ เพิ่มสินค้า</button>
   </div>
 </div>
@@ -656,7 +658,7 @@
   }
   function removeProductLocal(id){productsCache=productsCache.filter(function(p){return (p.id||p.productCode)!==id;});filterAndRenderTable();}
   function applyStockDeltaToProductPage(productStocks){
-    var changed=false;
+    var wasDirty=syyDraftDirty('product'),changed=false;
     (Array.isArray(productStocks)?productStocks:[]).forEach(function(s){
       var code=String((s&&s.productCode)||'');if(!code)return;
       var stock=(s.currentStock!==undefined&&s.currentStock!==null)?num(s.currentStock):num(s.after);
@@ -670,7 +672,7 @@
         }
       }
     });
-    if(changed)filterAndRenderTable();
+    if(changed)filterAndRenderTable();if(!wasDirty)syyDraftClean('product');
   }
 
   window.addEventListener('message', function(e) {
@@ -698,7 +700,7 @@
         //   ต้องเรียกแม้ applyDropdownsData จะ error เพื่อไม่ให้ตารางค้างไม่โหลดเลย
         if (typeof onDone === 'function') onDone();
       }, function(err) {
-        console.error('loadDropdowns error:', JSON.stringify(err));
+        console.error('loadDropdowns error:', syyErrorMessage(err));
         // ★ ถึง dropdown จะโหลดไม่สำเร็จ ก็ยังต้องโหลดตารางสินค้าต่อ ไม่ให้หน้าค้างเปล่า
         if (typeof onDone === 'function') onDone();
       });
@@ -756,7 +758,7 @@
         }
       }, function(err) {
         syyDataFailed();updateProductRecordCounts('โหลดไม่สำเร็จ');
-        tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:JSON.stringify(err),
+        tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:syyErrorMessage(err),
           actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]});
       });
   }
@@ -922,13 +924,15 @@
       return fields.map(function(f){return csvCell(row[f[1]]);}).join(',');
     })).join('\r\n');
     var blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
-    a.href=url;a.download='SYY_Products_'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    a.href=url;a.download='SYY_Products_'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);toast('Export '+rows.length+' รายการตามตัวกรองปัจจุบัน · ทุกคอลัมน์');
   }
 
   // ==========================================
   // Form Modal Functions
   // ==========================================
-  function openAddModal(prefillBarcode) {
+  function openAddModal(prefillBarcode,discard) {
+    if(document.getElementById('modalBtnSave').disabled&&!syyUnknownWrites.saveProduct)return;
+    if(!discard&&syyGuardDraft(function(){openAddModal(prefillBarcode,true);},'product'))return;
     editingDocId = null;
     document.getElementById('productForm').reset();
     document.getElementById('modalDocId').value = '';
@@ -960,10 +964,12 @@
     document.getElementById('modalTitle').innerText   = '🛒 เพิ่มข้อมูลสินค้า';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
     document.getElementById('modalAlert').style.display = 'none';
-    openModal('productModal');
+    openModal('productModal');syyDraftClean('product');
   }
 
-  function openEditModal(docId) {
+  function openEditModal(docId,discard) {
+    if(document.getElementById('modalBtnSave').disabled&&!syyUnknownWrites.saveProduct)return;
+    if(!discard&&syyGuardDraft(function(){openEditModal(docId,true);},'product'))return;
     var item = productsCache.find(function(c) { return (c.id === docId || c.productCode === docId); });
     if (!item) { toast('ไม่พบข้อมูลสินค้า','err'); return; }
 
@@ -993,10 +999,12 @@
     document.getElementById('modalTitle').innerText   = '✏️ แก้ไขข้อมูลสินค้า (' + editingDocId + ')';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
     document.getElementById('modalAlert').style.display = 'none';
-    openModal('productModal');
+    openModal('productModal');syyDraftClean('product');
   }
 
-  function closeProductModal() {
+  function closeProductModal(discard) {
+    if(document.getElementById('modalBtnSave').disabled&&!syyUnknownWrites.saveProduct)return;
+    if(!discard&&syyGuardDraft(function(){closeProductModal(true);},'product'))return;
     if(document.getElementById('modalBtnSave').disabled) return;
     closeModal('productModal');
     document.getElementById('productForm').reset();
@@ -1015,14 +1023,14 @@
     var btn = document.getElementById('modalBtnSave');
     btn.disabled = false; btn.innerText = '💾 บันทึก';
     editingDocId = null;
-    selectedCarIds = [];
+    selectedCarIds = [];syyDraftClean('product');
     updateBarcodeGenButton();
   }
 
   function handleSubmit(e) {
     e.preventDefault();
     var btn=document.getElementById('modalBtnSave'),alertEl=document.getElementById('modalAlert');
-    if(btn.disabled) return;
+    if(btn.disabled||syyLockUnknownWrite('saveProduct')) return;
     alertEl.style.display='none';
     var formData={
       docId:editingDocId||null,productName:document.getElementById('inp_productName').value.trim(),
@@ -1053,11 +1061,12 @@
       btn.disabled=false;btn.innerText='💾 บันทึกการแก้ไข';
       alertEl.style.display='block';alertEl.className='modal-alert success';
       alertEl.innerText=''+res.message+' (ID: '+res.id+')';
+      syyDraftClean('product');
       if(wasNew){
         document.getElementById('modalTitle').innerText='✏️ แก้ไขข้อมูลสินค้า ('+res.id+')';
         updateBarcodeGenButton();
         alertEl.innerText+=' — บันทึกแล้ว สามารถแก้ไข/สร้างบาร์โค้ดต่อได้';
-      }else setTimeout(function(){closeProductModal();},900);
+      }else setTimeout(function(){if(!syyDraftDirty('product'))closeProductModal(true);},900);
     }
 
     callApi('saveProduct',[formData],function(res){
@@ -1079,10 +1088,10 @@
           if(res.product){upsertProductLocal(product);notifyParentProductDelta(product,false);document.getElementById('inp_currentStock').value=product.currentStock;document.getElementById('inp_currentStock').dataset.originalStock=product.currentStock;}
           else{loadTable();notifyParentRefreshProducts();}
           btn.disabled=false;btn.innerText='💾 บันทึกการแก้ไข';alertEl.style.display='block';alertEl.className='modal-alert error';
-          alertEl.innerText='ข้อมูลสินค้าบันทึกแล้ว แต่รูปยังไม่บันทึก: '+JSON.stringify(err)+' — draft รูปยังอยู่';
+          alertEl.innerText='ข้อมูลสินค้าบันทึกแล้ว แต่รูปยังไม่บันทึก: '+syyErrorMessage(err)+' — draft รูปยังอยู่';
         });
       }else finishSavedProduct(product,res);
-    },function(err){btn.disabled=false;btn.innerText=editingDocId?'💾 บันทึกการแก้ไข':'💾 บันทึก';alertEl.style.display='block';alertEl.className='modal-alert error';alertEl.innerText='Error: '+JSON.stringify(err);});
+    },function(err){btn.disabled=false;btn.innerText=editingDocId?'💾 บันทึกการแก้ไข':'💾 บันทึก';alertEl.style.display='block';alertEl.className='modal-alert error';alertEl.innerText='Error: '+syyErrorMessage(err);});
   }
 
   // ==========================================
@@ -1241,7 +1250,7 @@
       }
     }, function (err) {
       btnDone(btn);
-      swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+      swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err)));
     });
   }
 
@@ -1447,7 +1456,7 @@
       closeDeleteModal();
       if(res&&res.success){toast('ลบสินค้าเรียบร้อย');removeProductLocal(deletingId);notifyParentProductDelta({id:deletingId,productCode:deletingId},true);}
       else swyError('ไม่สามารถลบข้อมูลได้',(res?res.message:'เกิดข้อผิดพลาด'));
-    },function(err){closeDeleteModal();swyError('ลบไม่สำเร็จ',esc(JSON.stringify(err)));});
+    },function(err){closeDeleteModal();swyError('ลบไม่สำเร็จ',esc(syyErrorMessage(err)));});
   }
 
   // ==========================================
@@ -1572,6 +1581,15 @@ function applyProductDropdowns(){
   fillDropdown('inp_vendorId',masterData.vendors||[],'-- เลือกผู้จำหน่าย --');fillDropdown('inp_zoneId',masterData.zones||[],'-- เลือกโซนจัดเก็บ --');
   carOptionsCache=(masterData.cars||[]).slice();renderCarDropdownList('');renderCarChips();
 }
+</script>
+<script>
+window.addEventListener('load',function(){syyDraftRegister('product',{
+ capture:function(){if(!document.getElementById('productModal').classList.contains('active'))return null;return {fields:syyReadFields('#productModal'),editingDocId:editingDocId,originalStock:document.getElementById('inp_currentStock').dataset.originalStock,cars:selectedCarIds,images:productImageUrls,base64:productImageDraftBase64,primary:productPrimaryImageIndex,imageDirty:productImageDraftDirty,imageUpdateTime:productImageUpdateTime,unknown:!!syyUnknownWrites.saveProduct};},
+ restore:function(d){if(!d||!d.fields)return;if(d.editingDocId){if(!productsCache.some(function(p){return (p.id||p.productCode)===d.editingDocId;})){toast('สินค้าเดิมไม่อยู่ในรายการล่าสุด กรุณาตรวจร่างกับผู้ดูแล','warn');return;}openEditModal(d.editingDocId,true);}else openAddModal('',true);syyWriteFields(d.fields);document.getElementById('inp_currentStock').dataset.originalStock=d.originalStock;selectedCarIds=d.cars||[];productImageUrls=d.images||[];productImageDraftBase64=d.base64||[];productPrimaryImageIndex=d.primary||0;productImageDraftDirty=!!d.imageDirty;productImageUpdateTime=d.imageUpdateTime||'';renderProductImageSlots(editingDocId);renderCarChips();if(d.unknown){syyUnknownWrites.saveProduct=true;syyLockUnknownWrite('saveProduct');}}
+});});
+</script>
+<script>
+window.addEventListener('load',function(){syyViewRegister('product',function(){return {search:document.getElementById('tableSearchInput').value,page:currentPage,scroll:document.querySelector('.table-wrap')?.scrollTop||0};},function(v){document.getElementById('tableSearchInput').value=v.search||'';currentPage=Math.max(1,Number(v.page)||1);filterAndRenderTable();requestAnimationFrame(function(){var wrap=document.querySelector('.table-wrap');if(wrap)wrap.scrollTop=v.scroll||0;});});});
 </script>
 </body>
 </html>

@@ -345,6 +345,166 @@ async function main(){
   await check('Product freshness failure releases busy state and retries with both loading labels completed',async()=>{
     const p=await pageFor('Master_Products.html');await p.evaluate(()=>{syyFreshState.busy=true;apiFailure='getAllProducts';loadTable(true);});await p.waitForTimeout(25);assert.equal(await p.evaluate(()=>syyFreshState.busy),false);assert.match(await p.locator('#recordCountToolbar').innerText(),/โหลดไม่สำเร็จ/);await p.evaluate(()=>{apiFailure='';loadTable(true);});await p.waitForTimeout(30);assert.equal(await p.locator('#recordCountToolbar').innerText(),await p.locator('#recordCount').innerText());assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Fractional quote decrement retains 0.5 and decimal input passes validation',async()=>{
+    const p=await pageFor('Quotation.html');await p.evaluate(()=>{addToBasket('P1');setQty('P1','1.5');changeQty('P1',-1);});
+    assert.equal(await p.evaluate(()=>basket[0].qty),0.5);assert.equal(await p.locator('.quote-qty').inputValue(),'0.5');
+    assert.equal(await p.locator('.quote-qty').evaluate(e=>e.checkValidity()),true);await p.close();
+  });
+  await check('Dirty quote and stock clear support continuing the draft and explicit discard',async()=>{
+    for(const file of ['Quotation.html','StockIssue.html']){
+      const p=await pageFor(file);await p.evaluate(()=>{addToBasket('P1');document.getElementById('inpNote').value='Keep draft';Swal.fire=o=>{alerts.push(o);return Promise.resolve({isConfirmed:false});};if(typeof newQuotation==='function')newQuotation();else clearBasket();});
+      await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>basket.length),1);assert.equal(await p.locator('#inpNote').inputValue(),'Keep draft');
+      await p.evaluate(()=>{Swal.fire=o=>{alerts.push(o);return Promise.resolve({isConfirmed:true});};if(typeof newQuotation==='function')newQuotation();else clearBasket();});
+      await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>basket.length),0);assert.equal(await p.locator('#inpNote').inputValue(),'');assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('Quote draft restores invalid raw input, negotiated prices and notes without submitting any write',async()=>{
+    const p=await pageFor('Quotation.html');p.on('dialog',dialog=>dialog.accept());
+    await p.evaluate(()=>{addToBasket('P1');setQty('P1','1.5');setPrice('P1','0');document.getElementById('inpNote').value='Recovered note';document.getElementById('selCustomer').value='C1';document.querySelector('.price-input').value='';syyDraftFlush();});
+    assert.equal(await p.evaluate(()=>Object.values(sessionStorage).some(v=>v.includes('test-token'))),false);
+    await p.reload();await p.waitForTimeout(120);assert.deepEqual(await p.evaluate(()=>[basket[0].qty,basket[0].unitPrice]),[1.5,0]);
+    assert.equal(await p.locator('.price-input').inputValue(),'');assert.equal(await p.locator('#inpNote').inputValue(),'Recovered note');
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveQuotation').length),0);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Draft storage binds the authenticated account and role, expires after eight hours and excludes credentials',async()=>{
+    const p=await pageFor('Quotation.html');await p.evaluate(()=>{addToBasket('P1');syyDraftFlush();});
+    assert.equal(await p.evaluate(()=>!!syyLocalGet('draft','quotation')),true);
+    await p.evaluate(()=>document.querySelector('meta[name="syy-owner"]').content='other-account');assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')),null);
+    await p.evaluate(()=>{document.querySelector('meta[name="syy-owner"]').content='fixture';document.querySelector('meta[name="syy-role"]').content='viewer';});assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')),null);
+    await p.evaluate(()=>{document.querySelector('meta[name="syy-role"]').content='staff';const key=syyStorageKey('draft','quotation'),r=JSON.parse(sessionStorage.getItem(key));r.at=Date.now()-28800001;sessionStorage.setItem(key,JSON.stringify(r));});
+    assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')),null);await p.close();
+  });
+  await check('Invoice close and product image cancel keep dirty drafts when the user continues editing',async()=>{
+    for(const file of ['Master_Tax_Invoice.html','Master_Products.html']){
+      const p=await pageFor(file);await p.evaluate(()=>{openAddModal();Swal.fire=o=>{alerts.push(o);return Promise.resolve({isConfirmed:false});};if(typeof closeInvoiceModal==='function'){document.getElementById('modalBuyerName').value='Unsaved buyer';closeInvoiceModal();}else{stageProductImageNow('fixture','data:image/jpeg;base64,fixture',0);closeProductModal();}});
+      await p.waitForTimeout(20);assert.equal(await p.locator('.modal-overlay.active').count(),1);
+      assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|commit)/.test(x.fn))),false);assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('Auth expiry settles coalesced reads, preserves the draft and sends no automatic write',async()=>{
+    const p=await pageFor('Quotation.html');await p.evaluate(()=>{
+      addToBasket('P1');document.getElementById('inpNote').value='Expiry draft';respond=()=>({__authError:true});apiHold='getAuthFixture';
+      Swal.fire=o=>{alerts.push(o);return new Promise(()=>{});};window.expiryFailures=0;callApi('getAuthFixture',[],null,()=>expiryFailures++);callApi('getAuthFixture',[],null,()=>expiryFailures++);
+      apiHold='';apiPending.shift()();
+    });
+    assert.equal(await p.evaluate(()=>expiryFailures),2);assert.equal(await p.evaluate(()=>syyPendingReads.size),0);
+    assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation').fields.inpNote),'Expiry draft');
+    assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|issue)/.test(x.fn))),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Unknown document save disables resubmission while retaining the editable draft',async()=>{
+    for(const file of ['Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html']){
+      const p=await pageFor(file);await p.evaluate(()=>{
+        if(typeof saveQuotationNow==='function'){addToBasket('P1');document.getElementById('selCustomer').value='C1';apiFailure='saveQuotation';saveQuotationNow();}
+        else if(typeof closeInvoiceModal==='function'){openEditModal('TX1');apiFailure='saveTaxInvoice';handleSubmit();}
+        else{pendingConfirmVendor={vendorId:'V1',vendorName:'Vendor',items:[Object.assign({},fixtureProduct,{suggestedQty:1})]};qtyState.P1=1;checkedState.P1=true;document.getElementById('btnConfirmSave').disabled=false;apiFailure='savePurchaseOrder';submitCreateOrder();}
+      });await p.waitForTimeout(25);
+      await p.evaluate(()=>{if(typeof saveQuotationNow==='function')saveQuotationNow();else if(typeof closeInvoiceModal==='function')handleSubmit();else submitCreateOrder();});
+      assert.equal(await p.evaluate(()=>apiCalls.filter(x=>/^save(Quotation|TaxInvoice|PurchaseOrder)$/.test(x.fn)).length),1);
+      assert.equal(await p.evaluate(()=>Object.values(syyUnknownWrites).some(Boolean)),true);assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('Server search applies exact document number and dates without loading all and retains old data on failure',async()=>{
+    const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getTaxInvoiceListData'?{invoices:[Object.assign({},fixtureInvoice,{id:'FOUND',invoiceNo:args[1].search.number})],pageInfo:{hasMore:false,search:args[1].search,year:'2569'}}:old(fn,args);});
+    const form=p.locator('.syy-document-search');await form.locator('[name=number]').fill('OLD 100');await form.locator('[name=from]').fill('2026-01-01');await form.locator('button[type=submit]').click();await p.waitForTimeout(25);
+    assert.equal(await p.evaluate(()=>invoicesCache[0].id),'FOUND');assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getTaxInvoiceListData').length),1);
+    assert.match(await p.locator('#recordCount').innerText(),/ในช่วงที่เลือก/);assert.equal(await p.locator('#dashStats').innerText(),'');
+    await p.evaluate(()=>apiFailure='getTaxInvoiceListData');await form.locator('[name=number]').fill('OTHER');await form.locator('button[type=submit]').click();await p.waitForTimeout(25);
+    assert.equal(await p.evaluate(()=>invoicesCache[0].invoiceNo),'OLD 100');assert.equal(await p.evaluate(()=>documentPager.searchOptions().number),'OLD 100');assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Document display windows render at most fifty rows, preserve unchanged row focus and clean select portals',async()=>{
+    for(const file of ['Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html']){
+      const p=await pageFor(file);await p.evaluate(()=>{
+        if(typeof quotations!=='undefined'){quotations=Array.from({length:1200},(_,i)=>({id:'Q'+i,quoteNo:'Q '+i,quoteDate:'2026-10-11',customerName:'Buyer',grandTotal:i,status:'ร่าง',items:[]}));renderList();switchTab('list');}
+        else if(typeof invoicesCache!=='undefined'){invoicesCache=Array.from({length:1200},(_,i)=>Object.assign({},fixtureInvoice,{id:'T'+i}));renderRows();}
+        else{purchaseOrders=Array.from({length:1200},(_,i)=>({poId:'O'+i,orderDate:'2026-10-11',vendorName:'Vendor',status:'Pending',items:[],totalQty:0,totalAmount:0}));renderHistoryTab();switchTab('history');}
+      });await p.waitForTimeout(30);
+      const body=p.locator('#listBody,#taxBody,#historyTableBody');assert.equal(await body.locator('tr').count(),50);
+      await body.locator('button').first().focus();const kept=await body.locator('tr').first().evaluate(row=>{window.retainedRow=row;return true;});assert(kept);
+      await p.evaluate(()=>{if(typeof renderList==='function')renderList();else if(typeof renderRows==='function')renderRows();else renderHistoryTab();});
+      assert.equal(await p.evaluate(()=>retainedRow.isConnected&&retainedRow.contains(document.activeElement)),true,file);
+      for(let i=0;i<4;i++){await p.locator('.syy-display-pages button').last().click();await p.waitForTimeout(10);}
+      assert.equal(await body.locator('tr').count(),50);assert((await p.locator('.syy-select-panel').count())<60);assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('Filtered quotation empty state and partial invoice count are honest',async()=>{
+    const p=await pageFor('Quotation.html');await p.evaluate(()=>{quotations=[{id:'Q1',status:'ร่าง',grandTotal:1}];setListFilter('ปิดงาน-ขายสำเร็จ');});assert.match(await p.locator('#listBody').innerText(),/ตามตัวกรอง/);await p.close();
+    const invoice=await pageFor('Master_Tax_Invoice.html');await invoice.evaluate(()=>{documentPager.reset({hasMore:true,nextCursor:'next'});renderRows();});assert.match(await invoice.locator('#recordCount').innerText(),/โหลดแล้ว/);assert.doesNotMatch(await invoice.locator('#recordCount').innerText(),/ทั้งหมด/);await invoice.close();
+  });
+  await check('Accessible selects, toast announcements and invalid-field focus work with keyboard input',async()=>{
+    const p=await pageFor('Quotation.html');assert.equal(await p.locator('.syy-select-control:not([aria-label])').count(),0);
+    await p.evaluate(()=>toast('Done'));assert.equal(await p.locator('.toast').last().getAttribute('role'),'status');
+    await p.evaluate(()=>saveQuotationNow());assert.equal(await p.evaluate(()=>document.activeElement.id),'selCustomer-control');
+    assert.equal(await p.locator('#selCustomer').getAttribute('aria-invalid'),'true');
+    await p.locator('#selCustomer-control').press('Enter');assert.equal(await p.locator('#selCustomer-control').getAttribute('aria-expanded'),'true');
+    const search=p.locator('.syy-select-panel[data-syy-open=true] input');await search.press('Escape');assert.equal(await p.evaluate(()=>document.activeElement.id),'selCustomer-control');
+    await p.locator('#selCustomer-control').press('Enter');await p.locator('.syy-select-panel[data-syy-open=true] .syy-select-option').filter({hasText:'Buyer'}).click();
+    assert.equal(await p.locator('#selCustomer-control').getAttribute('aria-invalid'),null);assert.equal(await p.locator('#selCustomer').getAttribute('aria-invalid'),null);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Mobile document cards expose buyer, date and amounts without horizontal navigation and retain touch targets',async()=>{
+    for(const width of [320,390]){
+      const p=await pageFor('Master_Tax_Invoice.html');await p.setViewportSize({width,height:900});await p.waitForTimeout(180);
+      const row=p.locator('#taxBody tr').first();assert.match(await row.innerText(),/Buyer/);assert.match(await row.innerText(),/107/);
+      const bounds=await row.boundingBox();assert(bounds.x>=0&&bounds.x+bounds.width<=width+1);
+      const cells=await row.locator('td').all();for(const cell of cells){const box=await cell.boundingBox();assert(box.x+box.width<=width+1);}
+      const button=await row.locator('button').first().boundingBox();assert(button.width>=43.99&&button.height>=43.99,JSON.stringify(button));
+      await p.screenshot({path:path.join(output,'invoice-cards-'+width+'.png')});assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('Stock-to-invoice button describes the draft step and never saves an invoice automatically',async()=>{
+    const p=await pageFor('StockIssue.html');assert.match(await p.locator('button[onclick="confirmIssue(true)"]').innerText(),/เปิดร่าง/);
+    await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='issueStock'?{success:true,docNo:'OUT-1',results:[],productStocks:[{productCode:'P1',currentStock:9}]}:old(fn,args);addToBasket('P1');confirmIssue(true);});await p.waitForTimeout(25);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveTaxInvoice').length),0);assert.equal(await p.evaluate(()=>basket.length),0);await p.close();
+  });
+  await check('Long Thai multi-page print keeps saved totals and complete item numbering without overflowing A4',async()=>{
+    const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>{window.longInvoice=Object.assign({},fixtureInvoice,{items:Array.from({length:40},(_,i)=>({name:'สินค้า '+i+' '+('ชื่ออะไหล่ภาษาไทยยาวมาก '.repeat(20)),qty:0.5,unit:'ชิ้น',unitPrice:100})),subtotal:2000,vatAmount:140,grandTotal:2140});openViewModal('TX1',longInvoice);longInvoice.grandTotal=999999;});
+    const pages=p.locator('#printArea .a4-page');assert((await pages.count())>3);
+    assert.equal(await p.evaluate(()=>currentPrintInvoice.grandTotal),2140);
+    const numbers=await p.locator('#printArea tbody .col-no').allTextContents();assert.deepEqual(numbers.map(Number),Array.from({length:40},(_,i)=>i+1));
+    assert.match(await p.locator('#printArea').innerText(),/2,140/);for(const page of await pages.all())assert((await page.evaluate(el=>el.scrollHeight))<=1130);
+    await p.emulateMedia({media:'print'});await p.pdf({path:path.join(output,'invoice-thai-long.pdf'),format:'A4',printBackground:true});assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Browser Back restores the active document frame and keeps its draft',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>switchPage('quotation'));const frame=p.frameLocator('#iframe-quotation');await frame.locator('#inpNote').fill('Back keeps draft');
+    await p.evaluate(()=>switchPage('products'));await p.goBack();await p.waitForTimeout(40);
+    assert.equal(await p.evaluate(()=>syyNavCurrent),'quotation');assert.equal(await frame.locator('#inpNote').inputValue(),'Back keeps draft');assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Login success redirects immediately without a timed popup',async()=>{
+    const p=await pageFor('login.html');await p.evaluate(()=>{window.redirectedToken='';redirectToHome=token=>window.redirectedToken=token;showLoginSuccessThenRedirect('fixture-login');});
+    assert.equal(await p.evaluate(()=>redirectedToken),'fixture-login');assert.equal(await p.evaluate(()=>alerts.length),0);await p.close();
+  });
+  await check('Year, status and server-search scope survive reload with no background Load All',async()=>{
+    const p=await pageFor('Quotation.html');p.on('dialog',dialog=>dialog.accept());
+    await p.evaluate(()=>{syyLocalSet('view','quotation-year',2568);setListFilter('ร่าง');syyViewFlush();syyLocalSet('view','quotations',{search:{number:'ARCHIVE',from:'2025-01-01',to:'2025-12-31'}});});
+    await p.reload();await p.waitForTimeout(150);assert.equal(await p.evaluate(()=>currentPageYear),2568);assert.equal(await p.evaluate(()=>listStatusFilter),'ร่าง');
+    const searchCall=await p.evaluate(()=>apiCalls.find(x=>x.fn==='getQuotationListData'));assert.equal(searchCall.args[1].search.number,'ARCHIVE');assert.equal(searchCall.args[1].pageSize,50);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('CSV exports only filtered rows, reports the count and performs no Firestore read',async()=>{
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{filteredProducts=[Object.assign({},fixtureProduct,{productName:'=unsafe formula'})];window.exportedBlob=null;URL.createObjectURL=blob=>{exportedBlob=blob;return 'blob:fixture';};HTMLAnchorElement.prototype.click=function(){};window.readsBefore=apiCalls.length;exportAllProductFields();});
+    const csv=await p.evaluate(()=>exportedBlob.text());assert.match(csv,/'=unsafe formula/);assert.equal(csv.trim().split('\r\n').length,2);
+    assert.match(await p.locator('#toastWrap').innerText(),/1 รายการตามตัวกรอง/);assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>readsBefore));assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('PDF generation keeps the saved snapshot and guards closing or changing the document mid-render',async()=>{
+    const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>{
+      openViewModal('TX1');window.pdfRenders=[];window.pdfSaved='';window.canvasRelease=null;
+      html2canvas=()=>new Promise(resolve=>{canvasRelease=()=>resolve({width:794,height:1123,toDataURL:()=> 'data:image/png;base64,fixture'});});
+      window.jspdf={jsPDF:function(){this.internal={pageSize:{getWidth:()=>210,getHeight:()=>297}};this.addImage=()=>pdfRenders.push('image');this.addPage=()=>{};this.save=name=>pdfSaved=name;}};
+      downloadInvoiceFile();closeViewModal();openViewModal('TX1',Object.assign({},fixtureInvoice,{invoiceNo:'OTHER'}));
+    });assert.equal(await p.evaluate(()=>invoicePdfBusy),true);assert.equal(await p.evaluate(()=>currentPrintInvoice.invoiceNo),'SYY 0001/10/69');
+    await p.evaluate(()=>canvasRelease());await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>invoicePdfBusy),false);assert.match(await p.evaluate(()=>pdfSaved),/SYY-0001-10-69/);assert.equal(await p.evaluate(()=>pdfRenders.length),1);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Logout removes ordinary drafts but retains the original unknown stock request ID',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{addToBasket('P1');syyDraftFlush();issueRetry={uncertain:true,payload:{requestId:'REQUEST-KEEP',items:[],reason:'ขายหน้าร้าน'}};rememberIssue();syyClearAccountState();window.syyIntentionalExit=true;syyDraftFlush();});
+    assert.equal(await p.evaluate(()=>syyLocalGet('draft','stockissue')),null);assert.equal(await p.evaluate(()=>JSON.parse(sessionStorage.getItem(issueStorageKey)).request.payload.requestId),'REQUEST-KEEP');await p.close();
+  });
+  await check('Saved quote print retains Thai customer branch, totals and all long-name rows across measured pages',async()=>{
+    const p=await pageFor('Quotation.html');await p.evaluate(()=>{
+      quotations=[{id:'Q-PRINT',quoteNo:'QT 40',status:'ร่าง',quoteDate:'2026-10-11',validUntil:'2026-10-26',validDays:15,customerId:'C1',customerName:'ผู้ซื้อจากเอกสาร',customerBranch:'สาขาเดิม',customerAddress:'ที่อยู่เดิม',discPct:0,subtotal:2000,discAmount:0,vat:140,grandTotal:2140,
+        items:Array.from({length:40},(_,i)=>({productCode:'P'+i,productName:'รายการ '+i+' '+('ชื่อภาษาไทยยาวมาก '.repeat(15)),qty:0.5,unitPrice:100,costPrice:50}))}];viewQuotation('Q-PRINT');
+    });assert((await p.locator('#printArea .a4-page').count())>4);assert.match(await p.locator('#printArea').innerText(),/สาขาเดิม/);assert.match(await p.locator('#printArea').innerText(),/2,140/);
+    assert.equal(await p.locator('#printArea tbody tr').count(),40);for(const page of await p.locator('#printArea .a4-page').all())assert((await page.evaluate(el=>el.scrollHeight))<=1130);
+    await p.addStyleTag({content:'.page-head,.page-header{visibility:hidden!important}'});await p.locator('#printArea .a4-page').first().screenshot({path:path.join(output,'quote-thai-print.png')});assert.deepEqual(p.errors,[]);await p.close();
+  });
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));
 }

@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -533,6 +535,7 @@ var invoiceSaving = false;
 var editingDocId   = null;
 var targetDeleteId = null;
 var itemRowSeq     = 0;
+var invoicePdfBusy=false;
 var currentPrintInvoice = null;   // ใบที่กำลังเปิดดู/พิมพ์อยู่ (ใช้ตอนดาวน์โหลดไฟล์)
 
 window.onload = function() { loadAll(); populateProvinceDropdown('qc'); };
@@ -658,7 +661,7 @@ function switchTab(which) {
 /* ═══ โหลดข้อมูล ═══ */
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
 var documentPager;
-window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},render:function(){renderRows();renderDashboard();}});});
+window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},invalidate:function(){invoiceLoadGeneration++;},render:function(){renderRows();renderDashboard();}});});
 var invoiceLoadGeneration=0;
 function loadAll(yearParam, onDone, onError, forceFull) {
   var requestGeneration=++invoiceLoadGeneration,revision=syyDataRevision();
@@ -670,7 +673,8 @@ function loadAll(yearParam, onDone, onError, forceFull) {
   document.getElementById('pageYearLoadingBadge').style.display = 'inline';
 
   var apiName = taxInvoiceBootstrapped && !forceFull ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
-  callApi(apiName, [yearParam || ''], function(data) {
+  if(!taxInvoiceBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','invoice-year');if(savedYear)yearParam=savedYear;}
+  callApi(apiName, [yearParam || '',{search:documentPager?documentPager.searchOptions():{}}], function(data) {
       if(requestGeneration!==invoiceLoadGeneration)return;
       if(revision!==syyDataRevision()){syyDataFailed();document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
       if (!data || data.success === false || !Array.isArray(data.invoices)) {
@@ -681,7 +685,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
       if (data && data.seller) sellerInfo = data.seller;
       if (data && data.customers) customersCache = data.customers;
       if (data && data.products) productsCache = data.products;
-      availableYearsCache = (data && data.availableYears) || [new Date().getFullYear() + 543];
+      if(Array.isArray(data.availableYears))availableYearsCache=data.availableYears;else if(!availableYearsCache.length)availableYearsCache=[new Date().getFullYear()+543];
       taxInvoiceBootstrapped = true;
 
       // ★ บันทึกว่าตอนนี้กำลังดูปีไหนอยู่ (ใช้ทั้งใน dashboard และ drill-down)
@@ -690,6 +694,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
         availableYearsCache.push(Number(currentPageYear)); availableYearsCache.sort(function(a,b){return b-a;});
       }
 
+      syyLocalSet('view','invoice-year',currentPageYear);
       populatePageYearDropdown();
       renderSellerInfoBox();
       populateCustomerDropdown();
@@ -709,7 +714,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
   function failedLoad(err) {
       if(requestGeneration!==invoiceLoadGeneration)return;
       syyDataFailed();
-      tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err),
+      tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
       document.getElementById('recordCount').innerText = 'ผิดพลาด';
       document.getElementById('pageYearLoadingBadge').style.display = 'none';
@@ -895,7 +900,7 @@ function submitQuickAddCustomer() {
       btn.disabled = false;
       btn.innerText = '💾 บันทึกลูกค้า';
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + syyErrorMessage(err);
       alertEl.style.display = 'block';
     });
 }
@@ -904,7 +909,7 @@ function submitQuickAddCustomer() {
 function renderRows() {
   if(documentPager)documentPager.render();
   var thead = document.getElementById('taxThead');
-  thead.innerHTML =
+  var headerHtml =
     '<tr>' +
       '<th style="text-align:center; width:50px;">#</th>' +
       XLF.th('เลขที่ใบกำกับภาษี', 'tax', 'invoiceNo') +
@@ -917,6 +922,7 @@ function renderRows() {
       '<th class="col-sticky-right" style="text-align:center; width:150px;">จัดการ</th>' +
     '</tr>';
 
+  syySetMarkup(thead,headerHtml);
   var rows = XLF.apply('tax', invoicesCache, [
     { col: 'invoiceNo' }, { col: 'invoiceDate' }, { col: 'buyerName' }, { col: 'buyerTaxId' },
     { col: 'subtotal', type: 'number' }, { col: 'vatAmount', type: 'number' }, { col: 'grandTotal', type: 'number' }
@@ -927,19 +933,20 @@ function renderRows() {
     summaryEl.classList.add('show');
     document.getElementById('xlfSummaryText').innerText = 'กรองอยู่ ' + rows.length + ' จาก ' + invoicesCache.length + ' รายการ';
   } else { summaryEl.classList.remove('show'); }
-  document.getElementById('recordCount').innerText = '📋 ทั้งหมด ' + invoicesCache.length + ' รายการ';
+  document.getElementById('recordCount').innerText = (documentPager&&documentPager.hasMore()?'📋 โหลดแล้ว ':'📋 ในช่วงที่เลือก ') + invoicesCache.length + ' รายการ';
 
   var tbody = document.getElementById('taxBody');
-  tbody.innerHTML = '';
+  var rowHtml='';
   if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">📭 ' + (invoicesCache.length ? 'ไม่พบรายการที่ตรงกับตัวกรอง' : 'ยังไม่มีใบกำกับภาษีในระบบ') + '</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">📭 ' + (documentPager&&documentPager.hasMore()?'ยังไม่พบในหน้าที่โหลด (ยังมีหน้าถัดไป)':invoicesCache.length||documentPager&&documentPager.filtered() ? 'ไม่พบรายการที่ตรงกับตัวกรอง' : 'ยังไม่มีใบกำกับภาษีในช่วงที่เลือก') + '</td></tr>';
     return;
   }
 
+  rows=documentPager?documentPager.window(rows,JSON.stringify(XLF.snapshot?XLF.snapshot('tax'):{})):rows;
   rows.forEach(function(item, i) {
     var tr = document.createElement('tr');
     tr.innerHTML =
-      '<td style="text-align:center; color:#94a3b8;">' + (i + 1) + '</td>' +
+      '<td style="text-align:center; color:#94a3b8;">' + (i + 1+(documentPager?documentPager.offset():0)) + '</td>' +
       '<td><span class="chip-code">' + esc(item.invoiceNo) + '</span></td>' +
       '<td>' + esc(item.invoiceDate) + '</td>' +
       '<td style="font-weight:600;">' + esc(item.buyerName || '—') + '</td>' +
@@ -954,8 +961,8 @@ function renderRows() {
           '<button class="btn btn-icon del" title="ลบ" onclick="confirmDeleteModal(\'' + escJs(item.id) + '\')">🗑️</button>' +
         '</div>' +
       '</td>';
-    tbody.appendChild(tr);
-  });
+    tr.dataset.rowKey=item.id;rowHtml+=tr.outerHTML;
+  });syyPatchRows(tbody,rowHtml);syyTableCards(tbody);
 }
 
 XLF.bindHeaderClicks('#taxThead', function() { return invoicesCache; }, renderRows);
@@ -1050,7 +1057,7 @@ function addItemRow(prefill) {
   row.id = rid;
   row.innerHTML =
     '<input type="text" class="form-control item-name" placeholder="ชื่อสินค้า/บริการ" value="' + esc(prefill && prefill.name || '') + '" oninput="recalcTotals()">' +
-    '<input type="number" class="form-control item-qty" placeholder="1" min="0" step="1" value="' + (prefill ? prefill.qty : 1) + '" oninput="recalcTotals()">' +
+    '<input type="number" class="form-control item-qty" placeholder="1" min="0" step="any" value="' + (prefill ? prefill.qty : 1) + '" oninput="recalcTotals()">' +
     '<input type="text" class="form-control item-unit" list="unitOptions" placeholder="เลือก/พิมพ์" value="' + esc(prefill && prefill.unit || '') + '">' +
     '<input type="number" class="form-control item-price" placeholder="0.00" min="0" step="0.01" value="' + (prefill ? prefill.unitPrice : '') + '" oninput="recalcTotals()">' +
     '<span class="line-total" id="' + rid + '_total">0.00</span>' +
@@ -1094,7 +1101,7 @@ function recalcTotals() {
 function showFieldError(fieldId, msg) {
   var input = document.getElementById(fieldId);
   var errEl = document.getElementById('err_' + fieldId);
-  if (input) input.classList.add('is-invalid');
+  if (input){input.classList.add('is-invalid');input.setAttribute('aria-invalid','true');if(errEl)input.setAttribute('aria-describedby',errEl.id);}
   if (errEl) {
     if (msg) errEl.innerText = msg;
     errEl.classList.add('show');
@@ -1103,10 +1110,11 @@ function showFieldError(fieldId, msg) {
 function clearFieldError(fieldId) {
   var input = document.getElementById(fieldId);
   var errEl = document.getElementById('err_' + fieldId);
-  if (input) input.classList.remove('is-invalid');
+  if (input){input.classList.remove('is-invalid');input.removeAttribute('aria-invalid');}
   if (errEl) errEl.classList.remove('show');
 }
 function clearAllErrors() {
+  document.querySelectorAll('#itemBasket .is-invalid').forEach(function(field){field.classList.remove('is-invalid');field.removeAttribute('aria-invalid');});
   ['modalInvoiceDate', 'modalBuyerName', 'modalBuyerTaxId'].forEach(clearFieldError);
   document.getElementById('err_items').classList.remove('show');
 }
@@ -1125,12 +1133,19 @@ function validateForm() {
   var taxIdVal = document.getElementById('modalBuyerTaxId').value.trim();
   if (taxIdVal && taxIdVal.length !== 13) { showFieldError('modalBuyerTaxId'); ok = false; }
 
+  Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).forEach(function(row){
+    var name=row.querySelector('.item-name'),qty=row.querySelector('.item-qty'),price=row.querySelector('.item-price');
+    if(!name.value.trim()&&!price.value.trim())return;
+    var field=!name.value.trim()?name:!qty.value.trim()||!Number.isFinite(Number(qty.value))||Number(qty.value)<=0?qty:!price.value.trim()||!Number.isFinite(Number(price.value))||Number(price.value)<0?price:null;
+    if(field){field.classList.add('is-invalid');field.setAttribute('aria-invalid','true');field.setAttribute('aria-label','รายการต้องมีชื่อ จำนวนมากกว่า 0 และราคาตั้งแต่ 0');ok=false;}
+  });
   var items = collectItems();
   if (!items.length) {
     document.getElementById('err_items').classList.add('show');
     ok = false;
   }
 
+  if(!ok){var first=document.querySelector('#invoiceModal .is-invalid');if(first){first.focus();first.scrollIntoView({block:'center'});}else document.querySelector('#itemBasket input')?.focus();}
   return ok;
 }
 
@@ -1144,8 +1159,9 @@ window.addEventListener('message', function (e) {
   if (d.action === 'PREFILL_INVOICE') applyInvoicePrefill(d);
 });
 
-function applyInvoicePrefill(d) {
-  openAddModal();
+function applyInvoicePrefill(d,discard) {
+  if(!discard&&syyGuardDraft(function(){applyInvoicePrefill(d,true);},'invoice'))return;
+  openAddModal(true);
   var items = Array.isArray(d.items) ? d.items : [];
   if (items.length) {
     document.getElementById('itemBasket').innerHTML = '';
@@ -1153,11 +1169,12 @@ function applyInvoicePrefill(d) {
   }
   if (d.note) document.getElementById('modalNote').value = d.note;
   updateInvoiceNoPreview();
-  swySuccess('ดึงรายการจากหน้าตัดสต๊อกแล้ว', 'ตรวจสอบรายการ/ราคาให้ตรงก่อนกดบันทึก');
+  toast('ขั้นตอน 2/2: ร่างใบกำกับยังไม่บันทึก ตรวจข้อมูลแล้วกดบันทึก','warn',6000);
 }
 
-function openAddModal() {
+function openAddModal(discard) {
   if (invoiceSaving) return;
+  if(!discard&&syyGuardDraft(function(){openAddModal(true);},'invoice'))return;
   editingDocId = null;
   document.getElementById('modalDocId').value = '';
   document.getElementById('modalInvoiceNo').value = '';
@@ -1175,11 +1192,12 @@ function openAddModal() {
   document.getElementById('modalTitle').innerText = '🧾 เพิ่มใบกำกับภาษี';
   document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
   document.getElementById('modalAlert').style.display = 'none';
-  openModal('invoiceModal');
+  openModal('invoiceModal');syyDraftClean('invoice');
 }
 
-function openEditModal(docId) {
+function openEditModal(docId,discard) {
   if (invoiceSaving) return;
+  if(!discard&&syyGuardDraft(function(){openEditModal(docId,true);},'invoice'))return;
   var item = invoicesCache.find(function(x) { return x.id === docId; });
   if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
   editingDocId = docId;
@@ -1199,13 +1217,14 @@ function openEditModal(docId) {
   document.getElementById('modalTitle').innerText = '✏️ แก้ไขใบกำกับภาษี (' + item.invoiceNo + ')';
   document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
   document.getElementById('modalAlert').style.display = 'none';
-  openModal('invoiceModal');
+  openModal('invoiceModal');syyDraftClean('invoice');
 }
 
-function closeInvoiceModal() { if (invoiceSaving) return; closeModal('invoiceModal'); editingDocId = null; }
+function closeInvoiceModal(discard) { if (invoiceSaving) return;
+  if(!discard&&syyGuardDraft(function(){closeInvoiceModal(true);},'invoice'))return; closeModal('invoiceModal'); editingDocId = null;syyDraftClean('invoice'); }
 
 function handleSubmit() {
-  if (invoiceSaving) return;
+  if (invoiceSaving||syyLockUnknownWrite('saveTaxInvoice')) return;
   var alertEl = document.getElementById('modalAlert');
   alertEl.style.display = 'none';
 
@@ -1240,7 +1259,7 @@ function handleSubmit() {
       if (res.success) {
         invoiceSaving = false;
         btn.disabled = false;
-        closeInvoiceModal();
+        closeInvoiceModal(true);syyDraftClean('invoice');
         var savedYearBE = new Date(payload.invoiceDate + 'T00:00:00').getFullYear() + 543;
         var savedId = res.id || payload.docId;
         if (res.invoice) {
@@ -1267,7 +1286,7 @@ function handleSubmit() {
       btn.disabled = false;
       btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
       alertEl.className = 'modal-alert error';
-      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+      alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + syyErrorMessage(err);
       alertEl.style.display = 'block';
     });
 }
@@ -1275,9 +1294,9 @@ function handleSubmit() {
 /* ═══ พิมพ์ / A4 multi-page ═══ */
 var A4_ROWS_PER_PAGE = 14;   // จำนวนแถวสูงสุดต่อหน้าก่อนขึ้นหน้าใหม่ (คำนวณคร่าวๆ ให้พอดีกับพื้นที่ A4 เผื่อหัว/ท้ายเอกสาร)
 
-function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage) {
+function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage,offset) {
   var rowsHtml = pageItems.map(function(it, idx) {
-    var runningNo = (pageNo - 1) * A4_ROWS_PER_PAGE + idx + 1;
+    var runningNo = (offset||0)+idx+1;
     return '<tr>' +
       '<td class="col-no">' + runningNo + '</td>' +
       '<td>' + esc(it.name) + '</td>' +
@@ -1288,12 +1307,8 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage) {
     '</tr>';
   }).join('');
 
-  // เติมแถวว่างให้เต็มหน้าเฉพาะหน้าสุดท้าย (ให้ดูเป็นเอกสารทางการ ไม่โล่งครึ่งหน้า)
-  if (isLastPage) {
-    for (var i = pageItems.length; i < A4_ROWS_PER_PAGE; i++) {
-      rowsHtml += '<tr><td class="col-no">&nbsp;</td><td></td><td class="col-qty"></td><td class="col-unit"></td><td class="col-price"></td><td class="col-amount"></td></tr>';
-    }
-  }
+  // วัดความสูงจริงก่อนแบ่งหน้า และแสดงยอดรวมเพียงหน้าสุดท้าย
+
 
   var totalsBlock = '';
   if (isLastPage) {
@@ -1301,7 +1316,7 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage) {
       '<div class="print-totals-row">' +
         '<div class="print-baht-text">' + numberToThaiText(item.grandTotal) + '</div>' +
         '<div class="print-totals-table">' +
-          '<div class="line"><span>รวมเงิน</span><span>' + fmtMoneyPlain(item.subtotal + item.vatAmount) + '</span></div>' +
+          '<div class="line"><span>รวมเงิน</span><span>' + fmtMoneyPlain(item.grandTotal) + '</span></div>' +
           '<div class="line"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>' + fmtMoneyPlain(item.vatAmount) + '</span></div>' +
           '<div class="line grand"><span>มูลค่าสินค้า</span><span>' + fmtMoneyPlain(item.subtotal) + '</span></div>' +
         '</div>' +
@@ -1324,7 +1339,7 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage) {
     '</div>' +
     '<div class="print-meta-row">วันที่ ' + thaiDateLong(item.invoiceDate) + '</div>' +
     '<div class="print-parties">' +
-      '<div class="row"><b>นามผู้ซื้อ</b><span>' + esc(item.buyerName || '—') + '</span>' +
+      '<div class="row"><b>นามผู้ซื้อ</b><span>' + esc(item.buyerName || '—')+(item.buyerBranch&&item.buyerBranch!=='ไม่ระบุ'?' ('+esc(item.buyerBranch)+')':'') + '</span>' +
         '<span style="margin-left:auto;"><b>เลขประจำตัวผู้เสียภาษี</b> ' + esc(item.buyerTaxId || '—') + '</span></div>' +
       '<div class="row"><b>ที่อยู่</b><span>' + esc(item.buyerAddress || '—') + '</span></div>' +
     '</div>' +
@@ -1338,58 +1353,54 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage) {
 }
 
 function openViewModal(docId, savedInvoice) {
+  if(invoicePdfBusy){toast('กำลังสร้าง PDF กรุณารอให้เสร็จ','warn');return;}
   var item = savedInvoice || invoicesCache.find(function(x) { return x.id === docId; });
   if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
-  currentPrintInvoice = item;
+  item=JSON.parse(JSON.stringify(item));currentPrintInvoice = item;
 
   var items = item.items || [];
-  var totalPages = Math.max(1, Math.ceil(items.length / A4_ROWS_PER_PAGE));
-  var pagesHtml = '';
-  for (var p = 1; p <= totalPages; p++) {
-    var pageItems = items.slice((p - 1) * A4_ROWS_PER_PAGE, p * A4_ROWS_PER_PAGE);
-    pagesHtml += buildA4Page(item, pageItems, p, totalPages, p === totalPages);
-  }
-
-  document.getElementById('printArea').innerHTML = pagesHtml;
+var totalPages=syyPrintPages(items,A4_ROWS_PER_PAGE,function(rows,p,total,last,offset){return buildA4Page(item,rows,p,total,last,offset);},document.getElementById('printArea'));
   document.getElementById('viewModalTitle').innerText = '🔍 ใบกำกับภาษี ' + item.invoiceNo;
   document.getElementById('printPageInfo').innerText =
     totalPages > 1 ? 'เอกสารทั้งหมด ' + totalPages + ' หน้า (ขนาด A4) — พิมพ์ได้ครบทุกหน้าอัตโนมัติ' : 'เอกสาร 1 หน้า (ขนาด A4)';
   openModal('viewModal');
 }
 
-function closeViewModal() { closeModal('viewModal'); currentPrintInvoice = null; }
+function closeViewModal() { if(invoicePdfBusy){toast('กำลังสร้าง PDF กรุณารอให้เสร็จ','warn');return;}closeModal('viewModal'); currentPrintInvoice = null; }
 
 // ★ ดาวน์โหลดใบกำกับภาษีเป็นไฟล์ PDF จริง (ไม่ใช่ HTML) — ใช้ html2canvas แปลงแต่ละหน้า A4 เป็นภาพ
 //   แล้วประกอบด้วย jsPDF เป็น PDF หลายหน้าตามจำนวนหน้าจริงของใบกำกับภาษี (รองรับ multi-page อัตโนมัติ)
 //   ถ้า library โหลดไม่สำเร็จ (เช่น เน็ตมีปัญหา) จะ fallback ไปที่ window.print() แทนไม่ให้ปุ่มใช้งานไม่ได้เลย
 function downloadInvoiceFile() {
-  if (!currentPrintInvoice) return;
+  if (!currentPrintInvoice||invoicePdfBusy) return;
 
-  if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
+  if (typeof html2canvas!=='function'||typeof window.jspdf?.jsPDF!=='function') {
     swyWarning('ไม่สามารถโหลดตัวสร้าง PDF ได้', 'อาจเป็นเพราะอินเทอร์เน็ตขัดข้อง กรุณาใช้ปุ่ม "สั่งพิมพ์" แล้วเลือก "Save as PDF" แทน');
     return;
   }
 
-  var btn = document.querySelector('#viewModal .btn btn-ghost[onclick="downloadInvoiceFile()"]');
+  invoicePdfBusy=true;
+  var invoiceForPdf=JSON.parse(JSON.stringify(currentPrintInvoice));
+  var btn = document.querySelector('#viewModal .btn-ghost[onclick="downloadInvoiceFile()"]');
   var originalText = btn ? btn.innerText : '';
   if (btn) { btn.disabled = true; btn.innerText = '⏳ กำลังสร้าง PDF...'; }
 
   var pages = document.querySelectorAll('#printArea .a4-page');
-  if (!pages.length) { if (btn) { btn.disabled = false; btn.innerText = originalText; } return; }
+  if (!pages.length) { invoicePdfBusy=false; if (btn) { btn.disabled = false; btn.innerText = originalText; } return; }
 
   var jsPDF = window.jspdf.jsPDF;
-  var pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  var pdf;try{pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});}catch(error){invoicePdfBusy=false;if(btn){btn.disabled=false;btn.innerText=originalText;}swyError('สร้าง PDF ไม่สำเร็จ',esc(syyErrorMessage(error)));return;}
 
   // ★ แปลงทีละหน้าเรียงลำดับ (ต้อง await ทีละหน้า ไม่ทำพร้อมกัน เพราะ html2canvas ใช้ทรัพยากรจอเยอะ
   //   ทำพร้อมกันหลายหน้าเสี่ยงเบราว์เซอร์ค้างหรือภาพเพี้ยน)
   function renderPage(index) {
     if (index >= pages.length) {
-      pdf.save('ใบกำกับภาษี_' + currentPrintInvoice.invoiceNo.replace(/[\/\s]/g, '-') + '.pdf');
+      invoicePdfBusy=false;pdf.save('ใบกำกับภาษี_' + invoiceForPdf.invoiceNo.replace(/[\/\s]/g, '-') + '.pdf');
       if (btn) { btn.disabled = false; btn.innerText = originalText; }
       return;
     }
 
-    html2canvas(pages[index], { scale: 2, useCORS: true, backgroundColor: '#ffffff' }).then(function(canvas) {
+    Promise.resolve().then(function(){return html2canvas(pages[index],{scale:2,useCORS:true,backgroundColor:'#ffffff'});}).then(function(canvas) {
       var imgData = canvas.toDataURL('image/png');
       var pdfWidth = pdf.internal.pageSize.getWidth();
       var pdfHeight = pdf.internal.pageSize.getHeight();
@@ -1402,7 +1413,7 @@ function downloadInvoiceFile() {
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, finalHeight);
       renderPage(index + 1);
     }).catch(function(err) {
-      console.error('สร้าง PDF หน้า ' + (index + 1) + ' ไม่สำเร็จ:', err);
+      invoicePdfBusy=false;console.error('สร้าง PDF หน้า ' + (index + 1) + ' ไม่สำเร็จ:', err);
       swyError('เกิดข้อผิดพลาดตอนสร้าง PDF', esc(err && err.message ? err.message : 'ไม่ทราบสาเหตุ'));
       if (btn) { btn.disabled = false; btn.innerText = originalText; }
     });
@@ -1436,7 +1447,7 @@ function execDelete() {
       btn.disabled = false;
       btn.innerText = 'ลบข้อมูล';
       closeDeleteModal();
-      swyError('ลบไม่สำเร็จ', esc(JSON.stringify(err)));
+      swyError('ลบไม่สำเร็จ', esc(syyErrorMessage(err)));
     });
 }
 
@@ -1451,7 +1462,7 @@ function getInvoiceYearBE(item) {
 }
 
 function renderDashboard() {
-  if(documentPager&&documentPager.hasMore()){document.getElementById('dashRangeInfo').textContent='ยังโหลดไม่ครบปี กรุณากลับไปทะเบียนแล้วกดโหลดทั้งหมดเพื่อสรุป';document.getElementById('dashStats').innerHTML='';['chartMonthly','topCustomers','topItems'].forEach(function(id){document.getElementById(id).innerHTML='';});return;}
+  if(documentPager&&(documentPager.hasMore()||documentPager.filtered())){document.getElementById('dashRangeInfo').textContent='สรุปรายปีต้องใช้ข้อมูลครบปี กรุณาล้างการค้นหาและโหลดทั้งหมดในทะเบียน';document.getElementById('dashStats').innerHTML='';['chartMonthly','topCustomers','topItems'].forEach(function(id){document.getElementById(id).innerHTML='';});return;}
   var yearBE = currentPageYear || (new Date().getFullYear() + 543);
   // ★ invoicesCache ถูกกรองมาจาก backend แล้วตามปีที่เลือก ไม่ต้อง filter ซ้ำฝั่ง client อีก
   var yearItems = invoicesCache;
@@ -1720,6 +1731,15 @@ function drillItemInvoices(yearBE, itemName) {
 <script>
 syyRegisterFreshness({reload:function(){loadAll(currentPageYear,null,null,true);},canRefresh:function(){return !invoiceSaving && !document.getElementById('qcBtnSave')?.disabled && !(documentPager&&documentPager.busy());},
   stock:function(stocks){syyApplyStockRows(productsCache,stocks);},product:function(product,deleted){syyApplyProductRows(productsCache,product,deleted);}});
+</script>
+<script>
+window.addEventListener('load',function(){syyDraftRegister('invoice',{
+ capture:function(){if(!document.getElementById('invoiceModal').classList.contains('active'))return null;return {fields:syyReadFields('#invoiceModal'),items:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {name:row.querySelector('.item-name').value,qty:row.querySelector('.item-qty').value,unit:row.querySelector('.item-unit').value,unitPrice:row.querySelector('.item-price').value};}),editingDocId:editingDocId,unknown:!!syyUnknownWrites.saveTaxInvoice};},
+ restore:function(d){if(!d||!Array.isArray(d.items)||d.items.length>200)return;openAddModal(true);editingDocId=d.editingDocId||null;document.getElementById('itemBasket').innerHTML='';d.items.forEach(addItemRow);syyWriteFields(d.fields);recalcTotals();if(d.unknown){syyUnknownWrites.saveTaxInvoice=true;syyLockUnknownWrite('saveTaxInvoice');}}
+});});
+</script>
+<script>
+window.addEventListener('load',function(){syyViewRegister('invoice',function(){return {tab:document.getElementById('panelDash').classList.contains('active')?'dash':'list',scroll:document.querySelector('#panelList .table-wrap')?.scrollTop||window.scrollY};},function(v){switchTab(v.tab==='dash'?'dash':'list');requestAnimationFrame(function(){var wrap=document.querySelector('#panelList .table-wrap');if(wrap)wrap.scrollTop=v.scroll||0;});});});
 </script>
 </body>
 </html>

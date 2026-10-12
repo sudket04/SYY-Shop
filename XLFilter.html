@@ -14,7 +14,7 @@ var XLF = (function () {
   var state = {};
 
   function ensure(key){
-    if(!state[key]) state[key]={filters:{},sortCol:null,sortAsc:true,colType:{}};
+    if(!state[key]){state[key]={filters:{},sortCol:null,sortAsc:true,colType:{}};var saved=typeof syyLocalGet==='function'&&syyLocalGet('filter',key);if(saved){state[key].sortCol=saved.sortCol;state[key].sortAsc=!!saved.sortAsc;Object.keys(saved.filters||{}).forEach(function(col){if(Array.isArray(saved.filters[col]))state[key].filters[col]=new Set(saved.filters[col]);});}}
     return state[key];
   }
   function escH(v){
@@ -52,6 +52,7 @@ var XLF = (function () {
       var type=st.colType[st.sortCol]||'text';
       result.sort(function(a,b){return compareVals(a[st.sortCol],b[st.sortCol],type,st.sortAsc);});
     }
+    var filters={};Object.keys(st.filters).forEach(function(col){filters[col]=Array.from(st.filters[col]||[]);});if(typeof syyLocalSet==='function')syyLocalSet('filter',key,{filters:filters,sortCol:st.sortCol,sortAsc:st.sortAsc});
     return result;
   }
 
@@ -231,7 +232,7 @@ var XLF = (function () {
   }
 
   return {
-    apply:apply, th:th, bindHeaderClicks:bindHeaderClicks,
+    snapshot:function(key){var st=ensure(key),filters={};Object.keys(st.filters).forEach(function(col){filters[col]=Array.from(st.filters[col]||[]);});var value={filters:filters,sortCol:st.sortCol,sortAsc:st.sortAsc};if(typeof syyLocalSet==='function')syyLocalSet('filter',key,value);return value;},apply:apply, th:th, bindHeaderClicks:bindHeaderClicks,
     anyActiveFilter:anyActiveFilter, hasActiveFilter:hasActiveFilter,
     activeSummary:activeSummary, clearAll:clearAll, clearCol:clearCol, closePopover:closePopover
   };

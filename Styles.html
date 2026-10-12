@@ -9,7 +9,7 @@
 :root{
   --primary:#005088; --primary-dark:#002e52; --primary-soft:#e6f0fa; --primary-line:#bfdcf5;
   --nav:#012a49; --nav-hi:#0a4877; --nav-txt:#e2eaf1; --nav-dim:#7cb3d4; --nav-label:#5f93b8;
-  --ink:#0f172a; --text:#334155; --muted:#64748b; --faint:#94a3b8;
+  --ink:#0f172a; --text:#334155; --muted:#475569; --faint:#64748b;
   --line:#e8edf2; --line-soft:#f1f5f9; --bg:#f8fafc;
   --ok:#15803d; --ok-bg:#dcfce7; --ok-line:#86efac;
   --warn:#b45309; --warn-bg:#fef3c7; --warn-line:#fcd34d;
@@ -305,4 +305,41 @@ th.xlf-th{position:sticky;padding-right:40px !important}
   table{font-size:13px}th{font-size:12px}td{line-height:1.55}
   .btn,.input,.select,.form-control{font-size:14px}
 }
+.syy-data-status{padding:5px 18px;color:var(--muted);font-size:12px;background:var(--bg)}
+.syy-data-status[data-state="error"]{color:var(--danger)}
+.syy-field-error{display:block;color:var(--danger);font-size:12px;margin-top:4px}
+.syy-pager,.syy-display-pages{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px}
+.syy-document-search{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:12px;border-bottom:1px solid var(--line)}
+.syy-document-search label{display:grid;gap:4px;font-size:12px;flex:1 1 150px}
+.syy-document-search input{min-width:0;width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;background:#fff}
+.syy-document-search small{flex-basis:100%;font-size:12px;color:var(--muted)}
+.syy-search-dates{flex:2 1 300px}.syy-search-dates>div{display:flex;gap:10px;flex-wrap:wrap}.syy-search-dates summary{display:none}
+.syy-mobile-filters{display:none}
+.syy-select-meta,.syy-select-empty,.cell-empty,.hint{color:var(--muted)!important;font-size:12px!important}
+[style*="color:#94a3b8"],[style*="color: #94a3b8"]{color:var(--faint)!important}
+.syy-print-probe{position:fixed;left:-20000px;top:0;visibility:hidden;width:190mm;pointer-events:none}
+.syy-print-probe .a4-page{min-height:0!important;width:190mm!important;padding:0!important;margin:0!important}
+.print-items-table{table-layout:fixed}.print-items-table td,.print-parties,.print-company-name,.print-company-line{overflow-wrap:anywhere}
+.print-totals,.print-totals-row,.print-sign-row{break-inside:avoid}
+:focus-visible{outline:3px solid #005088;outline-offset:2px}
+@media(max-width:767px){
+  :root{--hit:44px}
+  button.btn,button.btn-icon,.modal-close,.btn-remove-row,.qty-box button,.syy-select-control,.syy-select-option{min-width:44px!important;min-height:44px!important}
+  .syy-select-search,input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),select{min-height:44px}
+  .syy-document-table,.syy-document-table tbody,.syy-document-table tr{display:block;width:100%;min-width:0!important}
+  .syy-search-dates{flex-basis:100%;min-width:0}.syy-search-dates summary{display:list-item;padding:8px;cursor:pointer;color:var(--primary);min-height:44px}
+  .syy-mobile-filters{display:inline-flex;margin:8px}
+  .syy-document-table thead{display:none}.syy-document-table.syy-filters-open thead{display:block}.syy-document-table thead tr{display:flex;gap:5px;flex-wrap:wrap}
+  .syy-document-table th{display:none}.syy-document-table th.xlf-th{display:inline-flex;width:auto!important;font-size:12px}
+  .syy-document-table th.xlf-th{min-height:48px;max-width:100%;padding-right:50px;white-space:normal}
+  .syy-document-table .xlf-th-btn{width:44px;height:44px}
+  .syy-document-table tbody tr{margin:10px 0;padding:8px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .syy-document-table td{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;text-align:left!important;width:auto!important;min-width:0;position:static!important;white-space:normal!important;overflow-wrap:anywhere;padding:7px!important}
+  .syy-document-table td::before{content:attr(data-label);color:var(--muted);font-size:12px}
+  .syy-document-table td[colspan]{display:block}.syy-document-table td[colspan]::before{display:none}
+  .syy-document-table .row-actions{flex-wrap:wrap;justify-content:flex-start}
+  .syy-document-table .syy-select{min-width:0!important;width:100%}.syy-document-table .syy-select-label{white-space:normal}
+  .syy-data-status{padding-left:12px}
+}
+@media print{.syy-data-status,.syy-print-probe{display:none!important}}
 </style>

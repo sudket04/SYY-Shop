@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -359,7 +361,7 @@
         syyDataLoaded();
         lowStockItems  = (data && data.lowStockItems)  || [];
         purchaseOrders = (data && data.purchaseOrders) || [];
-        pendingSummary=data.pendingSummary||{codes:{},pendingCount:purchaseOrders.filter(function(po){return po.status==='Pending';}).length};if(documentPager)documentPager.reset(data.pageInfo);
+        pendingSummary=data.pendingSummary||{codes:{},pendingCount:purchaseOrders.filter(function(po){return po.status==='Pending';}).length};if(documentPager){documentPager.reset(data.pageInfo);var saved=syyLocalGet('view','purchaseOrders');if(saved&&saved.search&&(saved.search.number||saved.search.from||saved.search.to))document.querySelector('.syy-document-search').requestSubmit();}
 
         lowStockItems.forEach(function(p) {
           if (!(p.productCode in qtyState)) qtyState[p.productCode] = p.suggestedQty;
@@ -375,9 +377,9 @@
       }, function(err) {
         syyDataFailed();
         document.getElementById('vendorGroupsContainer').innerHTML =
-          '<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดข้อมูลไม่สำเร็จ</div><div class="su">' + esc(JSON.stringify(err)) + '</div></div>';
+          '<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดข้อมูลไม่สำเร็จ</div><div class="su">' + esc(syyErrorMessage(err)) + '</div></div>';
         document.getElementById('historyTableBody').innerHTML =
-          emptyStateHtml(8,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:JSON.stringify(err)});
+          emptyStateHtml(8,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err)});
         btn.classList.remove('is-loading');
       });
   }
@@ -431,7 +433,7 @@
     document.getElementById('statVendorCount').innerText = Object.keys(vendorIds).length.toLocaleString();
     document.getElementById('statEstValue').innerText    = estValue.toLocaleString('th-TH', { maximumFractionDigits: 0 });
 
-    var pendingCount = documentPager&&documentPager.hasMore()?pendingSummary.pendingCount:purchaseOrders.filter(function(po) { return po.status === 'Pending'; }).length;
+    var pendingCount = documentPager&&(documentPager.hasMore()||documentPager.filtered())?pendingSummary.pendingCount:purchaseOrders.filter(function(po) { return po.status === 'Pending'; }).length;
     document.getElementById('statPendingPO').innerText = pendingCount.toLocaleString();
   }
 
@@ -628,7 +630,8 @@
   // ==========================================
   // Confirm Create Order Modal
   // ==========================================
-  function openConfirmModal(vendorId) {
+  function openConfirmModal(vendorId,discard) {
+    if(!discard&&syyUnknownWrites.savePurchaseOrder&&syyGuardDraft(function(){openConfirmModal(vendorId,true);},'orders'))return;
     var g = findGroupByVendor(vendorId);
     if (!g) return;
     var selectedItems = g.items.filter(function(p) { return checkedState[p.productCode] !== false; });
@@ -665,16 +668,17 @@
     document.getElementById('confirmNote').disabled = false;
     document.getElementById('confirmOrderDate').disabled = false;
 
-    openModal('confirmModal');
+    openModal('confirmModal');syyLockUnknownWrite('savePurchaseOrder');
   }
 
-  function closeConfirmModal() {
+  function closeConfirmModal(discard) {
+    if(!discard&&syyGuardDraft(function(){closeConfirmModal(true);},'confirmModal'))return;
     closeModal('confirmModal');
     pendingConfirmVendor = null;
   }
 
   function submitCreateOrder() {
-    if (!pendingConfirmVendor) return;
+    if (!pendingConfirmVendor||document.getElementById('btnConfirmSave').disabled||syyLockUnknownWrite('savePurchaseOrder')) return;
     var g = pendingConfirmVendor;
     var selectedItems = g.items.filter(function(p) { return checkedState[p.productCode] !== false; });
 
@@ -703,6 +707,7 @@
     callApi('savePurchaseOrder', [payload], function(res) {
         alertEl.style.display = 'block';
         if (res.success) {
+          syyDraftClean('orders');syyModalBaselines.confirmModal=JSON.stringify(syyReadFields('#confirmModal'));
           alertEl.className = 'modal-alert success';
           alertEl.innerText = 'บันทึกใบสั่งซื้อเรียบร้อย (' + res.id + ') — ต้องการ Export Excel เพื่อส่งให้ผู้จัดจำหน่ายไหม?';
 
@@ -732,7 +737,7 @@
         btn.disabled = false; btn.innerText = '💾 บันทึกใบสั่งซื้อ';
         alertEl.style.display = 'block';
         alertEl.className = 'modal-alert error';
-        alertEl.innerText = 'Error: ' + JSON.stringify(err);
+        alertEl.innerText = 'Error: ' + syyErrorMessage(err);
       });
   }
 
@@ -749,7 +754,7 @@
   function renderHistoryTab() {
   if(documentPager)documentPager.render();
     var thead = document.getElementById('historyThead');
-    thead.innerHTML =
+    var headerHtml =
       '<tr>' +
         XLF.th('เลขที่ใบสั่งซื้อ', 'orders', 'poId') +
         XLF.th('วันที่', 'orders', 'orderDate') +
@@ -761,6 +766,7 @@
         '<th class="text-center col-sticky-right">จัดการ</th>' +
       '</tr>';
 
+    syySetMarkup(thead,headerHtml);
     var tbody = document.getElementById('historyTableBody');
 
     // ★ ชั้นที่ 1: filter สถานะจาก pill ปุ่มด้านบน (ระบบเดิม)
@@ -788,7 +794,8 @@
       return;
     }
 
-    tbody.innerHTML = list.map(function(po) {
+    list=documentPager?documentPager.window(list,historyStatusFilter+JSON.stringify(XLF.snapshot?XLF.snapshot('orders'):{})):list;
+    syyPatchRows(tbody,list.map(function(po) {
       var totalReceived = (po.items || []).reduce(function(s, it) { return s + parseFloat(it.receivedQty || 0); }, 0);
       var qtyCell = po.totalQty + (totalReceived > 0 ? '<div class="qty-progress">รับแล้ว ' + totalReceived + ' / ' + po.totalQty + '</div>' : '');
 
@@ -815,7 +822,7 @@
       var vendorNameCell = escHtml(po.vendorName) +
         (!po.vendorTaxId ? ' <span title="ยังไม่มีเลขผู้เสียภาษีของผู้จำหน่ายรายนี้" style="color:#b45309;">⚠️</span>' : '');
 
-      return '<tr>' +
+      return '<tr data-row-key="'+esc(po.poId)+'">' +
         '<td><b>' + po.poId + '</b></td>' +
         '<td>' + escHtml(po.orderDate) + '</td>' +
         '<td>' + vendorNameCell + '</td>' +
@@ -829,7 +836,7 @@
           '<button class="btn btn-icon del" title="ลบ" onclick="onDeleteOrder(\'' + escJs(po.poId) + '\')">🗑️</button>' +
         '</span></td>' +
       '</tr>';
-    }).join('');
+    }).join(''));syyTableCards(tbody);
   }
 
   function onStatusChange(poId, selectEl) {
@@ -849,7 +856,7 @@
         }
       }, function(err) {
         selectEl.disabled = false;
-        swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+        swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err)));
         refreshPurchaseOrder(poId);
       });
   }
@@ -859,7 +866,7 @@
       if (!ok) return;
       callApi('deletePurchaseOrder', [poId], function(res) {
           if (res.success) { toast('ลบใบสั่งซื้อเรียบร้อย');if(pendingSummary.orders)delete pendingSummary.orders[poId]; purchaseOrders=purchaseOrders.filter(function(po){return po.poId!==poId;});renderPurchaseOrderState(); } else { swyError('ลบไม่สำเร็จ', res.message); }
-        }, function(err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
+        }, function(err) { swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err))); });
     });
   }
 
@@ -1052,7 +1059,7 @@
           btn.disabled = false; btn.innerText = '💾 บันทึกการรับสินค้า';
           alertEl.style.display = 'block';
           alertEl.className = 'modal-alert error';
-          alertEl.innerText = 'Error: ' + JSON.stringify(err);
+          alertEl.innerText = 'Error: ' + syyErrorMessage(err);
         });
     });
   }
@@ -1151,12 +1158,21 @@
 </script>
 <script>
 syyRegisterFreshness({reload:loadAll,canRefresh:function(){return !receiveBusy && !(documentPager&&documentPager.busy()) && !document.querySelector('.modal-overlay.active');},
-  stock:function(stocks){syyApplyStockRows(lowStockItems,stocks);renderCreateTab();updateStatCards();}});
+  stock:function(stocks){syyApplyStockRows(lowStockItems,stocks);renderCreateTab();updateStatCards();if(d.unknown)syyUnknownWrites.savePurchaseOrder=true;}});
 </script>
 <script>
 function renderPurchaseOrderState(){rebuildPendingProductCodes();renderCreateTab();renderHistoryTab();updateStatCards();}
 function upsertPurchaseOrder(po){if(!po||!po.poId)return;var index=purchaseOrders.findIndex(function(item){return item.poId===po.poId;});if(index>=0)purchaseOrders[index]=Object.assign({},purchaseOrders[index],po);else purchaseOrders.unshift(po);renderPurchaseOrderState();}
 function refreshPurchaseOrder(id){callApi('getPurchaseOrderPageData',[{poId:id}],function(data){upsertPurchaseOrder(data.po);},function(){toast('โหลดสถานะล่าสุดไม่สำเร็จ กรุณารีเฟรช','warn');});}
+</script>
+<script>
+window.addEventListener('load',function(){syyDraftRegister('orders',{
+ capture:function(){return {checked:checkedState,qty:qtyState,unknown:!!syyUnknownWrites.savePurchaseOrder};},
+ restore:function(d){if(!d||!d.checked||!d.qty)return;checkedState=d.checked;qtyState=d.qty;renderCreateTab();updateStatCards();}
+});});
+</script>
+<script>
+window.addEventListener('load',function(){syyViewRegister('orders',function(){return {status:historyStatusFilter,tab:document.getElementById('tabHistory').classList.contains('active')?'history':'create',scroll:window.scrollY};},function(v){historyStatusFilter=v.status||'all';renderHistoryTab();switchTab(v.tab==='history'?'history':'create');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

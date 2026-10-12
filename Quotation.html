@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -78,9 +80,9 @@
   .stat-mini .su{font-size:11.5px;color:var(--faint);margin-top:2px}
 
   /* ── ใบพิมพ์ A4 (รองรับหลายหน้า — เหมือน Master_Tax_Invoice.html) ──
-     เติมแถวว่างเต็มหน้าสุดท้ายด้วย JS (ไม่ใช้ flex ดันลงล่าง) เพราะตอนพิมพ์จริง
+     แบ่งหน้าตามความสูงจริงของข้อความภาษาไทย โดยวัดพื้นที่หัว/ท้ายเอกสารด้วย
      .a4-page ต้องเป็น min-height:auto (ให้ page-break ทำงานถูก) แปลว่า flex margin-top:auto
-     จะไม่มีอะไรให้ดัน — ใช้เทคนิคเติมแถวว่างแทน ที่ทดสอบแล้วว่าใช้ได้จริงกับใบกำกับภาษี ── */
+     ใช้พื้นที่สำรองท้ายหน้าเพื่อให้ยอดรวมและลายเซ็นไม่ซ้อนเลขหน้า ── */
   .a4-page{width:210mm;min-height:297mm;margin:0 auto 16px;background:#fff;padding:14mm;box-sizing:border-box;box-shadow:0 2px 12px rgba(0,0,0,.15);font-size:12.5px;color:#1e293b;position:relative}
   .a4-page + .a4-page{page-break-before:always}
   @media print{
@@ -377,7 +379,7 @@ document.addEventListener('keydown', function (e) {
 //   (เดิมดึงใบเสนอราคา "ทุกใบทุกปี" ทุกครั้งที่เปิดหน้า — ปรับให้กรองตามปีฝั่ง server แทน
 //   ลดการอ่าน Firestore ลงมาก โดยเฉพาะร้านที่เปิดมานานสะสมใบเสนอราคาไว้เยอะ)
 var documentPager;
-window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getQuotationListData',key:'quotations',year:function(){return currentPageYear;},rows:function(){return quotations;},render:function(){renderList();}});});
+window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getQuotationListData',key:'quotations',year:function(){return currentPageYear;},rows:function(){return quotations;},invalidate:function(){quotationLoadGeneration++;},render:function(){renderList();}});});
 var quotationLoadGeneration=0;
 function loadPageData(yearParam, afterLoad, onError, forceFull) {
   var requestGeneration=++quotationLoadGeneration,revision=syyDataRevision();
@@ -388,7 +390,8 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
   var badge = document.getElementById('listYearLoadingBadge');
   if (badge) badge.style.display = 'inline';
   var apiName = quotationBootstrapped && !forceFull ? 'getQuotationListData' : 'getQuotationPageData';
-  callApi(apiName, [yearParam || ''], function (data) {
+  if(!quotationBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','quotation-year');if(savedYear)yearParam=savedYear;}
+  callApi(apiName, [yearParam || '',{search:documentPager?documentPager.searchOptions():{}}], function (data) {
     if(requestGeneration!==quotationLoadGeneration)return;
     if(revision!==syyDataRevision()){syyDataFailed();if(btn)btnDone(btn);if(badge)badge.style.display='none';return;}
     if (!data || data.success === false || !Array.isArray(data.quotations)) {
@@ -404,12 +407,13 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
     if (data.seller) sellerInfo = data.seller;
     if (data.marginMin != null) marginMin = data.marginMin;
     if (data.statuses) statuses = data.statuses;
-    availableYearsCache = data.availableYears || [new Date().getFullYear() + 543];
+    if(Array.isArray(data.availableYears))availableYearsCache=data.availableYears;else if(!availableYearsCache.length)availableYearsCache=[new Date().getFullYear()+543];
     quotationBootstrapped = true;
     currentPageYear = (yearParam === 'all') ? 'all' : (yearParam || Number(data.pageInfo&&data.pageInfo.year) || availableYearsCache[0]);
     if (currentPageYear !== 'all' && availableYearsCache.indexOf(Number(currentPageYear)) < 0) {
       availableYearsCache.push(Number(currentPageYear)); availableYearsCache.sort(function(a,b){return b-a;});
     }
+    syyLocalSet('view','quotation-year',currentPageYear);
     populateListYearDropdown();
     renderCustomerOptions();
     buildCategoryFilter();
@@ -426,7 +430,7 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
     if (btn) btnDone(btn);
     if (badge) badge.style.display = 'none';
     populateListYearDropdown();
-    toast('โหลดข้อมูลไม่สำเร็จ: ' + esc(JSON.stringify(err)), 'err');
+    toast('โหลดข้อมูลไม่สำเร็จ: ' + esc(syyErrorMessage(err)), 'err');
     if (typeof onError === 'function') onError(err);
   }
 }
@@ -494,7 +498,7 @@ function submitQuickAddCustomer(e) {
     } else { alertEl.className = 'modal-alert error'; alertEl.innerText = res && res.message || 'บันทึกไม่สำเร็จ'; }
   }, function(err) {
     quickCustomerSaving = false; btnDone(btn);
-    alertEl.className = 'modal-alert error'; alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + JSON.stringify(err);
+    alertEl.className = 'modal-alert error'; alertEl.innerText = 'บันทึกไม่สำเร็จ: ' + syyErrorMessage(err);
   });
 }
 
@@ -670,7 +674,7 @@ function changeQty(code, delta) {
   var line = basket.find(function (b) { return b.productCode === code; });
   if (!line) return;
   var next = line.qty + delta;
-  if (next < 1) { removeLine(code); return; }
+  if (next <= 0) { removeLine(code); return; }
   line.qty = next;
   renderBasket();
 }
@@ -708,10 +712,10 @@ function renderBasket() {
         '</div>' +
         '<div class="qty-box">' +
           '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',-1)">−</button>' +
-          '<input type="number" class="quote-qty" aria-label="จำนวน" value="' + b.qty + '" min="1" oninput="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
+          '<input type="number" class="quote-qty" aria-label="จำนวน" value="' + b.qty + '" min="0" step="any" required oninput="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
           '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',1)">+</button>' +
         '</div>' +
-        '<input type="number" class="price-input" aria-label="ราคา/หน่วย" value="' + b.unitPrice + '" min="0" step="0.01" oninput="setPrice(\'' + escJs(b.productCode) + '\',this.value)">' +
+        '<input type="number" class="price-input" aria-label="ราคา/หน่วย" value="' + b.unitPrice + '" min="0" step="0.01" required oninput="setPrice(\'' + escJs(b.productCode) + '\',this.value)">' +
         '<span class="line-total">' + money(amount) + '</span>' +
         '<button type="button" class="btn-remove-row" onclick="removeLine(\'' + escJs(b.productCode) + '\')">✕</button>' +
       '</div>';
@@ -768,8 +772,9 @@ function recalcTotals() {
 }
 
 /* ═══ ใบเสนอราคาใหม่ / บันทึก ═══ */
-function newQuotation() {
+function newQuotation(discard) {
   if (quotationSaving) return;
+  if(!discard&&syyGuardDraft(function(){newQuotation(true);},'quotation'))return;
   editingDocId = null;
   basket = [];
   document.getElementById('selCustomer').value = '';
@@ -781,11 +786,12 @@ function newQuotation() {
   document.getElementById('inpDiscPct').value = '0';
   document.getElementById('qtNoBadge').innerText = 'ฉบับร่าง (ยังไม่บันทึก)';
   renderBasket();
-  switchTab('build');
+  switchTab('build');syyDraftClean('quotation');
 }
 
-function loadQuotationIntoBuild(docId) {
+function loadQuotationIntoBuild(docId,discard) {
   if (quotationSaving) return;
+  if(!discard&&syyGuardDraft(function(){loadQuotationIntoBuild(docId,true);},'quotation'))return;
   var q = quotations.find(function (x) { return x.id === docId; });
   if (!q) { toast('ไม่พบใบเสนอราคานี้', 'err'); return; }
   editingDocId = q.id;
@@ -808,21 +814,21 @@ function loadQuotationIntoBuild(docId) {
   document.getElementById('inpNote').value = q.note || '';
   document.getElementById('inpDiscPct').value = q.discPct || 0;
   document.getElementById('qtNoBadge').innerText = q.quoteNo + ' · ' + q.status;
-  renderBasket();
+  renderBasket();syyDraftClean('quotation');
 }
 
-function editQuotation(docId) { loadQuotationIntoBuild(docId); switchTab('build'); }
+function editQuotation(docId,discard){if(!discard&&syyGuardDraft(function(){editQuotation(docId,true);},'quotation'))return;loadQuotationIntoBuild(docId,true);switchTab('build');}
 
 function saveQuotationNow() {
-  if (quotationSaving) return;
+  if (quotationSaving||syyLockUnknownWrite('saveQuotation')) return;
   var customerId = document.getElementById('selCustomer').value;
-  if (!customerId) { swyWarning('ข้อมูลไม่ครบ', 'กรุณาเลือกลูกค้า'); return; }
+  if (!customerId) { syyInvalid('selCustomer','กรุณาเลือกลูกค้าก่อนบันทึก');swyWarning('ข้อมูลไม่ครบ', 'กรุณาเลือกลูกค้า'); return; }
   if (!basket.length) { swyWarning('ข้อมูลไม่ครบ', 'กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ'); return; }
   var invalidInput = Array.from(document.querySelectorAll('#itemBasket input')).some(function(input) {
     return !input.value.trim() || !input.checkValidity() || !isFinite(Number(input.value));
   });
   if (invalidInput || basket.some(function(b) { return !isFinite(b.qty) || b.qty <= 0 || !isFinite(b.unitPrice) || b.unitPrice < 0; })) {
-    swyWarning('ข้อมูลไม่ถูกต้อง', 'กรุณาระบุจำนวนมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป'); return;
+    syyInvalid(Array.from(document.querySelectorAll('#itemBasket input')).find(function(input){return !input.value.trim()||!input.checkValidity()||input.classList.contains('quote-qty')&&Number(input.value)<=0;})||document.querySelector('#itemBasket input'),'จำนวนต้องมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป');swyWarning('ข้อมูลไม่ถูกต้อง', 'กรุณาระบุจำนวนมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป'); return;
   }
 
   var d = {
@@ -855,7 +861,7 @@ function saveQuotationNow() {
         quotationSaving=false;btnDone(btn);
         if(availableYearsCache.indexOf(savedYear)<0)availableYearsCache.push(savedYear);
         availableYearsCache.sort(function(a,b){return b-a;});populateListYearDropdown();renderList();
-        if(res.quotation){loadQuotationIntoBuild(res.id);switchTab('doc');}
+        if(res.quotation){loadQuotationIntoBuild(res.id,true);syyDraftClean('quotation');switchTab('doc');}
       }
       if(currentPageYear!=='all' && Number(currentPageYear)!==savedYear)loadPageData(savedYear,finishSavedQuote,function(){finishSavedQuote();toast('บันทึกแล้ว แต่โหลดปีใหม่ไม่สำเร็จ','warn');});
       else finishSavedQuote();
@@ -869,7 +875,7 @@ function saveQuotationNow() {
   }, function (err) {
     quotationSaving = false;
     btnDone(btn);
-    swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err)));
+    swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err)));
   });
 }
 
@@ -934,7 +940,7 @@ function buildQuoteHead(ctx) {
     '</div>' +
     '<div class="print-parties">' +
       '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-        '<span><b>นามผู้ซื้อ</b> ' + esc(ctx.cust.Customer_Name || '—') + (ctx.cust.Customer_Type ? ' (' + esc(ctx.cust.Customer_Type) + ')' : '') + '</span>' +
+        '<span><b>นามผู้ซื้อ</b> ' + esc(ctx.cust.Customer_Name || '—')+(ctx.cust.Branch&&ctx.cust.Branch!=='ไม่ระบุ'?' ('+esc(ctx.cust.Branch)+')':'') + (ctx.cust.Customer_Type ? ' (' + esc(ctx.cust.Customer_Type) + ')' : '') + '</span>' +
         '<span style="margin-left:auto"><b>เลขประจำตัวผู้เสียภาษี</b> ' + esc(ctx.cust.Tax_ID || '—') + '</span>' +
       '</div>' +
       '<div><b>ที่อยู่</b> ' + esc(ctx.cust.Address || '—') + '</div>' +
@@ -969,9 +975,9 @@ function buildQuoteBottomBlock(ctx) {
     '</div>';
 }
 
-function buildQuotePage(ctx, pageItems, pageNo, totalPages, isLastPage) {
+function buildQuotePage(ctx, pageItems, pageNo, totalPages, isLastPage,offset) {
   var rowsHtml = pageItems.map(function (b, idx) {
-    var runningNo = (pageNo - 1) * QT_ROWS_PER_PAGE + idx + 1;
+    var runningNo = (offset||0) + idx + 1;
     return '<tr>' +
       '<td class="text-center" style="color:var(--faint)">' + runningNo + '</td>' +
       '<td>' + esc(b.productName) + '<div class="mono" style="font-size:10.5px;color:var(--faint);margin-top:2px">' + esc(b.productCode) + (b.partNumber ? ' · P/N ' + esc(b.partNumber) : '') + '</div></td>' +
@@ -981,21 +987,7 @@ function buildQuotePage(ctx, pageItems, pageNo, totalPages, isLastPage) {
     '</tr>';
   }).join('');
 
-  if (!pageItems.length && pageNo === 1) {
-    rowsHtml = '<tr><td colspan="5" class="text-center" style="color:var(--faint);padding:20px">ยังไม่มีรายการสินค้า</td></tr>';
-    // ยังต้องเติมแถวว่างต่อด้วย (เหลืออีก QT_ROWS_PER_PAGE-1 แถว) ไม่งั้นบล็อกยอดรวม/ลายเซ็น
-    // จะลอยขึ้นมาติดตารางทันทีตอนยังไม่มีรายการ แทนที่จะอยู่ตำแหน่งเดิมเสมอเหมือนตอนมีรายการ
-    if (isLastPage) {
-      for (var i = 1; i < QT_ROWS_PER_PAGE; i++) {
-        rowsHtml += '<tr><td style="color:var(--faint)">&nbsp;</td><td></td><td></td><td></td><td></td></tr>';
-      }
-    }
-  } else if (isLastPage) {
-    // เติมแถวว่างเต็มหน้าสุดท้าย ให้ยอดรวม/ลายเซ็นอยู่ตำแหน่งเดิมเสมอไม่ว่าจะมีกี่รายการ
-    for (var i = pageItems.length; i < QT_ROWS_PER_PAGE; i++) {
-      rowsHtml += '<tr><td style="color:var(--faint)">&nbsp;</td><td></td><td></td><td></td><td></td></tr>';
-    }
-  }
+  if(!pageItems.length&&pageNo===1)rowsHtml='<tr><td colspan="5" class="text-center">ยังไม่มีรายการสินค้า</td></tr>';
 
   var bottomHtml = isLastPage
     ? buildQuoteBottomBlock(ctx)
@@ -1039,6 +1031,8 @@ function renderDoc() {
     btnIssue.style.display = 'none';
   }
 
+  if(docQ&&!syyDraftDirty('quotation')&&Number.isFinite(docQ.grandTotal)){t=Object.assign({},t,docQ);}
+  if(docQ&&syyDraftDirty('quotation'))quoteNo+=' · ร่างแก้ไขยังไม่บันทึก';
   var ctx = {
     cust: cust, t: t, quoteNo: quoteNo,
     quoteDateTxt: thaiDateLong(quoteDate),
@@ -1049,14 +1043,7 @@ function renderDoc() {
     sellerInfo: sellerInfo
   };
 
-  var totalPages = Math.max(1, Math.ceil(basket.length / QT_ROWS_PER_PAGE));
-  var pagesHtml = '';
-  for (var p = 1; p <= totalPages; p++) {
-    var pageItems = basket.slice((p - 1) * QT_ROWS_PER_PAGE, p * QT_ROWS_PER_PAGE);
-    pagesHtml += buildQuotePage(ctx, pageItems, p, totalPages, p === totalPages);
-  }
-
-  document.getElementById('printArea').innerHTML = pagesHtml;
+syyPrintPages(basket,QT_ROWS_PER_PAGE,function(items,p,total,last,offset){return buildQuotePage(ctx,items,p,total,last,offset);},document.getElementById('printArea'));
 }
 
 /* ═══ ทะเบียนใบเสนอราคา ═══ */
@@ -1073,7 +1060,7 @@ function setListFilter(s) { listStatusFilter = s; renderStatusFilterBar(); rende
 
 function renderList() {
   if(documentPager)documentPager.render();
-  document.querySelectorAll('#panelList .stat-mini .lb').forEach(function(el){if(!el.dataset.original)el.dataset.original=el.textContent;el.textContent=el.dataset.original+(documentPager&&documentPager.hasMore()?' (เฉพาะที่โหลด)':'');});
+  document.querySelectorAll('#panelList .stat-mini .lb').forEach(function(el){if(!el.dataset.original)el.dataset.original=el.textContent;el.textContent=el.dataset.original+(documentPager&&documentPager.hasMore()?' (เฉพาะที่โหลด)':documentPager&&documentPager.filtered()?' (ช่วงค้นหา)':'');});
   var open = quotations.filter(function (q) { return q.status === 'ร่าง' || q.status === 'ส่งลูกค้าแล้ว'; });
   var openValue = open.reduce(function (s, q) { return s + q.grandTotal; }, 0);
   document.getElementById('statOpenCount').innerText = open.length;
@@ -1098,15 +1085,16 @@ function renderList() {
   var rows = listStatusFilter ? quotations.filter(function (q) { return q.status === listStatusFilter; }) : quotations;
   var body = document.getElementById('listBody');
   if (!rows.length) {
-    body.innerHTML = emptyStateHtml(6, { icon: '📭', title: 'ยังไม่มีใบเสนอราคา', sub: 'กดปุ่ม "ใบเสนอราคาใหม่" เพื่อเริ่มสร้าง' });
+    body.innerHTML = emptyStateHtml(6, { icon: '📭', title: documentPager&&documentPager.hasMore()?'ยังไม่พบในหน้าที่โหลด (ยังมีหน้าถัดไป)':listStatusFilter||documentPager&&documentPager.filtered()?'ไม่พบใบเสนอราคาตามตัวกรอง':documentPager&&documentPager.hasMore()?'ยังไม่พบในรายการที่โหลด':'ยังไม่มีใบเสนอราคาในช่วงที่เลือก', sub: 'ปรับตัวกรองหรือค้นหาเลขเอกสาร/วันที่จากเซิร์ฟเวอร์' });
     return;
   }
-  body.innerHTML = rows.map(function (q) {
+  rows=documentPager?documentPager.window(rows,listStatusFilter):rows;
+  syyPatchRows(body,rows.map(function (q) {
     var cls = STATUS_CLASS[q.status] || 'status-draft';
     var statusOptions = statuses.map(function (s) {
       return '<option value="' + esc(s) + '"' + (s === q.status ? ' selected' : '') + '>' + esc(s) + '</option>';
     }).join('');
-    return '<tr>' +
+    return '<tr data-row-key="'+esc(q.id)+'">' +
       '<td class="mono">' + esc(q.quoteNo) + '</td>' +
       '<td>' + esc(q.customerName) + (q.customerType ? '<div style="font-size:11px;color:var(--faint)">' + esc(q.customerType) + '</div>' : '') + '</td>' +
       '<td>' + esc(thDate(q.quoteDate)) + '</td>' +
@@ -1121,16 +1109,16 @@ function renderList() {
         '<button class="btn btn-icon del" title="ลบ" onclick="confirmDeleteQuotation(\'' + escJs(q.id) + '\')">🗑️</button>' +
       '</div></td>' +
     '</tr>';
-  }).join('');
+  }).join(''));syyTableCards(body);
 }
 
-function viewQuotation(docId) { loadQuotationIntoBuild(docId); switchTab('doc'); }
+function viewQuotation(docId,discard){if(!discard&&syyGuardDraft(function(){viewQuotation(docId,true);},'quotation'))return;loadQuotationIntoBuild(docId,true);switchTab('doc');}
 
 function changeStatus(docId, status) {
   callApi('updateQuotationStatus', [docId, status], function (res) {
     if (res && res.success) { toast(res.message || 'เปลี่ยนสถานะเรียบร้อย'); loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear); }
     else swyError(res && res.title || 'ล้มเหลว', res && res.message);
-  }, function (err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
+  }, function (err) { swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err))); });
 }
 
 /* ═══ ตัดสต๊อกจากใบเสนอราคา (ปิดงาน-ขายสำเร็จ) ═══
@@ -1185,7 +1173,7 @@ function confirmDeleteQuotation(docId) {
     callApi('deleteQuotation', [docId], function (res) {
       if (res && res.success) { toast('ลบเรียบร้อย'); loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear); }
       else swyError(res && res.title || 'ล้มเหลว', res && res.message);
-    }, function (err) { swyError('เกิดข้อผิดพลาด', esc(JSON.stringify(err))); });
+    }, function (err) { swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err))); });
   });
 }
 </script>
@@ -1193,6 +1181,18 @@ function confirmDeleteQuotation(docId) {
 syyRegisterFreshness({reload:function(){loadPageData(currentPageYear,null,null,true);},canRefresh:function(){return !quickCustomerSaving && !quotationSaving && !(documentPager&&documentPager.busy());},
   stock:function(stocks){syyApplyStockRows(products,stocks);basket.forEach(function(line){var p=products.find(function(x){return x.productCode===line.productCode;});if(p)line.stock=num(p.currentStock);});renderResults();updateBasketSummary();},
   product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();renderResults();}});
+</script>
+<script>
+window.addEventListener('load',function(){syyDraftRegister('quotation',{
+ capture:function(){return {fields:syyQuoteDraftFields(),basket:basket.map(function(b){return {productCode:b.productCode,productName:b.productName,partNumber:b.partNumber,qty:b.qty,unitPrice:b.unitPrice,costPrice:b.costPrice};}),raw:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {qty:row.querySelector('.quote-qty').value,price:row.querySelector('.price-input').value};}),editingDocId:editingDocId,customerOption:document.getElementById('selCustomer').selectedOptions[0]?.text||'',quoteBadge:document.getElementById('qtNoBadge').textContent,unknown:!!syyUnknownWrites.saveQuotation};},
+ restore:function(d){if(!d||!Array.isArray(d.basket)||d.basket.length>200)return;editingDocId=d.editingDocId||null;basket=d.basket.map(function(b){var p=products.find(function(x){return x.productCode===b.productCode;});return Object.assign({},b,{stock:p?num(p.currentStock):0});});renderBasket();var customer=document.getElementById('selCustomer'),customerId=d.fields&&d.fields.selCustomer;if(customerId&&!Array.from(customer.options).some(function(o){return o.value===customerId;}))customer.add(new Option(d.customerOption||'ลูกค้าในร่างเดิม',customerId));syyWriteFields(d.fields);document.getElementById('qtNoBadge').textContent=d.quoteBadge||'ร่างที่กู้คืน (ยังไม่บันทึก)';Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).forEach(function(row,i){if(d.raw&&d.raw[i]){row.querySelector('.quote-qty').value=d.raw[i].qty;row.querySelector('.price-input').value=d.raw[i].price;}});switchTab('build');if(d.unknown){syyUnknownWrites.saveQuotation=true;syyLockUnknownWrite('saveQuotation');}}
+});});
+</script>
+<script>
+function syyQuoteDraftFields(){var values={};['selCustomer','inpQuoteDate','selValidDays','inpCustomerPo','inpVehicleNote','inpNote','inpDiscPct'].forEach(function(id){values[id]=document.getElementById(id).value;});return values;}
+</script>
+<script>
+window.addEventListener('load',function(){syyViewRegister('quotation',function(){return {status:listStatusFilter,tab:document.getElementById('panelList').classList.contains('active')?'list':'build',scroll:window.scrollY};},function(v){listStatusFilter=v.status||'';renderStatusFilterBar();renderList();switchTab(v.tab==='list'?'list':'build');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

@@ -720,10 +720,11 @@ var targetResetDocId   = null;
 window.onload = function() { loadTable(); };
 
 // ★ เรียกทุกฟังก์ชันผ่าน apiGateway เพราะต้องเช็ค role admin ที่ backend
+function manageErrorMessage(err){var message=err&&err.message||'';return message&&message.length<=250?message:'การเชื่อมต่อขัดข้อง กรุณาลองใหม่';}
 function callGatewayApi(fnName, args, onSuccess, onFailure) {
   google.script.run
     .withSuccessHandler(onSuccess)
-    .withFailureHandler(onFailure || function(err) { alert('เกิดข้อผิดพลาด: ' + JSON.stringify(err)); })
+    .withFailureHandler(onFailure || function(err) { alert('เกิดข้อผิดพลาด: ' + manageErrorMessage(err)); })
     .apiGateway(AUTH_TOKEN_MU, fnName, args || [], navigator.userAgent);
 }
 
@@ -736,7 +737,7 @@ function loadTable() {
     usersCache = data || [];
     renderUserRows();
   }, function(err) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">โหลดไม่สำเร็จ: ' + JSON.stringify(err) + '</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">โหลดไม่สำเร็จ: ' + escHtml(manageErrorMessage(err)) + '</td></tr>';
   });
 }
 
@@ -887,7 +888,7 @@ function handleSubmit(e) {
     btn.innerText = editingDocId ? '💾 บันทึกการแก้ไข' : '💾 บันทึก';
     alertEl.style.display = 'block';
     alertEl.className = 'modal-alert error';
-    alertEl.innerText = '' + JSON.stringify(err);
+    alertEl.innerText = '' + manageErrorMessage(err);
   });
 }
 
@@ -943,7 +944,7 @@ function execToggleStatus() {
   }, function(err) {
     btn.disabled = false;
     closeToggleModal();
-    alert('เกิดข้อผิดพลาด: ' + JSON.stringify(err));
+    alert('เกิดข้อผิดพลาด: ' + manageErrorMessage(err));
   });
 }
 
@@ -984,7 +985,7 @@ function execResetPassword() {
   }, function(err) {
     btn.disabled = false;
     closeResetPwModal();
-    alert('เกิดข้อผิดพลาด: ' + JSON.stringify(err));
+    alert('เกิดข้อผิดพลาด: ' + manageErrorMessage(err));
   });
 }
 
