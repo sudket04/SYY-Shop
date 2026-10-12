@@ -4,17 +4,15 @@ const path = require('node:path');
 const http = require('node:http');
 const assert = require('node:assert/strict');
 const {chromium} = require('playwright');
+const {evaluateTemplate} = require('./support/templates.cjs');
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'test-results');
 fs.mkdirSync(output, {recursive:true});
-function render(file, role, ancestors = [], channel = '') {
-  if (ancestors.includes(file)) return '';
-  let html = fs.readFileSync(path.join(root, file), 'utf8');
-  // include_() returns raw HtmlOutput in Code.gs; included fragments are not recursively evaluated.
-  if (!ancestors.length) html = html.replace(/<\?!= include_\('([^']+)'\); \?>/g, (_, name)=>render(name+'.html', role, [file]));
-  html = html.replace(/<\? if \(userRole === 'staff' \|\| userRole === 'admin'\) \{ \?>([\s\S]*?)<\? \} \?>/g, (_,content)=>role==='viewer'?'':content);
-  html = html.replace(/<\?= userRole \?>/g, role).replace(/<\?= authToken \?>/g,'test-token')
-    .replace(/<\?= webAppUrl \?>/g, 'http://127.0.0.1:'+server.address().port+'/').replace(/<\?= frameChannel \?>/g,channel).replace(/<\?[\s\S]*?\?>/g,'fixture');
+function render(file, role, channel = '') {
+  // Evaluate top-level scriptlets instead of silently replacing missing variables.
+  // include_() still returns raw fragments, as it does in the application.
+  let html = evaluateTemplate(file, {userRole:role,username:'fixture',userName:'fixture',authToken:'test-token',
+    webAppUrl:'http://127.0.0.1:'+server.address().port+'/',frameChannel:channel,resetMode:'',resetToken:''});
   html = html.replace(/<script\b[^>]*\bsrc=[^>]*><\/script>/g, '');
   return html;
 }
@@ -50,7 +48,7 @@ const server = http.createServer((req,res)=>{
   const pages={home:'index.html',stockissue:'StockIssue.html',products:'Master_Products.html',taxinvoice:'Master_Tax_Invoice.html',quotation:'Quotation.html',orders:'Purchase_Orders.html',brands:'Master_Brands.html',categories:'Master_Categories.html',zones:'Master_Zones.html'};
   const file = u.searchParams.get('file') || pages[u.searchParams.get('page')] || 'Quotation.html';
   if(!/^[A-Za-z_]+\.html$/.test(file)) {res.writeHead(400).end();return;}
-  const html=render(file,u.searchParams.get('role')||'staff',[],u.searchParams.get('channel')||'').replace('<head>','<head>'+fixture);
+  const html=render(file,u.searchParams.get('role')||'staff',u.searchParams.get('channel')||'').replace('<head>','<head>'+fixture);
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);
 });
 let browser, cases=0;

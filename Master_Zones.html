@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="syy-frame-channel" content="<?= frameChannel ?>">
+<meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-owner" content="<?= username ?>">
 <meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">

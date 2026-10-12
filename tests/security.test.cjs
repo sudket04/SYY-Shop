@@ -11,6 +11,7 @@ const publicNames = declared.filter(name => !name.endsWith('_'));
 const expectedPublic = ['doGet','apiGateway','apiGatewayV2','authLogin','authForgotPassword','authVerifyResetToken','authResetPassword','authChangePasswordForced'];
 const roles = {viewer: 1, staff: 2, admin: 3};
 const imageRoles = {getProductImagesV2:'viewer',uploadProductImageV2:'staff',deleteProductImageV2:'staff',setPrimaryProductImageV2:'staff',deleteProductWithImagesV2:'admin'};
+const {evaluateTemplate} = require('./support/templates.cjs');
 function plain(value) { return JSON.parse(JSON.stringify(value)); }
 function setup() {
   const cache = new Map(), network = [], mail = [], writes = [], logs = [], created = [], removed = [];
@@ -219,4 +220,44 @@ test('all HTML includes point to private server helper; browser direct calls are
   }
   const profile=fs.readFileSync(path.join(root,'Profile.html'),'utf8');
   assert.equal(/runner\[fnName\]/.test(profile),false);
+});
+
+test('every channel-aware page evaluates without a channel and preserves a supplied channel',()=>{
+  const values={username:'staff',userRole:'staff',userName:'Staff',authToken:'fixture',webAppUrl:'https://example.invalid/shop',resetMode:'',resetToken:''};
+  for(const file of fs.readdirSync(root).filter(file=>file.endsWith('.html'))) {
+    if(!fs.readFileSync(path.join(root,file),'utf8').includes('<meta name="syy-frame-channel"'))continue;
+    const missing=evaluateTemplate(file,values);
+    assert.match(missing,/<meta name="syy-frame-channel" content="">/,file);
+    const supplied=evaluateTemplate(file,{...values,frameChannel:'fixture-channel-123456'});
+    assert.match(supplied,/<meta name="syy-frame-channel" content="fixture-channel-123456">/,file);
+  }
+});
+
+function routingSetup() {
+  const s=setup();
+  s.c.HtmlService={XFrameOptionsMode:{ALLOWALL:'ALLOWALL'},createTemplateFromFile(name){
+    const template={evaluate(){const output={file:name,html:evaluateTemplate(name+'.html',template),setTitle(){return output;},setXFrameOptionsMode(){return output;}};return output;}};
+    return template;
+  }};
+  return s;
+}
+test('doGet evaluates every authenticated route, normalizes missing parameters and validates channel',()=>{
+  const s=routingSetup();s.c.getSession_=()=>s.session('staff');
+  const routes={home:'index',brands:'Master_Brands',categories:'Master_Categories',vendors:'Master_Vendors',zones:'Master_Zones',products:'Master_Products',cars:'Master_Cars',orders:'Purchase_Orders',taxinvoice:'Master_Tax_Invoice',quotation:'Quotation',customers:'Master_Customers',profile:'Profile',manageusers:'Manage_Users',stockissue:'StockIssue'};
+  for(const [page,file] of Object.entries(routes)) {
+    const output=s.c.doGet({parameter:{page,token:'fixture',channel:'fixture-channel-123456'}});
+    assert.equal(output.file,file);if(output.html.includes('<meta name="syy-frame-channel"'))assert.match(output.html,/<meta name="syy-frame-channel" content="fixture-channel-123456">/,file);
+  }
+  for(const event of [undefined,{}, {parameter:{}},{parameter:{channel:'<invalid>'}}]) {
+    const output=s.c.doGet(event);assert.equal(output.file,'index');assert.match(output.html,/<meta name="syy-frame-channel" content="">/);
+  }
+  assert.equal(s.network.length+s.writes.length+s.mail.length,0);
+});
+test('doGet never renders authenticated templates for absent or expired sessions',()=>{
+  const s=routingSetup();s.c.getSession_=()=>null;
+  for(const page of ['home','stockissue','quotation','products','manageusers','unknown']) {
+    const output=s.c.doGet({parameter:{page,token:'expired',channel:'fixture-channel-123456'}});
+    assert.equal(output.file,'login');assert.doesNotMatch(output.html,/<meta name="syy-frame-channel"/);
+  }
+  assert.equal(s.c.doGet().file,'login');assert.equal(s.network.length+s.writes.length+s.mail.length,0);
 });

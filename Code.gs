@@ -67,7 +67,8 @@ function doGet(e) {
   var template = HtmlService.createTemplateFromFile(files[page] || 'index');
   template.webAppUrl = getWebAppUrl_();
   template.authToken = token;
-  template.frameChannel = /^[A-Za-z0-9-]{16,80}$/.test(String(e.parameter.channel || "")) ? e.parameter.channel : "";
+  var frameChannel = (e && e.parameter && e.parameter.channel) || "";
+  template.frameChannel = /^[A-Za-z0-9-]{16,80}$/.test(String(frameChannel)) ? String(frameChannel) : "";
   template.userRole  = session.role;
   template.userName  = session.fullName || session.username;
   template.username  = session.username;
