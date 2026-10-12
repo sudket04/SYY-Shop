@@ -62,8 +62,8 @@ async function main(){
   browser=await chromium.launch({headless:true,...(executable?{executablePath:executable}:{}),args:['--disable-gpu']});
   const context=await browser.newContext({viewport:{width:1365,height:950}});
   await context.route('https://**/*',r=>r.abort());
-  async function pageFor(file,role='staff'){
-    const page=await context.newPage();page.errors=[];
+  async function pageFor(file,role='staff',browserContext=context){
+    const page=await browserContext.newPage();page.errors=[];
     page.on('pageerror',e=>page.errors.push(e.message));
     await page.goto('http://127.0.0.1:'+port+'/?file='+file+'&role='+role);
     await page.waitForTimeout(100);
@@ -306,24 +306,60 @@ async function main(){
     assert.equal(await p.evaluate(()=>productImageDraftDirty),true);await p.evaluate(()=>closeProductModal());
     assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>callsBefore));assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('Password eye controls preserve value/handlers, keyboard toggle and hide on reset at desktop/mobile',async()=>{
+  await check('Password reveal appears after one character and lasts only for a primary pointer hold at desktop/mobile widths',async()=>{
     for(const width of [1365,390]){
       const p=await pageFor('login.html');await p.setViewportSize({width,height:844});
       assert.equal(await p.locator('.syy-password-toggle').count(),5);
-      const input=p.locator('#inpPassword');await input.fill('fixture-only');const toggle=p.locator('#inpPassword + button');
-      await toggle.focus();await p.keyboard.press('Enter');assert.equal(await input.getAttribute('type'),'text');assert.equal(await input.inputValue(),'fixture-only');
-      assert.equal(await toggle.getAttribute('aria-pressed'),'true');await p.keyboard.press('Space');assert.equal(await input.getAttribute('type'),'password');
-      await toggle.click();await p.evaluate(()=>document.getElementById('loginForm').reset());assert.equal(await input.getAttribute('type'),'password');
-      const box=await toggle.boundingBox();assert(box.width>=38&&box.height>=36);assert.deepEqual(p.errors,[]);
+      const input=p.locator('#inpPassword'),toggle=p.locator('#inpPassword + button');assert.equal(await toggle.isVisible(),false);
+      await input.fill('x');assert.equal(await toggle.isVisible(),true);assert.equal(await input.getAttribute('type'),'password');
+      await input.fill('fixture-only');await input.evaluate(el=>el.setSelectionRange(2,5));const box=await toggle.boundingBox();assert(box.width>=44&&box.height>=44);
+      await p.mouse.move(box.x+22,box.y+22);await p.mouse.down();assert.equal(await input.getAttribute('type'),'text');assert.equal(await toggle.getAttribute('aria-pressed'),'true');
+      assert.deepEqual(await input.evaluate(el=>[el.selectionStart,el.selectionEnd,document.activeElement.id]),[2,5,'inpPassword']);
+      await p.mouse.up();assert.equal(await input.getAttribute('type'),'password');await toggle.click();assert.equal(await input.getAttribute('type'),'password');
+      await toggle.click({button:'right'});assert.equal(await input.getAttribute('type'),'password');
+      await p.mouse.move(box.x+22,box.y+22);await p.mouse.down();await p.mouse.move(box.x-20,box.y);assert.equal(await input.getAttribute('type'),'password');
+      await p.mouse.move(box.x+22,box.y+22);assert.equal(await input.getAttribute('type'),'password');await p.mouse.up();
+      assert.equal(await input.inputValue(),'fixture-only');assert.equal(await input.getAttribute('autocomplete'),'current-password');
+      await p.screenshot({path:path.join(output,'login-password-control-'+width+'.png')});
+      await input.fill('');assert.equal(await toggle.isVisible(),false);assert.equal(await input.getAttribute('type'),'password');assert.deepEqual(p.errors,[]);
       await p.screenshot({path:path.join(output,'login-'+width+'.png')});await p.close();
     }
   });
-  await check('Profile password fields and dynamically added password fields share accessible eye controls',async()=>{
+  await check('Space/Enter reveal only while held, never submit, and mask on blur or Escape without key-repeat reopening',async()=>{
+    const p=await pageFor('login.html'),input=p.locator('#inpPassword'),toggle=p.locator('#inpPassword + button');await input.fill('fixture-only');await p.evaluate(()=>{window.passwordSubmits=0;document.getElementById('loginForm').onsubmit=e=>{e.preventDefault();passwordSubmits++;};});
+    for(const key of ['Space','Enter']){await toggle.focus();await p.keyboard.down(key);assert.equal(await input.getAttribute('type'),'text');await p.keyboard.down(key);assert.equal(await input.getAttribute('type'),'text');await p.keyboard.up(key);assert.equal(await input.getAttribute('type'),'password');}
+    await toggle.focus();await p.keyboard.down('Space');await p.keyboard.press('Escape');assert.equal(await input.getAttribute('type'),'password');await p.keyboard.down('Space');assert.equal(await input.getAttribute('type'),'password');await p.keyboard.up('Space');
+    await p.keyboard.down('Enter');await p.keyboard.press('Tab');assert.equal(await input.getAttribute('type'),'password');await p.keyboard.up('Enter');assert.equal(await p.evaluate(()=>passwordSubmits),0);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Touch hold/release, drag out and cancellation mask passwords without a sticky synthetic click',async()=>{
+    const touch=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});await touch.route('https://**/*',r=>r.abort());
+    const p=await pageFor('login.html','staff',touch),input=p.locator('#inpPassword'),toggle=p.locator('#inpPassword + button');await input.fill('fixture-only');const box=await toggle.boundingBox(),client=await touch.newCDPSession(p),point={x:box.x+22,y:box.y+22};
+    await client.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});assert.equal(await input.getAttribute('type'),'text');await client.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});assert.equal(await input.getAttribute('type'),'password');
+    await toggle.tap();assert.equal(await input.getAttribute('type'),'password');
+    await client.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});await client.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:point.x-70,y:point.y}]});assert.equal(await input.getAttribute('type'),'password');await client.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    await client.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});assert.equal(await input.getAttribute('type'),'text');await client.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});assert.equal(await input.getAttribute('type'),'password');
+    assert.equal(await input.inputValue(),'fixture-only');assert.deepEqual(p.errors,[]);await p.close();await touch.close();
+  });
+  await check('Reset, tab/window changes, hidden login views and disabled inputs always mask and retain correct button visibility',async()=>{
+    const p=await pageFor('login.html'),input=p.locator('#inpPassword'),toggle=p.locator('#inpPassword + button');await input.fill('fixture-only');
+    for(const event of ['blur','pagehide','pageshow']){await toggle.focus();await p.keyboard.down('Space');assert.equal(await input.getAttribute('type'),'text');await p.evaluate(name=>window.dispatchEvent(new Event(name)),event);assert.equal(await input.getAttribute('type'),'password');await p.keyboard.up('Space');}
+    await toggle.focus();await p.keyboard.down('Space');await p.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));delete document.hidden;});assert.equal(await input.getAttribute('type'),'password');await p.keyboard.up('Space');
+    await toggle.focus();await p.keyboard.down('Space');await p.evaluate(()=>showView('viewForgot'));await p.waitForFunction(()=>document.getElementById('inpPassword').type==='password');await p.keyboard.up('Space');await p.evaluate(()=>showView('viewLogin'));
+    await toggle.focus();await p.keyboard.down('Space');await input.evaluate(el=>el.disabled=true);await p.waitForFunction(()=>document.getElementById('inpPassword').type==='password');assert.equal(await toggle.isVisible(),false);await p.keyboard.up('Space');await input.evaluate(el=>el.disabled=false);await toggle.waitFor({state:'visible'});
+    await toggle.focus();await p.keyboard.down('Space');await p.evaluate(()=>document.getElementById('loginForm').reset());await p.keyboard.up('Space');await p.waitForFunction(()=>document.getElementById('inpPassword').value==='');assert.equal(await input.getAttribute('type'),'password');assert.equal(await toggle.isVisible(),false);
+    // Present the reset form as it appears after successful token verification.
+    await p.evaluate(()=>document.getElementById('resetFromEmailForm').style.display='block');
+    for(const [view,id] of [['viewResetFromEmail','inpResetNewPassword'],['viewForcePassword','inpForceNewPassword']]){await p.evaluate(view=>showView(view),view);await p.locator('#'+id).fill('x');assert.equal(await p.locator('#'+id+' + button').isVisible(),true);assert.equal(await p.locator('#'+id).getAttribute('autocomplete'),'new-password');}
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Profile, prefilled and dynamic passwords share hold controls; programmatic clearing and modal close mask them',async()=>{
     const p=await pageFor('Profile.html');assert.equal(await p.locator('.syy-password-toggle').count(),4);
-    await p.evaluate(()=>{const input=document.createElement('input');input.id='dynamicPassword';input.type='password';document.body.appendChild(input);});await p.waitForTimeout(20);
-    assert.equal(await p.locator('#dynamicPassword + button').getAttribute('aria-label'),'แสดงรหัสผ่าน');
-    await p.evaluate(()=>{document.getElementById('dynamicPassword').value='fixture-only';document.querySelector('#dynamicPassword + button').click();SYYPassword.hide(document);});
-    assert.equal(await p.locator('#dynamicPassword').inputValue(),'fixture-only');assert.equal(await p.locator('#dynamicPassword').getAttribute('type'),'password');
+    assert.equal(await p.locator('.syy-password-toggle:visible').count(),0);await p.evaluate(()=>{const input=document.createElement('input');input.id='dynamicPassword';input.type='password';input.value='fixture-only';document.body.appendChild(input);});await p.waitForTimeout(20);
+    const input=p.locator('#dynamicPassword'),toggle=p.locator('#dynamicPassword + button');assert.equal(await toggle.getAttribute('aria-label'),'กดค้างเพื่อดูรหัสผ่าน');assert.equal(await toggle.isVisible(),true);
+    await toggle.focus();await p.keyboard.down('Space');assert.equal(await input.getAttribute('type'),'text');await p.evaluate(()=>SYYPassword.hide(document));await p.keyboard.up('Space');assert.equal(await input.inputValue(),'fixture-only');assert.equal(await input.getAttribute('type'),'password');
+    await p.evaluate(()=>{document.getElementById('dynamicPassword').value='';document.body.dataset.fixture='changed';document.getElementById('pwAlert').textContent='saved';});await toggle.waitFor({state:'hidden'});
+    await p.evaluate(()=>openDisableTotpModal());const modalInput=p.locator('#inpDisableTotpPassword');await modalInput.fill('x');await p.locator('#inpDisableTotpPassword + button').focus();await p.keyboard.down('Space');assert.equal(await modalInput.getAttribute('type'),'text');await p.evaluate(()=>closeModal('disableTotpModal'));await p.keyboard.up('Space');assert.equal(await modalInput.getAttribute('type'),'password');
     assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Mobile quotation price and quick customer modal remain usable',async()=>{
