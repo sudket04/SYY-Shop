@@ -4,6 +4,7 @@
 @media screen{
   body[data-syy-layout]{--syy-content-width:1360px;font-family:'Noto Sans Thai','Inter',system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.65;letter-spacing:0}
   body[data-syy-layout="compact"]{--syy-content-width:1040px}
+  body[data-syy-layout="compact"].syy-compact-list{--syy-content-width:880px}
   body[data-syy-layout="workspace"]{--syy-content-width:1560px}
   body[data-syy-layout="wide"]{--syy-content-width:1800px}
   body[data-syy-layout="profile"]{--syy-content-width:1000px}
@@ -12,6 +13,8 @@
   body[data-syy-layout]>.page-head{margin-top:12px;border:1px solid var(--line,#dfe7ef);border-radius:12px}
   body[data-syy-layout]>.page>.page-head{border:1px solid var(--line,#dfe7ef);border-radius:12px}
   body[data-syy-layout] .page-body{gap:16px;padding-top:18px}
+  body[data-syy-layout="compact"]>.page-head,body[data-syy-layout="compact"]>.page-body,body[data-syy-layout="compact"]>.syy-data-status{width:calc(100% - 32px)}
+  body[data-syy-layout="compact"]>.page-body{padding-left:0;padding-right:0}
   body[data-syy-layout] .mono{font-variant-numeric:tabular-nums}
   body[data-syy-layout] .view-field-tile .vft-label,body[data-syy-layout] .view-price-pill .vpp-label{font-size:12.5px}
   body[data-syy-layout] .view-field-tile .vft-value{font-size:14px;line-height:1.6}
@@ -20,11 +23,27 @@
   body[data-syy-layout="users"] th{font-size:12.5px}
   body[data-syy-layout="users"] td{font-size:14px}
   body[data-syy-layout="users"] .card{border:1px solid #dfe7ef;box-shadow:0 1px 2px rgba(15,23,42,.04),0 5px 18px rgba(15,23,42,.06)}
-  body[data-syy-layout="shell"].syy-child-page .main>.page-head,body[data-syy-layout="shell"].syy-child-page .main>.syy-data-status{display:none}
+  body.syy-child-page .main>.page-head,body.syy-child-page .main>.syy-data-status{display:none}
+  @media(min-width:768px){
+    body.syy-compact-list .table-compact{table-layout:fixed}
+    body.syy-compact-list .table-compact td:nth-child(3){white-space:normal;overflow-wrap:anywhere}
+  }
   @media(max-width:767px){
     body[data-syy-layout]>.page{padding-top:8px}
     body[data-syy-layout]>.page-head{margin-top:8px;border-radius:0}
     body[data-syy-layout]>.page>.page-head{border-radius:0}
+    body[data-syy-layout="compact"]>.page-head,body[data-syy-layout="compact"]>.page-body,body[data-syy-layout="compact"]>.syy-data-status{width:calc(100% - 20px)}
+    body[data-syy-layout="compact"]>.page-head{border-radius:10px}
+    body.syy-compact-list .table-compact{table-layout:fixed;min-width:0}
+    body.syy-compact-list .table-compact th,body.syy-compact-list .table-compact td{padding-left:8px;padding-right:8px}
+    body.syy-compact-list .table-compact col:first-child{width:30px!important}
+    body.syy-compact-list .table-compact col:nth-child(2){width:78px!important}
+    body.syy-compact-list .table-compact col:last-child{width:110px!important}
+    body.syy-compact-list .table-compact th.xlf-th{padding-right:8px!important}
+    body.syy-compact-list .table-compact .xlf-th-label{display:block;white-space:normal;overflow-wrap:anywhere}
+    body.syy-compact-list .table-compact .xlf-th-btn{position:static;display:block;transform:none;margin-top:4px;width:44px;height:44px}
+    body.syy-compact-list .table-compact td:nth-child(3){white-space:normal;overflow-wrap:anywhere}
+    body.syy-compact-list .table-compact tbody td.col-sticky-right{position:sticky;right:0;z-index:2;background:#fff;box-shadow:-2px 0 5px rgba(15,23,42,.08)}
   }
 }
 /* Shared, dependency-free line icon system. */
@@ -80,10 +99,13 @@
     (root||document).querySelectorAll('.table-wrap table, .table-container table').forEach(function(t){if(tables.indexOf(t)<0)tables.push(t);});
     tables.forEach(function(t){
       if(t.dataset.tableLayout)return;
-      var row=t.tHead&&t.tHead.rows[0], count=row?row.cells.length:0;
+      var row=t.tHead&&t.tHead.rows[0], count=row?row.cells.length:t.querySelectorAll('colgroup col').length;
       t.classList.toggle('table-compact',count>0&&count<=5);
       t.classList.toggle('table-standard',count>=6&&count<=8);
       t.classList.toggle('table-wide',count>=9);
+      // Older four-column master pages can receive the same layout via this shared file.
+      if(count===4&&t.closest('.page-body')&&document.getElementById('pageTitle')&&!document.body.dataset.syyLayout)document.body.dataset.syyLayout='compact';
+      if(count===4&&document.body.dataset.syyLayout==='compact')document.body.classList.add('syy-compact-list');
     });
   }
   function run(root){upgrade(root||document);classify(root||document);}

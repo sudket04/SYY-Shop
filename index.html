@@ -747,6 +747,8 @@
 
     var isHome = id==='home';
     document.body.classList.toggle('syy-child-page',!isHome);
+    // The selected frame owns its title and freshness status; keep only one set visible.
+    document.querySelectorAll('.main>.page-head,.main>#syyDataStatus').forEach(function(el){el.hidden=!isHome;});
     document.getElementById('homeScreen').style.display = isHome?'flex':'none';
     document.getElementById('headActions').style.display = isHome?'flex':'none';
     document.querySelectorAll('.form-wrapper').forEach(function(f){ f.classList.remove('active'); });
