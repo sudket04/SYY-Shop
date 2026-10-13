@@ -43,8 +43,11 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 - [UI/UX 15 รายการ: implementation, tests และ Firestore impact](docs/UI-UX-2026-10-12.md)
 - [Staging UAT / measurement / rollout / rollback](docs/STAGING-UAT-2026-10-12.md)
 - [Live result template](docs/STAGING-RESULTS.template.json)
+- [Latest rollout readiness: verified Head/Version 92, login smoke and Backup follow-up](docs/ROLLOUT-READINESS-2026-10-13.md)
 
 งานค้างที่ต้องใช้บริการจริง: Staging UAT, OAuth/Mail/IAM/index/trigger confirmation, Firestore/latency measurements และ rollout ที่ได้รับอนุมัติ. สถานะส่ง source ล่าสุดอยู่ใน [Main delivery](docs/MAIN-DELIVERY-2026-10-12.md); รายงานรอบก่อนบันทึกสถานะ ณ เวลาที่จัดทำ
+
+ณ 13 ตุลาคม 2569 Head ใน Apps Script ตรงกับ runtime commit `4763480` ครบ 24 ไฟล์ และตรวจหน้า Login ของ `/dev` ได้แล้ว ยังไม่ได้อัปเดต `/exec` ในรอบนี้; รุ่น 92 ต่างจาก Head เฉพาะ 4 ไฟล์ UI ล่าสุด ส่วน Backend/manifest ตรงกัน ดูรายงาน readiness ข้างต้นก่อนเลือก Deployment เพื่อคง URL ที่ใช้งานจริง
 
 ## แนวทาง Git ปัจจุบัน
 
