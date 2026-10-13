@@ -144,6 +144,15 @@ async function main(){
     }
     await p.evaluate(()=>switchPage('home'));assert.equal(await p.locator('.main>.page-head').isVisible(),true);assert.equal(await p.locator('.main>#syyDataStatus').isVisible(),true);assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Backup overview separates Full/deltas, reports actual schedule state and installs only after an admin click',async()=>{
+    const p=await pageFor('index.html','admin');await p.evaluate(()=>{const respondBefore=respond;window.backupInstalled=false;respond=function(fn,args){if(fn==='getBackupOverview')return {schedule:{enabled:backupInstalled},files:[{id:'test',kind:'incremental',date:'2026-10-13T15:00:00Z',sizeKB:12,written:2,deleted:1,url:'https://drive.google.com/drive/folders/test'}]};if(fn==='setupBackupSchedule'){backupInstalled=true;return {success:true};}return respondBefore(fn,args);};openBackup();});
+    await p.waitForFunction(()=>document.getElementById('backupScheduleStatus').textContent.includes('ยังไม่ได้'));assert.equal(await p.evaluate(()=>apiCalls.some(x=>x.fn==='backupNow'||x.fn==='setupBackupSchedule')),false);assert((await p.locator('#backupList').innerText()).includes('Incremental'));assert((await p.locator('#backupList').innerText()).includes('ลบ 1'));
+    await p.screenshot({path:path.join(output,'backup-desktop.png')});
+    await p.evaluate(()=>{apiHold='setupBackupSchedule';document.getElementById('btnBackupSchedule').click();document.getElementById('btnBackupSchedule').click();});assert.equal(await p.locator('#btnBackupSchedule').isDisabled(),true);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='setupBackupSchedule').length),1);await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForFunction(()=>document.getElementById('backupScheduleStatus').textContent.includes('เปิดใช้งาน'));assert.equal(await p.locator('#btnBackupSchedule').isDisabled(),false);
+    await p.setViewportSize({width:320,height:844});assert.equal(await p.evaluate(()=>document.getElementById('backupModal').getBoundingClientRect().right<=innerWidth),true);assert((await p.locator('#backupModal').innerText()).includes('ไม่คัดลอกไฟล์รูป'));
+    await p.screenshot({path:path.join(output,'backup-mobile.png')});
+    await p.evaluate(()=>{apiFailure='getBackupOverview';loadBackupList();});await p.waitForFunction(()=>document.getElementById('backupScheduleStatus').textContent.includes('ไม่สำเร็จ'));assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='backupNow').length),0);assert.deepEqual(p.errors,[]);await p.close();
+  });
   await check('Viewer opens Products on desktop/mobile and reads details without edit, delete or draft controls',async()=>{
     const shell=await pageFor('index.html','viewer');assert.equal(await shell.locator('#menu-products').count(),1);
     await shell.evaluate(()=>switchPage('products'));assert.equal(await shell.locator('.main>.page-head').isVisible(),false);

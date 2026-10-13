@@ -21,6 +21,7 @@ function stagingSource(source,project,mailbox) {
   source=replaceVariable(source,'PRODUCT_IMAGE_FOLDER_NAME','SYY Shop - STAGING '+project+' - Product Images');
   source=replaceVariable(source,'PRODUCT_IMAGE_FOLDER_PROP_KEY','STAGING_'+project+'_PRODUCT_IMAGE_DRIVE_FOLDER_ID');
   source=replaceVariable(source,'BACKUP_FOLDER_NAME','SYY Shop - STAGING '+project+' - Backups');
+  source=replaceVariable(source,'BACKUP_FOLDER_ID','');
   source=replaceVariable(source,'ADMIN_EMAIL',mailbox);
   if(source.includes('function sendStagingMail_'))throw Error('Staging mail wrapper already exists');
   const sends=[...source.matchAll(/\bMailApp\.sendEmail\s*\(/g)];
@@ -92,7 +93,7 @@ function prepareRelease({stagingProjectId,stagingMailbox,outputDir}={}) {
     mode:staging?'staging':'review',sourceDirty:dirty,sourceProjectId:productionProjectId,
     targetProjectId:staging?stagingProjectId:null,stagingMailbox:staging?stagingMailbox:null,
     deployed:false,requiresTargetVerification:true,
-    stagingOverrides:staging?['Firestore project','Drive folder names and image property key','first-admin email','all outbound email to controlled mailbox']:[],
+    stagingOverrides:staging?['Firestore project','Drive folder names, cleared backup destination ID and image property key','first-admin email','all outbound email to controlled mailbox']:[],
     files:inventory,claspIgnoreSha256:digest(ignore)};
   fs.writeFileSync(path.join(destination,'release.json'),JSON.stringify(metadata,null,2)+'\n',{flag:'wx'});
   verifyRelease(destination);

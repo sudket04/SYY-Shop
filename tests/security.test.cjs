@@ -20,14 +20,14 @@ function setup() {
     console:{error(){},log(){}},
     CacheService:{getScriptCache:()=>({get:key=>cache.get(key)||null,put:(key,value)=>cache.set(key,value),remove:key=>cache.delete(key)})},
     PropertiesService:{getScriptProperties:()=>({getProperty:key=>props[key]||null,setProperty:(key,value)=>props[key]=value,setProperties:values=>Object.assign(props,values)})},
-    LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock(){}})},
+    LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock(){}}),getUserLock:()=>({tryLock:()=>true,releaseLock(){}})},
     Utilities:{base64Encode:v=>Buffer.from(v).toString('base64'),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,value)=>Array.from(require('node:crypto').createHash('sha256').update(String(value)).digest()),getUuid:()=> 'dummy-'+(++sequence),formatDate:()=> '2026-10-11'},
     ScriptApp:{getOAuthToken:()=> 'dummy-oauth',getService:()=>({getUrl:()=> 'https://example.invalid/shop'}),
       WeekDay:{SUNDAY:'SUNDAY'},getProjectTriggers:()=>[],deleteTrigger:t=>removed.push(t),
       newTrigger(handler){const config={handler}; const builder={
         timeBased(){return builder;},onWeekDay(day){config.day=day;return builder;},
-        atHour(hour){config.hour=hour;return builder;},everyDays(days){config.days=days;return builder;},
-        create(){created.push(config);return config;}};return builder;}},
+        atHour(hour){config.hour=hour;return builder;},everyDays(days){config.days=days;return builder;},nearMinute(minute){config.minute=minute;return builder;},inTimezone(zone){config.timezone=zone;return builder;},
+        create(){created.push(config);return {getUniqueId:()=> 'trigger-'+sequence};}};return builder;}},
     UrlFetchApp:{fetch(url,options){network.push({url,options});var id=url.split('/Master_Users/')[1];if(options.method==='get' && id && authDocs.has(id)){var body={fields:c.mapToFirestoreFields_(authDocs.get(id)),updateTime:'v1'};return {getResponseCode:()=>200,getContentText:()=>JSON.stringify(body)};}throw new Error('Unmocked service request');}},
     DriveApp:{getFileById(){throw new Error('Unmocked Drive request');}},
     MailApp:{sendEmail(...args){mail.push(args);}}
@@ -85,7 +85,7 @@ test('all V1 operations retain names, private dispatch, response and existing ro
     'deleteProductImage','setPrimaryProductImage','moveProductImage','commitProductImageDraft','generateProductBarcode',
     'saveMasterData','savePurchaseOrder','receiveGoods','updatePurchaseOrderStatus','issueStock','getStockMovementDetail','markQuotationStockIssued'],
     admin:['deleteTaxInvoice','deleteQuotation','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone',
-    'deleteCar','deleteProduct','deletePurchaseOrder','backupNow','listBackupFiles','getActivityLog','getAllUsers',
+    'deleteCar','deleteProduct','deletePurchaseOrder','backupNow','listBackupFiles','getBackupOverview','setupBackupSchedule','getActivityLog','getAllUsers',
     'createUserAccount','updateUserAccount','resetUserPassword','toggleUserStatus','authStartTotpSetup','authConfirmTotpSetup','authDisableTotp']};
   const expectedRegistry=Object.fromEntries(Object.entries(expected).flatMap(([role,names])=>names.map(name=>[name,role])));
   assert.deepEqual(plain(s.c.API_REGISTRY),expectedRegistry);
@@ -187,14 +187,15 @@ test('logout and admin-only TOTP cannot bypass the gateway',()=>{
 test('trigger setup replaces legacy/private handlers once and preserves unrelated schedules',()=>{
   const s=setup();let triggers=['weeklyBackupJob','weeklyBackupJob_','cleanupOldActivityLogs','cleanupOldActivityLogs_','unrelated']
     .map(handler=>({getHandlerFunction:()=>handler}));
+  s.c.getOrCreateBackupFolder_=()=>({});s.c.assertPrivateBackupFolder_=()=>{};
   s.c.ScriptApp.getProjectTriggers=()=>triggers;
   s.c.ScriptApp.deleteTrigger=t=>{s.removed.push(t.getHandlerFunction());triggers=triggers.filter(item=>item!==t);};
   s.c.ScriptApp.newTrigger=handler=>{const config={handler};const builder={timeBased:()=>builder,
     onWeekDay(day){config.day=day;return builder;},atHour(hour){config.hour=hour;return builder;},
-    everyDays(days){config.days=days;return builder;},create(){s.created.push(config);triggers.push({getHandlerFunction:()=>handler});}};return builder;};
+    everyDays(days){config.days=days;return builder;},nearMinute(minute){config.minute=minute;return builder;},inTimezone(zone){config.timezone=zone;return builder;},create(){s.created.push(config);triggers.push({getHandlerFunction:()=>handler});return {getUniqueId:()=> 'trigger'};}};return builder;};
   for(let pass=0;pass<2;pass++){s.c.setupWeeklyBackupTrigger_();s.c.setupActivityLogCleanupTrigger_();}
-  assert.deepEqual(triggers.map(t=>t.getHandlerFunction()).sort(),['cleanupOldActivityLogs_','unrelated','weeklyBackupJob_']);
-  assert.deepEqual(s.created[0],{handler:'weeklyBackupJob_',day:'SUNDAY',hour:2});
+  assert.deepEqual(triggers.map(t=>t.getHandlerFunction()).sort(),['cleanupOldActivityLogs_','dailyBackupJob_','unrelated']);
+  assert.deepEqual(s.created[0],{handler:'dailyBackupJob_',days:1,hour:22,minute:0,timezone:'Asia/Bangkok'});
   assert.deepEqual(s.created[1],{handler:'cleanupOldActivityLogs_',days:1,hour:3});
   assert.equal(s.removed.includes('unrelated'),false);assert.equal(s.network.length+s.writes.length,0);
 });

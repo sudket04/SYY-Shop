@@ -3,7 +3,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {setup, plain, reply} = require('./support/services.cjs');
+const {setup:setupServices, plain, reply} = require('./support/services.cjs');
+// Keep exercising previously saved v2 bundles without shipping its image-copying writer.
+const setup=()=>setupServices({legacyBackup:true});
 const options = {sourceProjectId:'syy-shop', targetProjectId:'staging-shop',
   confirmRestore:true, confirmStagingScript:true, restoreProperties:true};
 function backup(s) {

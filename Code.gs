@@ -2471,7 +2471,8 @@ function include_(filename) {
 // 19b. ★ ระบบสำรองข้อมูล (Backup / Restore)
 // ==========================================
 var BACKUP_FOLDER_NAME  = "SYY Shop - Backups";
-var BACKUP_KEEP_COUNT   = 8;
+var BACKUP_FOLDER_ID    = "1QqJRj1vet9nkcAn8-bfKDStnhXKGQqWk";
+var BACKUP_KEEP_COUNT   = 4;
 var BACKUP_COLLECTIONS  = [
   "Master_Brands", "Master_Categories", "Master_Vendors", "Master_Customers",
   "Master_Zones", "Master_Cars", "Master_Products", "Master_Tax_Invoice", "Purchase_Orders",
@@ -2480,137 +2481,299 @@ var BACKUP_COLLECTIONS  = [
 ];
 
 function getOrCreateBackupFolder_() {
+  if(BACKUP_FOLDER_ID)return DriveApp.getFolderById(BACKUP_FOLDER_ID);
   var folders = DriveApp.getFoldersByName(BACKUP_FOLDER_NAME);
   if (folders.hasNext()) return folders.next();
   return DriveApp.createFolder(BACKUP_FOLDER_NAME);
 }
 
-function backupAllDataToBackup_() {
-  var result={success:false,collections:{},errors:[]},transaction="",assetFolder=null,manifest=null;
-  var endpoint="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents";
-  try {
-    var folder=getOrCreateBackupFolder_();assertPrivateBackupFolder_(folder);
-    var properties=backupScriptProperties_();
-    var begin=UrlFetchApp.fetch(endpoint+":beginTransaction",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({options:{readOnly:{}}}),muteHttpExceptions:true});
-    if(begin.getResponseCode()!==200)throw new Error("เริ่ม Backup snapshot ไม่สำเร็จ");
-    transaction=JSON.parse(begin.getContentText()).transaction;
-    if(!transaction)throw new Error("ไม่พบ Backup transaction");
-    var snapshot={};BACKUP_COLLECTIONS.forEach(function(name){snapshot[name]=fetchBackupSnapshotCollection_(name,transaction);result.collections[name]=snapshot[name].length;});
-    var ids={};snapshot.Product_Images.forEach(function(doc){imageDataFromFields_(doc.fields).ids.forEach(function(id){if(!id)throw new Error("รูปสินค้ามี URL แต่ไม่มี Drive File ID");ids[id]=true;});});
-    var suffix=Utilities.formatDate(new Date(),"Asia/Bangkok","yyyy-MM-dd_HH-mm-ss")+"_"+Utilities.getUuid();
-    assetFolder=folder.createFolder("syy-shop-assets_"+suffix);assertPrivateBackupFolder_(assetFolder);
-    var assets=[];
-    Object.keys(ids).forEach(function(id){
-      var original=DriveApp.getFileById(id),before=original.getLastUpdated().getTime(),blob=original.getBlob(),digest=backupDigest_(blob.getBytes());
-      var copy=assetFolder.createFile(blob).setName(original.getName());assertPrivateBackupItem_(copy);
-      if(original.getLastUpdated().getTime()!==before || backupDigest_(copy.getBlob().getBytes())!==digest)throw new Error("รูปสินค้าถูกแก้ไขระหว่าง Backup");
-      assets.push({originalId:id,backupId:copy.getId(),digest:digest});
+// Version 3: data-only Full generations and daily deltas. Existing v2 restores remain supported.
+var BACKUP_STATE_KEY = 'SYY_BACKUP_STATE_V3';
+var BACKUP_TIMEZONE = 'Asia/Bangkok';
+var BACKUP_MAX_RUNTIME_MS = 270000;
+
+function backupEndpoint_() {return 'https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents';}
+function backupReadTime_() {
+  var response=UrlFetchApp.fetch(backupEndpoint_()+':runQuery',{method:'post',headers:getAuthHeader_(),contentType:'application/json',payload:JSON.stringify({structuredQuery:{from:[{collectionId:'Master_Products'}],limit:1}}),muteHttpExceptions:true});
+  if(response.getResponseCode()!==200)throw new Error('เริ่มเวลา snapshot ของ Backup ไม่สำเร็จ');
+  var rows=JSON.parse(response.getContentText()),time=Array.isArray(rows)&&rows.length?rows[rows.length-1].readTime:'';
+  if(!time||!isFinite(Date.parse(time)))throw new Error('Backup ไม่มีเวลา snapshot จาก Firestore');return time;
+}
+function backupChildFolder_(parent,name) {
+  assertPrivateBackupFolder_(parent);
+  var found=parent.getFoldersByName(name),folder=found.hasNext()?found.next():parent.createFolder(name);
+  if(found.hasNext())throw new Error('พบโฟลเดอร์ Backup ชื่อซ้ำ กรุณาตรวจ Drive');
+  assertPrivateBackupFolder_(folder);return folder;
+}
+function backupProjectFolder_() {return backupChildFolder_(getOrCreateBackupFolder_(),PROJECT_ID);}
+function backupSingleFile_(folder,name) {
+  var files=folder.getFilesByName(name),file=files.hasNext()?files.next():null;
+  if(!file||files.hasNext())throw new Error('Backup ไม่มีไฟล์ '+name+' ที่ครบถ้วน');
+  assertPrivateBackupItem_(file);return file;
+}
+function backupFileInFolder_(file,folder) {
+  var parents=file.getParents(),found=false;
+  while(parents.hasNext())if(parents.next().getId()===folder.getId())found=true;
+  if(!found)throw new Error('ไฟล์ Backup อยู่ผิดโฟลเดอร์');
+}
+function backupParentFolder_(folder) {
+  var parents=folder.getParents();if(!parents.hasNext())throw new Error('Backup ไม่มีโฟลเดอร์ต้นทาง');var parent=parents.next();
+  if(parents.hasNext())throw new Error('Backup มีโฟลเดอร์ต้นทางซ้ำ');assertPrivateBackupFolder_(parent);return parent;
+}
+function backupWriteJson_(folder,name,value) {
+  var file=folder.createFile(name,JSON.stringify(value),MimeType.PLAIN_TEXT);assertPrivateBackupItem_(file);
+  return {id:file.getId(),name:name,bytes:file.getSize(),digest:backupDigest_(file.getBlob().getBytes())};
+}
+function backupReadJson_(descriptor,folder) {
+  if(!descriptor||typeof descriptor.id!=='string'||!/^[a-f0-9]{64}$/.test(descriptor.digest))throw new Error('Backup file descriptor ไม่ถูกต้อง');
+  var file=DriveApp.getFileById(descriptor.id);assertPrivateBackupItem_(file);backupFileInFolder_(file,folder);
+  var blob=file.getBlob();if(backupDigest_(blob.getBytes())!==descriptor.digest)throw new Error('Backup checksum ไม่ตรง');
+  return JSON.parse(blob.getDataAsString());
+}
+function backupPathValid_(path,document) {
+  if(typeof path!=='string'||!path||path.length>6144)return false;
+  var segments=path.split('/');return segments.length%2===(document?0:1)&&segments.every(function(x){return x&&x!=='.'&&x!=='..'&&!/^__.*__$/.test(x);});
+}
+function backupManifest_(folder,sourceProjectId) {
+  assertPrivateBackupFolder_(folder);
+  var file=backupSingleFile_(folder,'manifest.json'),m=JSON.parse(file.getBlob().getDataAsString());
+  var copy=JSON.parse(JSON.stringify(m));delete copy.digest;
+  if(m.schemaVersion!==3||m.complete!==true||m.projectId!==(sourceProjectId||PROJECT_ID)||m.databaseId!=='(default)'||
+     ['full','incremental'].indexOf(m.kind)<0||m.folderId!==folder.getId()||!Array.isArray(m.parts)||!Array.isArray(m.collections)||
+     !m.readTime||!isFinite(Date.parse(m.readTime))||m.imagesIncluded!==false||backupJsonDigest_(copy)!==m.digest)throw new Error('Backup v3 ไม่ครบถ้วนหรือผิดโปรเจกต์');
+  if(m.collections.some(function(c){return !backupPathValid_(c.path,false)||!Number.isInteger(c.count)||c.count<0;}))throw new Error('Backup collection ไม่ถูกต้อง');
+  var dateFolder=backupParentFolder_(folder),parent=backupParentFolder_(dateFolder),project=null;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(m.backupDay)||dateFolder.getName()!==m.backupDay)throw new Error('Backup อยู่ผิดวันที่');
+  if(m.kind==='full'){
+    if(m.baseFullId!==folder.getId()||m.previousId||parent.getName()!=='Full')throw new Error('Full Backup อ้างอิงไม่ถูกต้อง');project=backupParentFolder_(parent);
+  }else{
+    if(typeof m.baseFullId!=='string'||typeof m.previousId!=='string'||!m.previousId||m.previousId===folder.getId())throw new Error('Incremental Backup อ้างอิงไม่ถูกต้อง');
+    if(parent.getId()!==m.incrementalGroupId||parent.getName()!==m.baseFullId)throw new Error('Incremental Backup อยู่ผิดรุ่น Full');
+    var increments=backupParentFolder_(parent);if(increments.getName()!=='Incremental')throw new Error('Incremental Backup อยู่ผิดโฟลเดอร์');project=backupParentFolder_(increments);
+  }
+  if(project.getName()!==m.projectId||project.getId()!==m.projectFolderId)throw new Error('Backup folder ผิดโปรเจกต์');
+  return m;
+}
+function backupIndex_(folder,m) {
+  var value=backupReadJson_(m.index,folder);
+  if(!value||!value.documents||typeof value.documents!=='object'||Array.isArray(value.documents))throw new Error('Backup index ไม่ถูกต้อง');
+  Object.keys(value.documents).forEach(function(path){if(!backupPathValid_(path,true)||!/^[a-f0-9]{64}$/.test(value.documents[path]))throw new Error('Backup index path ไม่ถูกต้อง');});
+  return value;
+}
+function backupState_() {
+  var raw=PropertiesService.getScriptProperties().getProperty(BACKUP_STATE_KEY);if(!raw)return null;
+  var state=JSON.parse(raw);if(state.projectId!==PROJECT_ID||typeof state.lastFolderId!=='string'||typeof state.projectFolderId!=='string')throw new Error('Backup state ไม่ถูกต้อง');return state;
+}
+function backupCheckDeadline_(start) {if(Date.now()-start>BACKUP_MAX_RUNTIME_MS)throw new Error('Backup เกินเวลาที่ปลอดภัย ไม่เผยแพร่ชุดข้อมูลที่อ่านไม่ครบ');}
+function backupCollectionIds_(parents,readTime,start) {
+  var result=[],pending=parents.map(function(path){return {path:path,token:'',seen:Object.create(null)};});
+  while(pending.length){
+    backupCheckDeadline_(start);var part=pending.splice(0,20);
+    var responses=UrlFetchApp.fetchAll(part.map(function(item){return {url:backupEndpoint_()+(item.path?'/'+item.path.split('/').map(encodeURIComponent).join('/'):'')+':listCollectionIds',method:'post',headers:getAuthHeader_(),contentType:'application/json',payload:JSON.stringify({pageSize:100,readTime:readTime,pageToken:item.token}),muteHttpExceptions:true};}));
+    responses.forEach(function(response,i){
+      if(response.getResponseCode()!==200)throw new Error('ค้นหา Collection สำหรับ Backup ไม่สำเร็จ');
+      var body=JSON.parse(response.getContentText()),item=part[i];
+      (body.collectionIds||[]).forEach(function(id){var path=(item.path?item.path+'/':'')+id;if(!backupPathValid_(path,false))throw new Error('Collection path ไม่ถูกต้อง');result.push(path);});
+      if(body.nextPageToken){if(item.seen[body.nextPageToken])throw new Error('Collection pagination วนซ้ำ');item.seen[body.nextPageToken]=true;item.token=body.nextPageToken;pending.push(item);}
     });
-    if(backupJsonDigest_(properties)!==backupJsonDigest_(backupScriptProperties_()))throw new Error("Script Properties เปลี่ยนแปลงระหว่าง Backup กรุณาลองใหม่");
-    var bundle={schemaVersion:2,complete:true,backupDate:new Date().toISOString(),projectId:PROJECT_ID,collections:snapshot,scriptProperties:properties,assets:assets,assetFolderId:assetFolder.getId()};
-    bundle.digest=backupJsonDigest_({collections:snapshot,scriptProperties:properties,assets:assets,assetFolderId:bundle.assetFolderId});
-    validateBackupBundle_(bundle);
-    result.fileName="syy-shop-backup_"+suffix+".json";
-    var text=JSON.stringify(bundle);manifest=folder.createFile(result.fileName,text,MimeType.PLAIN_TEXT);assertPrivateBackupItem_(manifest);
-    result.fileSizeKB=Math.round(manifest.getSize()/1024);result.fileId=manifest.getId();result.success=true;
-    cleanupOldBackups_(folder);
-  } catch(e) {
-    result.errors.push(e.message);
-    if(manifest){try{manifest.setTrashed(true);}catch(ignore){}}
-    if(assetFolder){try{assetFolder.setTrashed(true);}catch(ignore){}}
-  } finally {
-    if(transaction){try{UrlFetchApp.fetch(endpoint+":rollback",{method:"post",headers:getAuthHeader_(),payload:JSON.stringify({transaction:transaction}),muteHttpExceptions:true});}catch(ignore){}}
   }
   return result;
 }
-
-function cleanupOldBackups_(folder) {
-  try {
-    assertPrivateBackupFolder_(folder);
-    var files = folder.getFilesByType(MimeType.PLAIN_TEXT);
-    var fileList = [];
-    while (files.hasNext()) {
-      var f = files.next();
-      if (f.getName().indexOf("syy-shop-backup_") === 0) {
-        fileList.push({ file: f, date: f.getDateCreated() });
-      }
-    }
-    fileList.sort(function(a, b) { return b.date - a.date; });
-
-    for (var i = BACKUP_KEEP_COUNT; i < fileList.length; i++) {
-      var old=fileList[i].file,bundle=JSON.parse(old.getBlob().getDataAsString());
-      if(bundle.schemaVersion===2 && bundle.assetFolderId){
-        var assets=DriveApp.getFolderById(bundle.assetFolderId),parents=assets.getParents(),owned=false;
-        while(parents.hasNext())if(parents.next().getId()===folder.getId())owned=true;
-        if(!owned || assets.getName()!==old.getName().replace("syy-shop-backup_","syy-shop-assets_").replace(/\.json$/,""))throw new Error("Backup asset folder ไม่ตรง");
-        assertPrivateBackupFolder_(assets);assets.setTrashed(true);
-      }
-      old.setTrashed(true);
-    }
-  } catch (e) {
-    console.error("cleanupOldBackups error:", e);
+function backupCapture_(run,priorIndex,readTime,start) {
+  var known=Object.create(null),queue=backupCollectionIds_([''],readTime,start),index={documents:Object.create(null)},collections=[],parts=[],collectionFolders=Object.create(null),written=0,deleted=0,read=0,requiresAuthKey=false;
+  function writePart(path,upserts,removals){
+    if(!upserts.length&&!removals.length)return;
+    var folder=collectionFolders[path];if(!folder){folder=run.createFolder(path.indexOf('/')<0?path:path.split('/').pop()+'__'+backupJsonDigest_(path).slice(0,12));assertPrivateBackupFolder_(folder);collectionFolders[path]=folder;}
+    var descriptor=backupWriteJson_(folder,'part-'+String(parts.length+1)+'.json',{collection:path,upserts:upserts,deleted:removals});descriptor.folderId=folder.getId();descriptor.collection=path;parts.push(descriptor);written+=upserts.length;deleted+=removals.length;
   }
-}
-
-function backupNow_() {
-  return backupAllDataToBackup_();
-}
-
-function weeklyBackupJob_() {
-  var result = backupAllDataToBackup_();
-  if (!result.success) {
-    console.error("weeklyBackupJob ล้มเหลวบางส่วน:", JSON.stringify(result.errors));
+  while(queue.length){
+    var path=queue.shift();if(known[path])continue;known[path]=true;
+    var token='',seen=Object.create(null),count=0;
+    do{
+      backupCheckDeadline_(start);
+      var url=backupEndpoint_()+'/'+path.split('/').map(encodeURIComponent).join('/')+'?pageSize=100&showMissing=true&readTime='+encodeURIComponent(readTime)+(token?'&pageToken='+encodeURIComponent(token):'');
+      var response=UrlFetchApp.fetch(url,{method:'get',headers:getAuthHeader_(),muteHttpExceptions:true});
+      if(response.getResponseCode()!==200)throw new Error('อ่าน Backup Collection '+path+' ไม่สำเร็จ');
+      var body=JSON.parse(response.getContentText()),parents=[],upserts=[];
+      (body.documents||[]).forEach(function(doc){
+        var prefix='projects/'+PROJECT_ID+'/databases/(default)/documents/',docPath=String(doc.name||'').slice(prefix.length);
+        if(String(doc.name||'').indexOf(prefix)!==0||!backupPathValid_(docPath,true)||docPath.slice(0,docPath.lastIndexOf('/'))!==path)throw new Error('Backup document path ไม่ตรง');
+        parents.push(docPath);
+        // Missing parents have subcollections, but are not themselves stored documents.
+        if(!doc.updateTime&&!doc.createTime)return;
+        var item={path:docPath,fields:doc.fields||{},updateTime:doc.updateTime||'',createTime:doc.createTime||''},hash=backupJsonDigest_(item);
+        if(docPath.split('/')[0]==='Master_Users'&&String(parseFirestoreValue_(item.fields.Totp_Enabled))==='true')requiresAuthKey=true;
+        if(Object.prototype.hasOwnProperty.call(index.documents,docPath))throw new Error('Backup document ซ้ำ');
+        index.documents[docPath]=hash;count++;read++;
+        if(!priorIndex||priorIndex.documents[docPath]!==hash)upserts.push(item);
+      });
+      writePart(path,upserts,[]);
+      if(parents.length)queue=queue.concat(backupCollectionIds_(parents,readTime,start));
+      token=body.nextPageToken||'';if(token&&seen[token])throw new Error('Backup pagination วนซ้ำ');seen[token]=true;
+    }while(token);
+    collections.push({path:path,count:count});
   }
+  if(priorIndex){var removals=Object.create(null);Object.keys(priorIndex.documents).forEach(function(docPath){if(!Object.prototype.hasOwnProperty.call(index.documents,docPath)){var path=docPath.slice(0,docPath.lastIndexOf('/'));(removals[path]||(removals[path]=[])).push(docPath);}});Object.keys(removals).forEach(function(path){writePart(path,[],removals[path]);});}
+  collections.sort(function(a,b){return a.path.localeCompare(b.path);});return {index:index,collections:collections,parts:parts,written:written,deleted:deleted,read:read,requiresAuthKey:requiresAuthKey};
 }
-
-function setupWeeklyBackupTrigger_() {
-  removeWeeklyBackupTrigger_();
-  ScriptApp.newTrigger("weeklyBackupJob_")
-    .timeBased()
-    .onWeekDay(ScriptApp.WeekDay.SUNDAY)
-    .atHour(2)
-    .create();
-  return "ตั้งเวลา backup อัตโนมัติทุกวันอาทิตย์ เวลา 02:00 น. เรียบร้อยแล้ว";
+function backupAllDataToBackup_(kind,reuseSnapshot,jobStart) {
+  kind=kind||'full';var result={success:false,collections:{},errors:[]},run=null,published=false,lock=LockService.getUserLock(),start=jobStart===undefined?Date.now():jobStart;
+  if(!lock.tryLock(100)){result.errors.push('มี Backup อีกงานกำลังทำงานอยู่');return result;}
+  try{
+    if(['full','incremental'].indexOf(kind)<0)throw new Error('ชนิด Backup ไม่ถูกต้อง');
+    var project=backupProjectFolder_(),state=kind==='incremental'?backupState_():null,previous=null,previousFolder=null,priorIndex=null;
+    if(state&&state.projectFolderId!==project.getId())state=null;
+    if(state){previousFolder=DriveApp.getFolderById(state.lastFolderId);var checked=readFolderBackup_(state.lastFolderId,PROJECT_ID,start);previous=checked.manifest;priorIndex=checked.index;if(previous.projectFolderId!==project.getId())throw new Error('Backup ต้นทางอยู่ผิดปลายทาง');}
+    else if(kind==='incremental'){kind='full';result.bootstrap=true;}
+    var properties=reuseSnapshot&&previous?backupReadJson_(previous.scriptProperties,previousFolder):backupScriptProperties_();
+    var readTime=reuseSnapshot&&previous?previous.readTime:backupReadTime_();
+    if(previous&&Date.parse(readTime)<Date.parse(previous.readTime))throw new Error('เวลา Backup ย้อนกลับจากรุ่นก่อนหน้า');
+    var baseFullId='',group=null,day=Utilities.formatDate(new Date(),BACKUP_TIMEZONE,'yyyy-MM-dd'),suffix=Utilities.formatDate(new Date(),BACKUP_TIMEZONE,'HH-mm-ss')+'_'+Utilities.getUuid();
+    if(kind==='full'){run=backupChildFolder_(backupChildFolder_(project,'Full'),day).createFolder('full_'+suffix);baseFullId=run.getId();}
+    else{baseFullId=previous.baseFullId;group=backupChildFolder_(backupChildFolder_(project,'Incremental'),baseFullId);run=backupChildFolder_(group,day).createFolder('incremental_'+suffix);}
+    assertPrivateBackupFolder_(run);
+    var capture=reuseSnapshot&&previous?{index:priorIndex,collections:previous.collections,parts:[],written:0,deleted:0,read:0}:backupCapture_(run,priorIndex,readTime,start);
+    if(capture.requiresAuthKey&&!properties.AUTH_MASTER_KEY)throw new Error('Backup ไม่มีคีย์สำหรับกู้คืน TOTP');
+    if(backupJsonDigest_(properties)!==backupJsonDigest_(backupScriptProperties_()))throw new Error('Script Properties เปลี่ยนระหว่าง Backup กรุณาลองใหม่');
+    var m={schemaVersion:3,complete:true,projectId:PROJECT_ID,projectFolderId:project.getId(),databaseId:'(default)',kind:kind,folderId:run.getId(),baseFullId:baseFullId,previousId:previous?previous.folderId:'',incrementalGroupId:group?group.getId():'',backupDay:day,backupDate:new Date().toISOString(),readTime:readTime,imagesIncluded:false,collections:capture.collections,parts:capture.parts,written:capture.written,deleted:capture.deleted,readDocuments:capture.read,
+      index:backupWriteJson_(run,'index.json',capture.index),scriptProperties:backupWriteJson_(run,'script-properties.json',properties)};
+    backupCheckDeadline_(start);
+    m.digest=backupJsonDigest_(m);var descriptor=backupWriteJson_(run,'manifest.json',m);published=true;
+    PropertiesService.getScriptProperties().setProperty(BACKUP_STATE_KEY,JSON.stringify({projectId:PROJECT_ID,projectFolderId:project.getId(),lastFolderId:run.getId(),baseFullId:baseFullId}));
+    result.success=true;result.kind=kind;result.folderId=run.getId();result.fileId=descriptor.id;result.fileName=run.getName();result.url=run.getUrl();result.written=m.written;result.deleted=m.deleted;result.readDocuments=m.readDocuments;result.snapshotProbeReads=reuseSnapshot?0:1;result.fileSizeKB=Math.round((m.parts.reduce(function(n,p){return n+p.bytes;},0)+m.index.bytes+m.scriptProperties.bytes+descriptor.bytes)/1024);
+    m.collections.forEach(function(c){result.collections[c.path]=c.count;});
+    if(kind==='full')result.warnings=cleanupOldBackups_(project,start);
+  }catch(e){result.errors.push(e.message);if(run&&!published){try{run.setTrashed(true);}catch(ignore){}}}
+  finally{lock.releaseLock();}return result;
 }
-
-function removeWeeklyBackupTrigger_() {
-  var triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(function(t) {
-    var handler = t.getHandlerFunction();
-    if (handler === "weeklyBackupJob" || handler === "weeklyBackupJob_") ScriptApp.deleteTrigger(t);
-  });
+function backupAssertTreePrivate_(folder) {
+  assertPrivateBackupFolder_(folder);var files=folder.getFiles();while(files.hasNext())assertPrivateBackupItem_(files.next());var children=folder.getFolders();while(children.hasNext())backupAssertTreePrivate_(children.next());
 }
-
+function backupDateRunFolders_(typeFolder) {
+  var result=[],dates=typeFolder.getFolders();while(dates.hasNext()){var date=dates.next();if(!/^\d{4}-\d{2}-\d{2}$/.test(date.getName()))continue;assertPrivateBackupFolder_(date);var runs=date.getFolders();while(runs.hasNext())result.push(runs.next());}return result;
+}
+function cleanupOldBackups_(project,start) {
+  start=start===undefined?Date.now():start;
+  try{
+    var full=backupChildFolder_(project,'Full'),list=[];
+    backupDateRunFolders_(full).forEach(function(folder){backupCheckDeadline_(start);if(folder.getName().indexOf('full_')!==0)return;try{var m=readFolderBackup_(folder.getId(),PROJECT_ID,start).manifest;if(m.kind==='full')list.push({folder:folder,m:m});}catch(ignore){}});
+    list.sort(function(a,b){return Date.parse(b.m.backupDate)-Date.parse(a.m.backupDate);});
+    var increments=backupChildFolder_(project,'Incremental');
+    list.slice(BACKUP_KEEP_COUNT).forEach(function(item){
+      backupCheckDeadline_(start);
+      backupAssertTreePrivate_(item.folder);var groups=increments.getFoldersByName(item.folder.getId()),owned=[];while(groups.hasNext()){var group=groups.next();backupAssertTreePrivate_(group);owned.push(group);}
+      owned.forEach(function(group){group.setTrashed(true);});var date=backupParentFolder_(item.folder);item.folder.setTrashed(true);if(!date.getFolders().hasNext()&&!date.getFiles().hasNext())date.setTrashed(true);
+    });
+    return [];
+  }catch(e){var warning='Backup สำเร็จ แต่จำกัดจำนวนรุ่นไม่สำเร็จ: '+e.message;console.error(warning);return [warning];}
+}
+function backupNow_() {return backupAllDataToBackup_('full');}
+function weeklyBackupJob_() {var result=backupAllDataToBackup_('full');if(!result.success)throw new Error('Full Backup ไม่สำเร็จ: '+result.errors.join('; '));return result;}
+function dailyBackupJob_() {
+  var start=Date.now(),day=Utilities.formatDate(new Date(),BACKUP_TIMEZONE,'yyyy-MM-dd'),properties=PropertiesService.getScriptProperties(),project=backupProjectFolder_();
+  var marker=JSON.stringify({day:day,projectFolderId:project.getId()});
+  if(properties.getProperty('SYY_BACKUP_LAST_DAY')===marker)return {success:true,skipped:true,reason:'สำรองตามตารางวันนี้สำเร็จแล้ว'};
+  var sunday=Utilities.formatDate(new Date(),BACKUP_TIMEZONE,'u')==='7';
+  var result=backupAllDataToBackup_(sunday?'full':'incremental',false,start);if(!result.success)throw new Error('Backup ไม่สำเร็จ: '+result.errors.join('; '));
+  // Sunday and first-run bootstrap share the Full snapshot: daily delta is a valid empty delta, with no second scan.
+  if(result.kind==='full'){var delta=backupAllDataToBackup_('incremental',true,start);if(!delta.success)throw new Error('Daily Incremental ไม่สำเร็จ: '+delta.errors.join('; '));properties.setProperty('SYY_BACKUP_LAST_DAY',marker);return {full:result,incremental:delta};}properties.setProperty('SYY_BACKUP_LAST_DAY',marker);return result;
+}
+function setupBackupSchedule_() {
+  var lock=LockService.getUserLock();if(!lock.tryLock(100))throw new Error('กำลังสำรองข้อมูล กรุณาลองใหม่');
+  try{
+    assertPrivateBackupFolder_(getOrCreateBackupFolder_());
+    // Create the replacement first; an authorization/quota failure must retain the previous schedule.
+    var old=ScriptApp.getProjectTriggers().slice(),created=ScriptApp.newTrigger('dailyBackupJob_').timeBased().everyDays(1).atHour(22).nearMinute(0).inTimezone(BACKUP_TIMEZONE).create();
+    old.forEach(function(t){if(['weeklyBackupJob','weeklyBackupJob_','dailyBackupJob','dailyBackupJob_'].indexOf(t.getHandlerFunction())>=0)ScriptApp.deleteTrigger(t);});
+    return {success:true,timezone:BACKUP_TIMEZONE,hour:22,fullKeep:BACKUP_KEEP_COUNT,triggerId:created.getUniqueId()};
+  }finally{lock.releaseLock();}
+}
+function setupWeeklyBackupTrigger_() {return setupBackupSchedule_();}
+function removeWeeklyBackupTrigger_() {ScriptApp.getProjectTriggers().forEach(function(t){if(['weeklyBackupJob','weeklyBackupJob_','dailyBackupJob','dailyBackupJob_'].indexOf(t.getHandlerFunction())>=0)ScriptApp.deleteTrigger(t);});}
+function getBackupOverview_() {
+  var triggers=ScriptApp.getProjectTriggers().filter(function(t){return ['weeklyBackupJob','weeklyBackupJob_','dailyBackupJob','dailyBackupJob_'].indexOf(t.getHandlerFunction())>=0;});
+  return {files:listBackupFiles_(),schedule:{enabled:triggers.length===1&&triggers[0].getHandlerFunction()==='dailyBackupJob_',duplicate:triggers.length>1,timezone:BACKUP_TIMEZONE,hour:22,fullKeep:BACKUP_KEEP_COUNT}};
+}
 function listBackupFiles_() {
-  var list = [];
-  try {
-    var folder = getOrCreateBackupFolder_();
-    assertPrivateBackupFolder_(folder);
-    var files = folder.getFilesByType(MimeType.PLAIN_TEXT);
-    while (files.hasNext()) {
-      var f = files.next();
-      if (f.getName().indexOf("syy-shop-backup_") === 0) {
-        list.push({
-          id: f.getId(), name: f.getName(),
-          date: f.getDateCreated().toISOString(),
-          sizeKB: Math.round(f.getSize() / 1024),
-          url: f.getUrl()
-        });
-      }
-    }
-    list.sort(function(a, b) { return new Date(b.date) - new Date(a.date); });
-  } catch (e) {
-    throw e;
-  }
-  return list;
+  var list=[],project=backupProjectFolder_(),full=backupChildFolder_(project,'Full'),bases=[];
+  function add(folder){try{var m=backupManifest_(folder);list.push({id:backupSingleFile_(folder,'manifest.json').getId(),folderId:folder.getId(),name:folder.getName(),date:m.backupDate,kind:m.kind,written:m.written,deleted:m.deleted,sizeKB:Math.round((m.parts.reduce(function(n,p){return n+p.bytes;},0)+m.index.bytes+m.scriptProperties.bytes)/1024),url:folder.getUrl()});return m;}catch(ignore){return null;}}
+  backupDateRunFolders_(full).forEach(function(folder){if(folder.getName().indexOf('full_')===0){var m=add(folder);if(m)bases.push(m.baseFullId);}});
+  var increments=backupChildFolder_(project,'Incremental');bases.forEach(function(id){var groups=increments.getFoldersByName(id);while(groups.hasNext())backupDateRunFolders_(groups.next()).forEach(add);});
+  // Historical v2 files are listed and remain readable; their image folders are not modified.
+  var files=getOrCreateBackupFolder_().getFilesByType(MimeType.PLAIN_TEXT);while(files.hasNext()){var f=files.next();if(f.getName().indexOf('syy-shop-backup_')===0){assertPrivateBackupItem_(f);list.push({id:f.getId(),name:f.getName(),date:f.getDateCreated().toISOString(),kind:'legacy',sizeKB:Math.round(f.getSize()/1024),url:f.getUrl()});}}
+  list.sort(function(a,b){return Date.parse(b.date)-Date.parse(a.date);});return list;
 }
 
+
+function readFolderBackup_(folderId,sourceProjectId,start) {
+  var chain=[],seen=Object.create(null),id=folderId,base='',projectFolderId='';start=start===undefined?Date.now():start;
+  while(id){
+    backupCheckDeadline_(start);if(seen[id])throw new Error('Incremental chain วนซ้ำ');seen[id]=true;
+    var folder=DriveApp.getFolderById(id),m=backupManifest_(folder,sourceProjectId);base=base||m.baseFullId;
+    var dateParent=backupParentFolder_(folder),projectFolder=m.kind==='full'?backupParentFolder_(backupParentFolder_(dateParent)):backupParentFolder_(backupParentFolder_(backupParentFolder_(dateParent)));
+    projectFolderId=projectFolderId||projectFolder.getId();
+    if(m.baseFullId!==base||projectFolder.getId()!==projectFolderId)throw new Error('Incremental chain ข้ามรุ่น Full หรือโฟลเดอร์');
+    chain.push({folder:folder,m:m});id=m.previousId;
+  }
+  chain.reverse();if(!chain.length||chain[0].m.kind!=='full'||chain[0].m.folderId!==base)throw new Error('Incremental ไม่มี Full ต้นทาง');
+  var documents=Object.create(null),properties=null,lastTime=0,lastIndex=null;
+  chain.forEach(function(version){
+    backupCheckDeadline_(start);var m=version.m,folder=version.folder,time=Date.parse(m.readTime),changes=Object.create(null);
+    if(time<lastTime)throw new Error('Incremental chain มีเวลาย้อนกลับ');lastTime=time;
+    m.parts.forEach(function(part){
+      var partFolder=DriveApp.getFolderById(part.folderId);assertPrivateBackupFolder_(partFolder);backupFileInFolder_(partFolder,folder);
+      var payload=backupReadJson_(part,partFolder);
+      if(!backupPathValid_(payload.collection,false)||payload.collection!==part.collection||!Array.isArray(payload.upserts)||!Array.isArray(payload.deleted))throw new Error('Backup part ไม่ถูกต้อง');
+      payload.upserts.forEach(function(doc){
+        if(!doc||!backupPathValid_(doc.path,true)||doc.path.slice(0,doc.path.lastIndexOf('/'))!==payload.collection||!doc.fields||typeof doc.fields!=='object'||Array.isArray(doc.fields)||typeof doc.updateTime!=='string'||typeof doc.createTime!=='string'||changes[doc.path])throw new Error('Backup document ไม่ถูกต้องหรือซ้ำ');
+        changes[doc.path]=true;documents[doc.path]=doc;
+      });
+      payload.deleted.forEach(function(path){if(m.kind==='full'||!backupPathValid_(path,true)||path.slice(0,path.lastIndexOf('/'))!==payload.collection||changes[path]||!documents[path])throw new Error('Backup deletion ไม่ถูกต้อง');changes[path]=true;delete documents[path];});
+    });
+    var index=backupIndex_(folder,m),paths=Object.keys(documents);
+    lastIndex=index;
+    if(paths.length!==Object.keys(index.documents).length||paths.some(function(path){return backupJsonDigest_(documents[path])!==index.documents[path];}))throw new Error('Backup chain มีข้อมูลไม่ครบหรือ checksum ไม่ตรง');
+    var counts=Object.create(null);paths.forEach(function(path){var col=path.slice(0,path.lastIndexOf('/'));counts[col]=(counts[col]||0)+1;});
+    m.collections.forEach(function(col){if((counts[col.path]||0)!==col.count)throw new Error('Backup document count ไม่ตรง');delete counts[col.path];});if(Object.keys(counts).length)throw new Error('Backup ไม่ได้ระบุ Collection ครบ');
+    properties=backupReadJson_(m.scriptProperties,folder);if(!properties||typeof properties!=='object'||Array.isArray(properties))throw new Error('Backup Properties ไม่ถูกต้อง');
+  });
+  if(Object.keys(documents).some(function(path){return path.split('/')[0]==='Master_Users'&&String(parseFirestoreValue_(documents[path].fields.Totp_Enabled))==='true';})&&!properties.AUTH_MASTER_KEY)throw new Error('Backup ไม่มีคีย์สำหรับกู้คืน TOTP');
+  return {manifest:chain[chain.length-1].m,documents:documents,index:lastIndex,scriptProperties:properties};
+}
+function restoreFolderBackup_(folderId,restoreMode,options) {
+  var result={success:false,dryRun:options.confirmRestore!==true,restored:{},errors:[],imagesIncluded:false};
+  try{
+    var backup=readFolderBackup_(folderId,options.sourceProjectId),all=Object.keys(backup.documents),paths=all;
+    if(restoreMode&&restoreMode!=='all'){
+      if(!backupPathValid_(restoreMode,false)||!backup.manifest.collections.some(function(c){return c.path===restoreMode;}))throw new Error('ชุดข้อมูลที่จะกู้คืนไม่ถูกต้อง');
+      paths=all.filter(function(path){return path.indexOf(restoreMode+'/')===0;});
+    }
+    paths.forEach(function(path){var col=path.slice(0,path.lastIndexOf('/'));if(!result.restored[col])result.restored[col]={planned:0,restored:0};result.restored[col].planned++;});
+    if(result.dryRun){result.success=true;return result;}
+    var target=String(options.targetProjectId||'');
+    if(!/^[a-z][a-z0-9-]{4,62}$/.test(target)||target===backup.manifest.projectId||target!==PROJECT_ID||options.confirmStagingScript!==true)throw new Error('ต้องกู้คืนจากสคริปต์ Staging ไปยัง DB ว่างเท่านั้น');
+    if(backupCollectionIds_([''],backupReadTime_(),Date.now()).length)throw new Error('Staging ต้องว่างก่อนกู้คืน');
+    if(paths.some(function(path){return path.split('/')[0]==='Master_Users';})&&!options.restoreProperties)throw new Error('กู้คืนบัญชีต้องกู้คืน Script Properties ใน Staging ด้วย');
+    var writes=paths.map(function(path){var fields=JSON.parse(JSON.stringify(backup.documents[path].fields));if(path.split('/')[0]==='Master_Users')fields.Session_Version={stringValue:Utilities.getUuid()};return {update:{name:'projects/'+target+'/databases/(default)/documents/'+path,fields:fields},currentDocument:{exists:false}};});
+    for(var i=0;i<writes.length;){
+      var part=[],bytes=13;
+      while(i<writes.length&&part.length<450){var size=Utilities.newBlob(JSON.stringify(writes[i])).getBytes().length;if(size+13>8*1024*1024)throw new Error('Backup document ใหญ่เกินขนาดกู้คืน');if(part.length&&bytes+size+1>8*1024*1024)break;bytes+=size+1;part.push(writes[i++]);}
+      var response=UrlFetchApp.fetch(backupEndpoint_()+':commit',{method:'post',headers:getAuthHeader_(),contentType:'application/json',payload:JSON.stringify({writes:part}),muteHttpExceptions:true});
+      if(response.getResponseCode()!==200)throw new Error('กู้คืนไม่ครบ หยุดก่อนชุดถัดไป กรุณาตรวจ Staging');
+      part.forEach(function(w){var path=w.update.name.split('/documents/')[1],col=path.slice(0,path.lastIndexOf('/'));result.restored[col].restored++;});
+    }
+    if(options.restoreProperties){var props=JSON.parse(JSON.stringify(backup.scriptProperties));Object.keys(props).forEach(function(key){if(/^SYY_BACKUP_/.test(key))delete props[key];});PropertiesService.getScriptProperties().setProperties(props,false);}
+    Object.keys(result.restored).forEach(function(col){clearCollectionCache_(col.split('/')[0]);});result.success=true;
+  }catch(e){result.errors.push(e.message);}return result;
+}
 function restoreFromBackup_(fileId, restoreMode, options) {
   options=options||{};
   var result={success:false,dryRun:options.confirmRestore!==true,restored:{},errors:[]};
   try{
     var file=DriveApp.getFileById(fileId);assertPrivateBackupItem_(file);
-    var bundle=JSON.parse(file.getBlob().getDataAsString()),assets=validateBackupBundle_(bundle,options.sourceProjectId);
+    var bundle=JSON.parse(file.getBlob().getDataAsString());
+    if(bundle.schemaVersion===3){var parents=file.getParents();if(!parents.hasNext())throw new Error('Backup manifest ไม่มีโฟลเดอร์');var run=parents.next();if(parents.hasNext()||file.getName()!=='manifest.json'||bundle.folderId!==run.getId())throw new Error('Backup manifest อยู่ผิดโฟลเดอร์');return restoreFolderBackup_(run.getId(),restoreMode,options);}
+    var assets=validateBackupBundle_(bundle,options.sourceProjectId);
     var names=restoreMode && restoreMode!=="all" ? [restoreMode] : BACKUP_COLLECTIONS.slice();
     if(names.some(function(n){return BACKUP_COLLECTIONS.indexOf(n)<0;}))throw new Error("ชุดข้อมูลที่จะกู้คืนไม่ถูกต้อง");
     names.forEach(function(n){result.restored[n]={planned:bundle.collections[n].length,restored:0};});
@@ -3496,6 +3659,8 @@ var API_REGISTRY = {
   deletePurchaseOrder      : "admin",
   backupNow                : "admin",
   listBackupFiles          : "admin",
+  getBackupOverview        : "admin",
+  setupBackupSchedule      : "admin",
   getActivityLog           : "admin",
 
   // ── จัดการบัญชีผู้ใช้ (Master_Users) — admin เท่านั้น ──
@@ -3575,6 +3740,8 @@ var API_FUNCTIONS = {
   deletePurchaseOrder       : deletePurchaseOrder_,
   backupNow                 : backupNow_,
   listBackupFiles           : listBackupFiles_,
+  getBackupOverview         : getBackupOverview_,
+  setupBackupSchedule       : setupBackupSchedule_,
   getActivityLog            : getActivityLog_,
   getAllUsers               : getAllUsers_,
   createUserAccount         : createUserAccount_,
@@ -5133,7 +5300,7 @@ function addCalendarDays_(value,days) {
 }
 function backupScriptProperties_() {
   var props=PropertiesService.getScriptProperties().getProperties();
-  Object.keys(props).forEach(function(key){if(/^(cache_gen_|auth_rate_|read_rate_)/.test(key))delete props[key];});return props;
+  Object.keys(props).forEach(function(key){if(/^(cache_gen_|auth_rate_|read_rate_|SYY_BACKUP_)/.test(key))delete props[key];});return props;
 }
 function documentReferenceExists_(collection,field,id,operator) {return queryByEqualityField_(collection,field,id,1,operator).length>0;}
 function assertDeleteAllowed_(collection,id,document) {

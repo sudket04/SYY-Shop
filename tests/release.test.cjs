@@ -34,6 +34,7 @@ test('generated staging source isolates Firestore, Drive folders/properties and 
   for(const file of ['Code.gs','ProductImagesV2.gs'])
     vm.runInContext(fs.readFileSync(path.join(result.directory,'source',file),'utf8'),s.c);
   assert.equal(s.c.PROJECT_ID,staging.stagingProjectId);
+  assert.equal(s.c.BACKUP_FOLDER_ID,'');
   assert.notEqual(s.c.getProductImageFolder_().getId(),productionImages.getId());
   assert.notEqual(s.c.getOrCreateBackupFolder_().getId(),productionBackups.getId());
   assert.equal(s.props.PRODUCT_IMAGE_DRIVE_FOLDER_ID,productionImages.getId());

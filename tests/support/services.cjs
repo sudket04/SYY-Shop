@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto');
 const plain=x=>JSON.parse(JSON.stringify(x)),reply=(code,body)=>({getResponseCode:()=>code,getContentText:()=>JSON.stringify(body)}),iterator=items=>{let i=0;return {hasNext:()=>i<items.length,next:()=>items[i++]};};
-function setup(){
+function setup(options={}){
   const docs=new Map(),cache=new Map(),props={AUTH_MASTER_KEY:'test-only-key'},calls=[],commits=[],files=new Map(),folders=new Map(),snapshots=new Map();
   let version=1,sequence=0;
   const owner={getEmail:()=> 'owner@example.invalid'};
@@ -17,6 +17,10 @@ function setup(){
   function makeFolder(name,parent){
     const id='folder-'+(++sequence),item={...permissions,id,name,files:[],trashed:false,
       getId:()=>id,getName:()=>name,getParents:()=>iterator(parent?[parent]:[]),
+      getUrl:()=> 'https://drive.invalid/'+id,getDateCreated:()=>new Date(sequence),
+      getFolders:()=>iterator([...folders.values()].filter(f=>!f.trashed&&f.getParents().hasNext()&&f.getParents().next()===item)),
+      getFoldersByName:n=>iterator([...folders.values()].filter(f=>!f.trashed&&f.name===n&&f.getParents().hasNext()&&f.getParents().next()===item)),
+      getFiles:()=>iterator(item.files.filter(x=>!x.trashed)),
       createFolder:n=>makeFolder(n,item),createFile:(data,name,mime)=>mime?makeFile(name,data,item):makeFile(data?.getBytes?data.getBytes():data,name,item),
       getFilesByType:()=>iterator(item.files.filter(x=>!x.trashed)),getFilesByName:n=>iterator(item.files.filter(x=>x.name===n&&!x.trashed)),
       setTrashed(v){item.trashed=v;return item;}};
@@ -48,6 +52,18 @@ function setup(){
     calls.push({url,options:plain(options)});
     if(c.failRequest){const failure=c.failRequest(url,options);if(failure)return reply(failure,{error:{status:'UNAVAILABLE'}});}
     const u=new URL(url),body=options.payload?JSON.parse(options.payload):{},project=u.pathname.match(/projects\/([^/]+)/)?.[1],key=(project && project!=='syy-shop'?project+'::':'')+decodeURIComponent(u.pathname.split('/documents/')[1]||'');
+    const readTime=body.readTime||u.searchParams.get('readTime');if(readTime&&!snapshots.has(readTime))snapshots.set(readTime,new Map([...docs].map(([k,v])=>[k,plain(v)])));
+    if(u.pathname.endsWith(':listCollectionIds')){
+      const parent=decodeURIComponent(u.pathname.split('/documents')[1].replace(/:listCollectionIds$/,'').replace(/^\//,'')),prefix=(project!=='syy-shop'?project+'::':'')+(parent?parent+'/':'');
+      const store=snapshots.get(readTime)||docs,ids=[...new Set([...store.keys()].filter(k=>k.startsWith(prefix)&&(!prefix?k.indexOf('::')<0:true)).map(k=>k.slice(prefix.length).split('/')[0]))].sort();
+      const offset=Number(body.pageToken||0),size=c.collectionPageSize||body.pageSize||100;return reply(200,{collectionIds:ids.slice(offset,offset+size),...(offset+size<ids.length?{nextPageToken:String(offset+size)}:{})});
+    }
+    if(options.method==='get'&&u.searchParams.has('showMissing')){
+      const store=snapshots.get(readTime)||docs,prefix=key+'/',all=new Map();
+      for(const [docKey,doc] of store){if(!docKey.startsWith(prefix))continue;const tail=docKey.slice(prefix.length),id=tail.split('/')[0],name='projects/'+project+'/databases/(default)/documents/'+decodeURIComponent(u.pathname.split('/documents/')[1])+'/'+id;if(!tail.includes('/'))all.set(id,doc);else if(!all.has(id))all.set(id,{name});}
+      const list=[...all.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),offset=Number(u.searchParams.get('pageToken')||0),size=c.pageSize||Number(u.searchParams.get('pageSize')||100);
+      return reply(200,{documents:list.slice(offset,offset+size),...(offset+size<list.length?{nextPageToken:String(offset+size)}:{})});
+    }
     if(u.pathname.endsWith(':beginTransaction')){const token='snapshot-'+(++sequence);snapshots.set(token,new Map([...docs].map(([k,v])=>[k,plain(v)])));return reply(200,{transaction:token});}
     if(u.pathname.endsWith(':rollback')){snapshots.delete(body.transaction);return reply(200,{});}
     if(u.pathname.endsWith(':batchGet'))return reply(200,body.documents.map(name=>docs.has(keyFor(name))?{found:docs.get(keyFor(name))}:{missing:name}));
@@ -91,20 +107,22 @@ function setup(){
     throw Error('Unmocked '+url);
   }
   const c=vm.createContext({console:{error(){},warn(){},log(){}},
-    Utilities:{getUuid:()=>crypto.randomUUID(),formatDate:()=> '2026-10-11_12-00-00',sleep(){},
+    Utilities:{getUuid:()=>crypto.randomUUID(),formatDate:(_d,_z,format)=>format==='yyyy-MM-dd'?'2026-10-11':format==='u'?'7':format==='HH-mm-ss'?'12-00-00':'2026-10-11_12-00-00',sleep(){},
       base64Encode:x=>(typeof x==='string'?Buffer.from(x):Buffer.from(Uint8Array.from(x))).toString('base64'),base64Decode:x=>Array.from(Buffer.from(x,'base64')),newBlob:blob,DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'UTF8'},
       MacAlgorithm:{HMAC_SHA_1:'sha1'},computeHmacSignature:(algo,data,key)=>Array.from(crypto.createHmac(algo,Buffer.from(Uint8Array.from(key))).update(Buffer.from(Uint8Array.from(data))).digest()),
       computeHmacSha256Signature:(data,key)=>Array.from(crypto.createHmac('sha256',String(key)).update(String(data)).digest()),
       computeDigest:(algo,input)=>Array.from(crypto.createHash('sha256').update(typeof input==='string'?input:Buffer.from(Uint8Array.from(input))).digest())},
     CacheService:{getScriptCache:()=>({get:k=>cache.get(k)||null,getAll:keys=>Object.fromEntries(keys.filter(k=>cache.has(k)).map(k=>[k,cache.get(k)])),put:(k,v)=>cache.set(k,v),putAll:values=>Object.entries(values).forEach(([k,v])=>cache.set(k,v)),remove:k=>cache.delete(k),removeAll:keys=>keys.forEach(k=>cache.delete(k))})},
     PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k]||null,setProperty:(k,v)=>props[k]=v,getProperties:()=>({...props}),setProperties:p=>Object.assign(props,p)})},
-    LockService:{getScriptLock:()=>({tryLock:()=>!c.lockBusy,waitLock(){if(c.lockBusy)throw Error('busy');},releaseLock(){}})},
-    UrlFetchApp:{fetch,fetchAll:requests=>requests.map(r=>fetch(r.url,r))},
+    LockService:{getScriptLock:()=>({tryLock:()=>!c.lockBusy,waitLock(){if(c.lockBusy)throw Error('busy');},releaseLock(){}}),getUserLock:()=>({tryLock:()=>!c.backupBusy,releaseLock(){}})},
+    UrlFetchApp:{fetch,fetchAll:requests=>requests.map(r=>c.UrlFetchApp.fetch(r.url,r))},
     DriveApp:{Access:{PRIVATE:'PRIVATE',ANYONE_WITH_LINK:'LINK'},Permission:{VIEW:'VIEW'},getFileById:id=>{if(!files.has(id))throw Error('Missing file');return files.get(id);},getFolderById:id=>folders.get(id),getFoldersByName:n=>iterator([...folders.values()].filter(f=>f.name===n)),createFolder:makeFolder},
     ScriptApp:{getOAuthToken:()=> 'mock',getService:()=>({getUrl:()=> 'https://example.invalid/shop'})},
     Session:{getEffectiveUser:()=>owner,getActiveUser:()=>owner},MimeType:{PLAIN_TEXT:'text/plain'},MailApp:{sendEmail(){}}
   });
   for(const file of ['Code.gs','ProductImagesV2.gs'])vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..','..',file),'utf8'),c);
+  c.BACKUP_FOLDER_ID=''; // Fixtures never target the user's actual Drive destination.
+  if(options.legacyBackup)vm.runInContext('backupAllDataToBackup_ = '+require('./legacy-backup.cjs').toString(),c);
   c.readTime='2026-10-11T05:10:00.000Z';c.logActivity_=()=>{};
   const put=(key,data)=>docs.set(key,{name:'projects/syy-shop/databases/(default)/documents/'+key,fields:c.mapToFirestoreFields_(data),updateTime:'v'+(++version)});
   const value=(key,field)=>c.parseFirestoreValue_(docs.get(key)?.fields[field]);

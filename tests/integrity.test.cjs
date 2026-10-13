@@ -1,7 +1,8 @@
 // Deterministic in-memory services: no production credentials, data or network.
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {setup,plain}=require('./support/services.cjs');
+const {setup:setupServices,plain}=require('./support/services.cjs');
+const setup=()=>setupServices({legacyBackup:true});
 
 const issue={requestId:'request-stock-0001',reason:'ขายหน้าร้าน',items:[{productCode:'P1',qty:2}]};
 const receive={requestId:'request-receive-0001',poId:'PO1',invoiceNo:'INV1',receiptDate:'2026-10-11',receiverName:'Staff',deliveryNoteNo:'DN1',items:[{productCode:'P1',qtyReceivedNow:5}]};

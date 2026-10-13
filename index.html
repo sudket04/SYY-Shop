@@ -431,9 +431,13 @@
     <div class="modal-header"><span>💾 สำรองข้อมูล</span><button class="modal-close" onclick="closeModal('backupModal')">×</button></div>
     <div class="modal-body">
       <div style="background:var(--info-bg);border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;font-size:12.5px;color:#1e3a5f;line-height:1.6;margin-bottom:14px">
-        สำรองทุก collection เป็นไฟล์ JSON ใน Google Drive โฟลเดอร์ <b>“SYY Shop - Backups”</b> อัตโนมัติ <b>ทุกวันอาทิตย์ 02:00</b> เก็บ 8 ไฟล์ล่าสุด
+        สำรองข้อมูลทุก Collection รวมข้อมูลย่อย ลงโฟลเดอร์ Drive ที่เจ้าของกำหนด แยกตามวันที่และ Collection โดยไม่คัดลอกไฟล์รูป (เก็บข้อมูลอ้างอิงรูปใน DB)<br>
+        <b>Full ทุกวันอาทิตย์ ประมาณ 22:00 เก็บ 4 รุ่นล่าสุด</b> และ <b>Incremental ทุกวัน ประมาณ 22:00</b> เวลาไทย เก็บรายการที่เพิ่ม/แก้ไข/ลบพร้อมรุ่น Full ต้นทาง
+        <br><span style="color:var(--faint)">Incremental ลดขนาดไฟล์สำรอง แต่ยังอ่านตรวจข้อมูลครบเพื่อพบรายการที่ลบ · การสำรอง Full ด้วยตนเองนับรวมใน 4 รุ่น</span>
       </div>
-      <button class="btn btn-primary" style="width:100%" id="btnBackupNow" onclick="runBackupNow()">💾 สำรองข้อมูลตอนนี้</button>
+      <div id="backupScheduleStatus" role="status" style="font-size:13px;margin-bottom:10px">กำลังตรวจตารางเวลา...</div>
+      <button class="btn btn-ghost" style="width:100%;margin-bottom:10px" id="btnBackupSchedule" onclick="configureBackupSchedule()">ตั้งค่า Backup อัตโนมัติ</button>
+      <button class="btn btn-primary" style="width:100%" id="btnBackupNow" onclick="runBackupNow()">💾 สำรอง Full ตอนนี้</button>
       <div class="section-label">ไฟล์สำรองที่มีอยู่</div>
       <div id="backupList" style="max-height:280px;overflow-y:auto"></div>
     </div>
@@ -1753,15 +1757,21 @@
   function loadBackupList(){
     var el=document.getElementById('backupList');
     el.innerHTML='<div style="padding:16px"><span class="sk" style="width:80%"></span></div>';
-    callApi('listBackupFiles', [], function(files){
+    callApi('getBackupOverview', [], function(overview){
+      var schedule=overview&&overview.schedule||{},files=overview&&overview.files||[];
+      document.getElementById('backupScheduleStatus').textContent=schedule.duplicate?'พบทริกเกอร์ซ้ำ กรุณาตั้งค่าใหม่':schedule.enabled?'เปิดใช้งานอัตโนมัติแล้ว · ประมาณ 22:00 เวลาไทย':'ยังไม่ได้เปิดใช้งานอัตโนมัติ · กดตั้งค่าก่อน';
       if(!files||!files.length){ el.innerHTML='<div class="empty-state"><div class="ic">📭</div><div class="ti">ยังไม่มีไฟล์สำรอง</div></div>'; return; }
       el.innerHTML=files.map(function(f){
         return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:13px">'+
           '<div><div style="font-weight:600;color:var(--ink)">'+esc(thDate(f.date,true))+' น.</div>'+
-          '<div style="font-size:11px;color:var(--faint)">'+esc(f.sizeKB)+' KB</div></div>'+
-          '<a href="'+esc(f.url)+'" target="_blank">เปิดใน Drive</a></div>';
+          '<div style="font-size:11px;color:var(--faint)">'+esc(f.kind==='full'?'Full':f.kind==='incremental'?'Incremental':'Backup รุ่นเดิม')+' · '+esc(f.sizeKB)+' KB'+(f.kind==='incremental'?' · เปลี่ยน '+esc(f.written||0)+' / ลบ '+esc(f.deleted||0):'')+'</div></div>'+
+          '<a href="'+esc(f.url)+'" target="_blank" rel="noopener noreferrer">เปิดใน Drive</a></div>';
       }).join('');
-    }, function(err){ el.innerHTML='<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดรายการไม่สำเร็จ</div></div>'; });
+    }, function(err){document.getElementById('backupScheduleStatus').textContent='ตรวจตารางเวลาไม่สำเร็จ กรุณาลองใหม่'; el.innerHTML='<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดรายการไม่สำเร็จ</div></div>'; });
+  }
+  function configureBackupSchedule(){
+    var btn=document.getElementById('btnBackupSchedule');btnBusy(btn,'กำลังตั้งค่า...');
+    callApi('setupBackupSchedule',[],function(res){btnDone(btn);if(res&&res.success){toast('ตั้ง Backup อัตโนมัติประมาณ 22:00 เวลาไทยแล้ว');loadBackupList();}else swyError('ตั้งค่าไม่สำเร็จ','กรุณาตรวจสิทธิ์ Apps Script ของเจ้าของระบบ แล้วลองใหม่');},function(err){btnDone(btn);swyError('ตั้งค่าไม่สำเร็จ',esc(syyErrorMessage(err)));});
   }
   function runBackupNow(){
     var btn=document.getElementById('btnBackupNow');
@@ -1771,7 +1781,8 @@
       if(res && res.success){
         var n=Object.keys(res.collections||{}).reduce(function(s,k){return s+res.collections[k];},0);
         toast('สำรองข้อมูลสำเร็จ ('+n+' รายการ · '+res.fileSizeKB+' KB)');
-      } else toast('สำรองสำเร็จบางส่วน — '+((res&&res.errors)||[]).join(', '),'warn',5000);
+        if(res.warnings&&res.warnings.length)toast(res.warnings.join('; '),'warn',7000);
+      } else toast('สำรองข้อมูลไม่สำเร็จ ไม่เผยแพร่ชุดที่อ่านไม่ครบ — '+((res&&res.errors)||[]).join(', '),'warn',5000);
       loadBackupList();
     }, function(err){ btnDone(btn); swyError('สำรองข้อมูลไม่สำเร็จ',esc(syyErrorMessage(err))); });
   }
