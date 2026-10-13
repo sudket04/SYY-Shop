@@ -114,6 +114,43 @@
 })();
 </script>
 <script>
+/* Reserve the measured footer space instead of assuming a fixed page header. */
+(function(){
+  var queued=false;
+  function schedule(){if(!queued){queued=true;requestAnimationFrame(fit);}}
+  function fit(){
+    queued=false;
+    var height=window.visualViewport?window.visualViewport.height:window.innerHeight;
+    document.querySelectorAll('.table-wrap').forEach(function(wrap){
+      if(!wrap.getClientRects().length||wrap.closest('.modal-overlay,#homeScreen'))return;
+      var after=[],footers=[],node=wrap.nextElementSibling;
+      while(node){
+        if(node.getClientRects().length){
+          after.push(node);
+          if(node.matches('.pagination-bar,.pager')||node.querySelector('#mvPageStatus'))footers.push(node);
+        }
+        node=node.nextElementSibling;
+      }
+      if(!footers.length)return;
+      footers.forEach(function(footer){if(!footer.classList.contains('syy-table-footer'))footer.classList.add('syy-table-footer');});
+      var reserved=16+parseFloat(getComputedStyle(wrap.parentElement).paddingBottom||0);
+      after.forEach(function(el){var css=getComputedStyle(el);reserved+=el.getBoundingClientRect().height+parseFloat(css.marginTop||0)+parseFloat(css.marginBottom||0);});
+      var top=wrap.getBoundingClientRect().top+window.scrollY;
+      var space=Math.floor(Math.max(120,height-top-reserved))+'px';
+      if(!wrap.classList.contains('syy-table-viewport'))wrap.classList.add('syy-table-viewport');
+      if(wrap.style.getPropertyValue('--syy-table-space')!==space)wrap.style.setProperty('--syy-table-space',space);
+    });
+  }
+  window.addEventListener('resize',schedule);
+  if(window.visualViewport)window.visualViewport.addEventListener('resize',schedule);
+  window.addEventListener('load',schedule);
+  if(document.fonts)document.fonts.ready.then(schedule);
+  if(typeof ResizeObserver==='function')new ResizeObserver(schedule).observe(document.body);
+  new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','hidden','style']});
+  window.syyFitTableFooters=schedule;schedule();
+})();
+</script>
+<script>
 /* Presentation only: keep the same input, value, autocomplete and auth handlers. */
 (function(){
   var eye='<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/>';

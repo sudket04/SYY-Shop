@@ -233,7 +233,9 @@
   function redirectToHome(token){
     var url=WEB_APP_URL+'?page=home&token='+encodeURIComponent(token)+'&ua='+encodeURIComponent(navigator.userAgent);
     try{window.top.location.href=url;}catch(error){
-      var message=document.querySelector('.view.active .alert')||document.getElementById('loginAlert');message.className='alert show';message.textContent='เข้าสู่ระบบสำเร็จ ';var link=document.createElement('a');link.href=url;link.target='_top';link.textContent='กดเพื่อเข้าสู่หน้าหลัก';message.appendChild(link);
+      // HtmlService can reject top navigation after an asynchronous login.
+      // Navigate this frame instead; doGet still validates the session and UA.
+      window.location.replace(url);
     }
   }
 

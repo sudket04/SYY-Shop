@@ -44,10 +44,14 @@ window.respond=function(fn,args){
  if(fn==='authGetMyProfile')return {success:true,username:'staff',fullName:'Staff',role:'staff',totpEnabled:false,recoveryCodesLeft:0};
  return {success:true};
 };
-window.google={script:{run:{withSuccessHandler:function(ok){var runner={withFailureHandler:function(fail){runner.fail=fail;return runner;},apiGateway:function(token,fn,args){apiCalls.push({fn:fn,args:args});var done=function(){if(apiFailure===fn)runner.fail({message:'mock network failure'});else ok(respond(fn,args));};if(apiHold===fn)apiPending.push(done);else setTimeout(done,5);}};return runner;}}}};
+window.google={script:{run:{withSuccessHandler:function(ok){var runner={withFailureHandler:function(fail){runner.fail=fail;return runner;},apiGateway:function(token,fn,args){invoke(fn,args);}};function invoke(fn,args){apiCalls.push({fn:fn,args:args});var done=function(){if(apiFailure===fn)runner.fail({message:'mock network failure'});else ok(respond(fn,args));};if(apiHold===fn)apiPending.push(done);else setTimeout(done,5);}['authLogin','authForgotPassword','authVerifyResetToken','authResetPassword','authChangePasswordForced'].forEach(function(fn){runner[fn]=function(){invoke(fn,Array.from(arguments));};});return runner;}}}};
 </script>`;
 const server = http.createServer((req,res)=>{
   const u = new URL(req.url,'http://localhost');
+  if(u.searchParams.get('fixture')==='login-sandbox'){
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+    res.end('<!DOCTYPE html><html><body><iframe id="loginFrame" title="Apps Script sandbox fixture" sandbox="allow-scripts allow-same-origin allow-forms" src="/?file=login.html" style="width:100%;height:900px;border:0"></iframe></body></html>');return;
+  }
   const pages={home:'index.html',stockissue:'StockIssue.html',products:'Master_Products.html',taxinvoice:'Master_Tax_Invoice.html',quotation:'Quotation.html',orders:'Purchase_Orders.html',brands:'Master_Brands.html',categories:'Master_Categories.html',zones:'Master_Zones.html'};
   const file = u.searchParams.get('file') || pages[u.searchParams.get('page')] || 'Quotation.html';
   if(!/^[A-Za-z_]+\.html$/.test(file)) {res.writeHead(400).end();return;}
@@ -462,11 +466,11 @@ async function main(){
     const quote=p.frameLocator('#iframe-quotation');await quote.locator('body').waitFor();await p.waitForTimeout(100);
     const quotationFrame=p.frames().find(f=>f.url().includes('page=quotation'));
     await quotationFrame.evaluate(()=>syyPostParent({action:'OPEN_STOCK_ISSUE',quoteId:'Q1',refNo:'Q1',items:[{productCode:'P1',productName:'Part',qty:2,unitPrice:125}]}));
-    await p.waitForTimeout(250);const stock=p.frames().find(f=>f.url().includes('page=stockissue'));assert(stock);
+    await p.frameLocator('#iframe-stockissue').locator('#searchInput').waitFor();const stock=p.frames().find(f=>f.url().includes('page=stockissue'));assert(stock);await stock.waitForFunction(()=>basket.length>0&&pendingQuoteId==='Q1');
     assert.equal(await stock.evaluate(()=>basket[0].qty),2);assert.equal(await stock.evaluate(()=>pendingQuoteId),'Q1');
-    await stock.evaluate(()=>syyPostParent({action:'OPEN_PRODUCT_ADD',barcode:'NEW123'}));await p.waitForTimeout(250);
-    const product=p.frames().find(f=>f.url().includes('page=products'));assert.equal(await product.locator('#inp_barcode').inputValue(),'NEW123');
-    await stock.evaluate(()=>syyPostParent({action:'OPEN_TAX_INVOICE',items:[{name:'Part',qty:2,unitPrice:125}],note:'Q1'}));await p.waitForTimeout(250);
+    await stock.evaluate(()=>syyPostParent({action:'OPEN_PRODUCT_ADD',barcode:'NEW123'}));await p.frameLocator('#iframe-products').locator('#inp_barcode').waitFor({state:'attached'});
+    const product=p.frames().find(f=>f.url().includes('page=products'));await product.waitForFunction(()=>document.getElementById('inp_barcode').value==='NEW123');assert.equal(await product.locator('#inp_barcode').inputValue(),'NEW123');
+    await stock.evaluate(()=>syyPostParent({action:'OPEN_TAX_INVOICE',items:[{name:'Part',qty:2,unitPrice:125}],note:'Q1'}));await p.frameLocator('#iframe-taxinvoice').locator('body').waitFor();
     const invoice=p.frames().find(f=>f.url().includes('page=taxinvoice'));assert(invoice);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Untrusted frame source, origin, channel, action and malformed messages cannot alter caches',async()=>{
@@ -665,6 +669,74 @@ async function main(){
   await check('Login success redirects immediately without a timed popup',async()=>{
     const p=await pageFor('login.html');await p.evaluate(()=>{window.redirectedToken='';redirectToHome=token=>window.redirectedToken=token;showLoginSuccessThenRedirect('fixture-login');});
     assert.equal(await p.evaluate(()=>redirectedToken),'fixture-login');assert.equal(await p.evaluate(()=>alerts.length),0);await p.close();
+  });
+  await check('Asynchronous login, OTP and forced-password success enter index inside a restricted sandbox without another click',async()=>{
+    for(const flow of ['login','otp','password']){
+      const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));
+      const outerUrl='http://127.0.0.1:'+port+'/?fixture=login-sandbox';await p.goto(outerUrl);
+      const frame=p.frames().find(f=>f.url().includes('file=login.html'));await frame.waitForFunction(()=>typeof doLogin==='function');
+      await frame.evaluate(flow=>{
+        window.loginResponse=flow==='otp'?{needOtp:true}:flow==='password'?{needPasswordChange:true,tempToken:'fixture-temp'}:{success:true,token:'fixture-session /?&%'};
+        const original=respond;respond=(fn,args)=>fn==='authLogin'||fn==='authChangePasswordForced'?loginResponse:original(fn,args);
+        document.getElementById('inpUsername').value='fixture';document.getElementById('inpPassword').value='fixture-password';
+        // The iframe disallows top navigation regardless of RPC completion timing.
+        doLogin({preventDefault(){}});
+      },flow);
+      if(flow!=='login'){
+        await frame.locator(flow==='otp'?'#viewOtp.active':'#viewForcePassword.active').waitFor();assert.equal(p.url(),outerUrl);
+        await frame.evaluate(flow=>{
+          loginResponse={success:true,token:'fixture-session /?&%'};
+          if(flow==='otp'){document.getElementById('inpOtp').value='123456';doLoginWithOtp({preventDefault(){}});}
+          else{document.getElementById('inpForceNewPassword').value='fixture-new-password';document.getElementById('inpForceConfirmPassword').value='fixture-new-password';doForceChangePassword({preventDefault(){}});}
+        },flow);
+      }
+      await frame.waitForURL(url=>url.searchParams.get('page')==='home');await frame.locator('#menu-products').waitFor();
+      const landed=new URL(frame.url());assert.equal(landed.searchParams.get('token'),'fixture-session /?&%');assert.equal(landed.searchParams.get('ua'),await frame.evaluate(()=>navigator.userAgent));
+      assert.equal(p.url(),outerUrl);assert.equal(await frame.locator('#loginForm').count(),0);assert.equal(await frame.evaluate(()=>alerts.length),0);assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('Rejected login and RPC failure remain on login and never enter index',async()=>{
+    const p=await pageFor('login.html');await p.evaluate(()=>{
+      const original=respond;respond=(fn,args)=>fn==='authLogin'?{success:false,message:'fixture rejected'}:original(fn,args);
+      document.getElementById('inpUsername').value='fixture';document.getElementById('inpPassword').value='fixture-password';doLogin({preventDefault(){}});
+    });await p.locator('#loginAlert.error.show').waitFor();assert.match(await p.locator('#loginAlert').innerText(),/fixture rejected/);assert(new URL(p.url()).searchParams.has('file'));
+    await p.evaluate(()=>{apiFailure='authLogin';doLogin({preventDefault(){}});});await p.waitForFunction(()=>document.getElementById('loginAlert').innerText.includes('mock network failure'));
+    assert.equal(await p.locator('#btnLogin').isEnabled(),true);assert.equal(await p.locator('#viewLogin.active').count(),1);assert(new URL(p.url()).searchParams.has('file'));assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Product type shows genuine, replacement and pending with older column preferences and viewer access',async()=>{
+    const p=await pageFor('Master_Products.html','viewer');await p.evaluate(()=>{
+      localStorage.setItem(productColumnPrefKey,JSON.stringify({version:PRODUCT_PREF_VERSION,visibleColumns:['productCode','productName','currentStock','actions'],pageSize:50}));
+    });await p.reload();await p.waitForTimeout(100);await p.evaluate(()=>{
+      productsCache=['แท้','เทียบ','PENDING'].map((partType,i)=>Object.assign({},fixtureProduct,{id:'TYPE'+i,productCode:'TYPE'+i,partType}));
+      document.getElementById('tableSearchInput').value='';XLF.clearAll('products');filterAndRenderTable();
+    });assert.equal(await p.evaluate(()=>pageSize),50);assert.equal(await p.evaluate(()=>visibleProductColumns.includes('image')),false);
+    assert.match(await p.locator('#productThead').innerText(),/แท้ \/ เทียบ/);
+    assert.deepEqual(await p.evaluate(()=>{const column=visibleProductColumns.indexOf('partType');return Array.from(document.getElementById('productBody').rows).map(row=>row.cells[column].innerText.trim());}),['แท้','เทียบ','รอดำเนินการ']);
+    assert.equal(await p.locator('#productBody .edit,#productBody .del').count(),0);
+    await p.evaluate(()=>{pendingProductColumns=normalizeProductColumns(PRODUCT_COLUMN_PRESETS.sales.columns);saveProductColumnPreference();});assert.equal(await p.evaluate(()=>visibleProductColumns.includes('partType')),true);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Product and document table footers fit the viewport and stay reachable on small screens without extra reads',async()=>{
+    for(const file of ['Master_Products.html','Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html','StockIssue.html']){
+      const p=await pageFor(file);await p.evaluate(()=>{
+        if(document.getElementById('productBody')){productsCache=Array.from({length:200},(_,i)=>Object.assign({},fixtureProduct,{id:'P'+i,productCode:'P'+i,partType:i%2?'แท้':'เทียบ'}));document.getElementById('pageSizeSelect').value='100';document.getElementById('tableSearchInput').value='';XLF.clearAll('products');changePageSize(100);SYYSelect.refresh(document);}
+        else if(typeof quotations!=='undefined'){quotations=Array.from({length:120},(_,i)=>({id:'Q'+i,quoteNo:'Q '+i,quoteDate:'2026-10-11',customerName:'Buyer',grandTotal:i,status:'ร่าง',items:[]}));listStatusFilter='';renderList();switchTab('list');}
+        else if(typeof invoicesCache!=='undefined'){invoicesCache=Array.from({length:120},(_,i)=>Object.assign({},fixtureInvoice,{id:'T'+i}));renderRows();}
+        else if(typeof purchaseOrders!=='undefined'){purchaseOrders=Array.from({length:120},(_,i)=>({poId:'O'+i,orderDate:'2026-10-11',vendorName:'Vendor',status:'Pending',items:[],totalQty:0,totalAmount:0}));historyStatusFilter='all';renderHistoryTab();switchTab('history');}
+        else{fixtureMovements=Array.from({length:80},(_,i)=>({id:'M'+i,docNo:'MV'+i,type:'OUT',productCode:'P1',productName:'Test Part',qty:1,timestamp:'2026-10-11T05:00:00Z'}));switchTab('history');loadMovements();}
+      });await p.waitForTimeout(80);const before=await p.evaluate(()=>apiCalls.length);
+      for(const size of [{width:1365,height:720},{width:1920,height:1080},{width:390,height:568},{width:320,height:420}]){
+        await p.setViewportSize(size);await p.evaluate(()=>{window.scrollTo(0,0);syyFitTableFooters();});await p.waitForTimeout(80);
+        const footer=p.locator('.syy-table-footer:visible').first(),wrap=p.locator('.syy-table-viewport:visible').first();assert.equal(await footer.count(),1,file);
+        if(size.width>=1365){const rect=await footer.boundingBox();assert(rect.y+rect.height<=size.height+1,file+' desktop footer '+JSON.stringify(rect));}
+        await footer.scrollIntoViewIfNeeded();const rect=await footer.boundingBox();assert(rect.y>=-1&&rect.y+rect.height<=size.height+1,file+' footer '+JSON.stringify(rect));assert(rect.x>=-1&&rect.x+rect.width<=size.width+1,file+' footer width');
+        assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,file+' horizontal overflow');
+        const atBottom=await wrap.evaluate(el=>{el.scrollTop=el.scrollHeight;return el.scrollTop;});assert(atBottom>0,file+' independently scrolls rows');
+        const next=p.locator('#btnNextPage:visible,.syy-display-pages button:visible').last();if(await next.count()&&await next.isEnabled()){await next.click();await p.waitForTimeout(20);}
+        if(file==='Master_Products.html'&&(size.width===1365||size.width===390))await p.screenshot({path:path.join(output,'product-footer-'+size.width+'.png')});
+      }
+      assert.equal(await p.evaluate(()=>apiCalls.length),before,file+' viewport/display paging must not request data');assert.deepEqual(p.errors,[]);await p.close();
+    }
   });
   await check('Year, status and server-search scope survive reload with no background Load All',async()=>{
     const p=await pageFor('Quotation.html');p.on('dialog',dialog=>dialog.accept());
