@@ -2,7 +2,7 @@
 
 ระบบบริหารร้านอะไหล่บน Google Apps Script V8, HTML/CSS/JavaScript และ Cloud Firestore REST API รองรับ Dashboard, Master Data, สินค้า/รูป/บาร์โค้ด, ตัดสต๊อก, PO/รับสินค้า, ใบเสนอราคา, ใบกำกับภาษี และบัญชีผู้ใช้
 
-Source ผ่านการแก้ audit 1–40 และทดสอบในเครื่องแล้ว **ยังไม่ได้ deploy changes ชุดนี้ไป Production**. ผล local/mock ไม่ยืนยัน OAuth, Mail, IAM/indexes, billing, nested HtmlService หรือข้อมูลจริง ต้องผ่าน [Staging UAT](docs/STAGING-UAT-2026-10-12.md) และอนุมัติ target/rollout ก่อน
+Source ผ่านการแก้ audit 1–40 และทดสอบในเครื่องแล้ว **Production URL ที่อนุมัติอัปเดตเป็นรุ่น 93 เมื่อ 13 ตุลาคม 2569 เวลา 17:40** โดยตรวจ Source ครบ 24 ไฟล์และหน้า Login จริงผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-13.md). ผล local/mock และการเปิดหน้า Login ยังไม่ยืนยันการใช้งานหลัง Login, OAuth/Mail, IAM/indexes, billing หรือข้อมูลจริงทุก workflow; งาน [Staging UAT](docs/STAGING-UAT-2026-10-12.md) และการตรวจรับที่ต้องใช้บัญชีจริงยังค้างอยู่
 
 ## โครงสร้าง
 
@@ -44,10 +44,11 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 - [Staging UAT / measurement / rollout / rollback](docs/STAGING-UAT-2026-10-12.md)
 - [Live result template](docs/STAGING-RESULTS.template.json)
 - [Latest rollout readiness: verified Head/Version 92, login smoke and Backup follow-up](docs/ROLLOUT-READINESS-2026-10-13.md)
+- [Production Version 93: published source, unchanged URL/access and live login smoke](docs/DEPLOYMENT-2026-10-13.md)
 
-งานค้างที่ต้องใช้บริการจริง: Staging UAT, OAuth/Mail/IAM/index/trigger confirmation, Firestore/latency measurements และ rollout ที่ได้รับอนุมัติ. สถานะส่ง source ล่าสุดอยู่ใน [Main delivery](docs/MAIN-DELIVERY-2026-10-12.md); รายงานรอบก่อนบันทึกสถานะ ณ เวลาที่จัดทำ
+งานค้างที่ต้องใช้บริการจริง: การตรวจรับหลัง Login ด้วยบัญชีจริง, Staging UAT, OAuth/Mail/IAM/index confirmation, ผล Backup รอบแรก และ Firestore/latency measurements. สถานะส่ง source รอบก่อนอยู่ใน [Main delivery](docs/MAIN-DELIVERY-2026-10-12.md); รายงานรอบก่อนบันทึกสถานะ ณ เวลาที่จัดทำ
 
-ณ 13 ตุลาคม 2569 Head ใน Apps Script ตรงกับ runtime commit `4763480` ครบ 24 ไฟล์ และตรวจหน้า Login ของ `/dev` ได้แล้ว ยังไม่ได้อัปเดต `/exec` ในรอบนี้; รุ่น 92 ต่างจาก Head เฉพาะ 4 ไฟล์ UI ล่าสุด ส่วน Backend/manifest ตรงกัน ดูรายงาน readiness ข้างต้นก่อนเลือก Deployment เพื่อคง URL ที่ใช้งานจริง
+ณ 13 ตุลาคม 2569 Head และ Production รุ่น 93 ตรงกับ runtime commit `4763480` ครบ 24 ไฟล์ อัปเดต Deployment เดิมจากรุ่น 92 โดยคง URL และสิทธิ์เดิม เปลี่ยนเฉพาะ 4 ไฟล์ UI ล่าสุด; Backend/manifest ตรงกับรุ่น 92 และ Trigger Backup เดิมยังอยู่ หน้า Login บน `/exec` เปิดได้โดยไม่พบ ReferenceError
 
 ## แนวทาง Git ปัจจุบัน
 

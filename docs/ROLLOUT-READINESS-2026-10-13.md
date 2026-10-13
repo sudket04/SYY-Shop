@@ -1,5 +1,7 @@
 # SYY-Shop — Rollout readiness, 2026-10-13
 
+**Subsequent authorized rollout:** the user approved the concrete Version 92 target below. It was updated to Version 93 at 17:40 Asia/Bangkok, with the same URL/access and all 24 published source checksums verified. See [the deployment result](DEPLOYMENT-2026-10-13.md). The following sections record the pre-deployment readiness state; their pending-approval statements are historical.
+
 ## Completed continuation work
 
 Fetched `origin/main` and confirmed no divergence from runtime revision `4763480831bb1489153aa0e729548d8548c947e2`. Existing unrelated untracked `docs/SYSTEM-AUDIT-2026-10-11.md` was preserved.
