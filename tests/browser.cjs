@@ -55,7 +55,10 @@ const server = http.createServer((req,res)=>{
   const pages={home:'index.html',stockissue:'StockIssue.html',products:'Master_Products.html',taxinvoice:'Master_Tax_Invoice.html',quotation:'Quotation.html',orders:'Purchase_Orders.html',brands:'Master_Brands.html',categories:'Master_Categories.html',zones:'Master_Zones.html'};
   const file = u.searchParams.get('file') || pages[u.searchParams.get('page')] || 'Quotation.html';
   if(!/^[A-Za-z_]+\.html$/.test(file)) {res.writeHead(400).end();return;}
-  const html=render(file,u.searchParams.get('role')||'staff',u.searchParams.get('channel')||'').replace('<head>','<head>'+fixture);
+  // A real child route receives its role from the same authenticated session as the shell.
+  // Preserve that role in local iframe fixtures instead of silently testing staff under a Viewer shell.
+  const referringRole=req.headers.referer?new URL(req.headers.referer,'http://localhost').searchParams.get('role'):null;
+  const html=render(file,u.searchParams.get('role')||referringRole||'staff',u.searchParams.get('channel')||'').replace('<head>','<head>'+fixture);
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);
 });
 let browser, cases=0;
@@ -159,9 +162,16 @@ async function main(){
   });
   await check('Viewer opens Products on desktop/mobile and reads details without edit, delete or draft controls',async()=>{
     const shell=await pageFor('index.html','viewer');assert.equal(await shell.locator('#menu-products').count(),1);
-    await shell.evaluate(()=>switchPage('products'));assert.equal(await shell.locator('.main>.page-head').isVisible(),false);
+    await shell.locator('#menu-products').click();assert.equal(await shell.locator('.main>.page-head').isVisible(),false);
     assert.equal(await shell.locator('#productsForm').isVisible(),true);
-    for(const width of [800,390,320]){await shell.setViewportSize({width,height:844});assert.equal(await shell.locator('#mobile-products').isDisabled(),false);assert.equal(await shell.locator('#mobile-stockissue').isDisabled(),true);assert.equal(await shell.locator('#mobileNav').isVisible(),true);}
+    const childView=shell.frameLocator('#iframe-products');await childView.locator('#productBody .view').waitFor({state:'visible'});
+    const child=shell.frames().find(f=>f.url().includes('page=products'));assert.equal(await child.evaluate(()=>PRODUCT_ROLE),'viewer');
+    assert.equal(await childView.locator('#productReadOnlyLabel').isVisible(),true);assert.equal(await childView.locator('#btnAddProduct').isVisible(),false);
+    assert.equal(await childView.locator('#productBody .edit,#productBody .del').count(),0);
+    assert.equal(await child.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length),1);
+    await childView.locator('#productBody .view').click();assert.equal(await childView.locator('#viewProductName').innerText(),'Test Part');await child.evaluate(()=>closeModal('viewProductModal'));
+    for(const width of [1365,800,390,320]){await shell.setViewportSize({width,height:844});assert.equal(await childView.locator('#productBody .view').isVisible(),true);const bounds=await shell.locator('#iframe-products').boundingBox();assert(bounds.width>200&&bounds.height>200,'Viewer frame must have usable dimensions');if(width<=800){assert.equal(await shell.locator('#mobile-products').isDisabled(),false);assert.equal(await shell.locator('#mobile-stockissue').isDisabled(),true);assert.equal(await shell.locator('#mobileNav').isVisible(),true);}}
+    assert.deepEqual(await child.evaluate(()=>apiCalls.filter(x=>/save|delete|commit|upload/i.test(x.fn))),[]);assert.deepEqual(shell.errors,[]);
     await shell.evaluate(()=>switchPage('home'));assert.equal(await shell.locator('.main>.page-head').isVisible(),true);assert.deepEqual(shell.errors,[]);await shell.close();
     const p=await pageFor('Master_Products.html','viewer');
     assert.equal(await p.locator('#btnAddProduct').isVisible(),false);assert.equal(await p.locator('#productReadOnlyLabel').isVisible(),true);

@@ -45,6 +45,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 - [Live result template](docs/STAGING-RESULTS.template.json)
 - [Latest rollout readiness: verified Head/Version 92, login smoke and Backup follow-up](docs/ROLLOUT-READINESS-2026-10-13.md)
 - [Production Version 93: published source, unchanged URL/access and live login smoke](docs/DEPLOYMENT-2026-10-13.md)
+- [Viewer Products blank page: source inspection, corrected iframe regression and pending live session](docs/VIEWER-PRODUCTS-INVESTIGATION-2026-10-14.md)
 
 งานค้างที่ต้องใช้บริการจริง: การตรวจรับหลัง Login ด้วยบัญชีจริง, Staging UAT, OAuth/Mail/IAM/index confirmation, ผล Backup รอบแรก และ Firestore/latency measurements. สถานะส่ง source รอบก่อนอยู่ใน [Main delivery](docs/MAIN-DELIVERY-2026-10-12.md); รายงานรอบก่อนบันทึกสถานะ ณ เวลาที่จัดทำ
 
