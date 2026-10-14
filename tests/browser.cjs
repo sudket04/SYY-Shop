@@ -846,6 +846,33 @@ async function main(){
     await p.evaluate(()=>{respond=()=>({catalogFormat:1,fields:['productCode'],rows:[['RECOVERED']]});callApi('getAllProducts',[],rows=>window.recoveredCatalog=rows);});
     await p.waitForFunction(()=>window.recoveredCatalog);assert.equal(await p.evaluate(()=>recoveredCatalog[0].id),'RECOVERED');assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('XLFilter opens immediately, closes pending loads without extra RPC, caches complete facets and retries errors',async()=>{
+    const p=await pageFor('Master_Products.html');
+    await p.evaluate(()=>{
+      syyClearReadCache();pageSize=25;
+      respond=(fn,args)=>({__syyCache:1,version:'catalog-version',data:fn==='getAllProducts'?{catalogPage:true,products:[fixtureProduct],masters:{brands:[],categories:[],vendors:[],zones:[],cars:[]},page:1,total:1,unfilteredTotal:1,facets:{partType:{values:['แท้','เทียบ'],numeric:false}},facetVersion:'facet-version'}:fn==='getProductCatalogFacets'?{values:['Honda','Ford'],numeric:false}:[]});
+      loadTable(true);
+    });
+    await p.waitForFunction(()=>productRemote&&syyReadCache.size>0);
+    const before=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length);
+    await p.locator('#productThead [data-xlf-col="partType"]').click();await p.waitForSelector('.xlf-item');assert.equal(await p.locator('.xlf-item').count(),2);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length),before);
+    await p.keyboard.press('Escape');await p.evaluate(()=>{apiHold='getProductCatalogFacets';});
+    const brand=p.locator('#productThead [data-xlf-col="brandName"]');await brand.click();await p.waitForSelector('.xlf-popover[aria-busy="true"]');assert.match(await p.locator('.xlf-popover').innerText(),/กำลังโหลด/);
+    await brand.click();assert.equal(await p.locator('.xlf-popover').count(),0);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length),before+1);
+    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(done=>done());});await p.waitForTimeout(30);assert.equal(await p.locator('.xlf-popover').count(),0);
+    await brand.click();await p.waitForSelector('.xlf-item');assert.equal(await p.locator('.xlf-item').count(),2);await brand.click();await brand.click();await p.waitForSelector('.xlf-item');assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length),before+1);
+    await p.keyboard.press('Escape');await p.evaluate(()=>{syyInvalidateReadScopes(['Master_Products'],false);apiFailure='getProductCatalogFacets';});await brand.click();await p.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).waitFor();
+    await p.evaluate(()=>{apiFailure='';});await p.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).click();await p.waitForSelector('.xlf-item');assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('business cache makes ten real browser reads one RPC and explicit refresh bypasses reuse',async()=>{
+    const p=await pageFor('Master_Brands.html');
+    const result=await p.evaluate(async()=>{
+      syyClearReadCache();respond=()=>({__syyCache:1,version:'brands-v1',data:[{id:'B1',Name:'Honda'}]});var start=apiCalls.length;
+      function read(options){return new Promise((resolve,reject)=>callApi('getBrands',[],resolve,reject,options));}
+      var first=await read();first[0].Name='unsaved';for(var i=0;i<9;i++){var rows=await read();if(rows[0].Name!=='Honda')throw Error('shared snapshot was mutated');}
+      var repeated=apiCalls.length-start;await read({fresh:true});return {repeated:repeated,total:apiCalls.length-start};
+    });assert.deepEqual(result,{repeated:1,total:2});assert.deepEqual(p.errors,[]);await p.close();
+  });
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));
 }

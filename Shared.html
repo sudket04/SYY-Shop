@@ -22,6 +22,7 @@ function syyValidMessageData(d){
   if(d.action==='STOCK_DELTA')return Array.isArray(d.productStocks)&&d.productStocks.length<=200&&d.productStocks.every(function(x){return x&&typeof x.productCode==='string'&&isFinite(Number(x.currentStock));});
   if(d.action==='PRODUCT_DELTA')return d.product && typeof d.product==='object' && typeof (d.product.productCode||d.product.id)==='string';
   if(d.action==='MASTER_DELTA')return ['brands','categories','vendors','zones','cars','customers'].indexOf(d.kind)>=0 && d.item && typeof d.item==='object' && typeof d.item.id==='string';
+  if(d.action==='CACHE_INVALIDATED')return Array.isArray(d.scopes)&&d.scopes.length<=12&&d.scopes.every(function(scope){return syyCacheScopes.indexOf(scope)>=0;});
   if(d.action==='SESSION_EXPIRED'||d.action==='CLEAR_LOCAL_STATE')return true;
   if(d.action==='OPEN_PRODUCT_ADD')return typeof d.barcode==='string' && d.barcode.length<=200;
   return ['REFRESH_DROPDOWNS','REFRESH_PRODUCTS','REFRESH_STOCK_FULL','STOCKISSUE_READY','PRODUCTS_READY','TAXINVOICE_READY','PAGE_ACTIVATED','PAGE_HIDDEN','PAGE_READY'].indexOf(d.action)>=0;
@@ -52,7 +53,7 @@ function syyTrustedChildMessage(e){
   if(!frame)return false;
   var page=frame.id.replace('iframe-',''),allowed={stockissue:['STOCKISSUE_READY','OPEN_PRODUCT_ADD','OPEN_TAX_INVOICE','STOCK_DELTA','REFRESH_STOCK_FULL'],products:['PRODUCTS_READY','PRODUCT_DELTA','REFRESH_PRODUCTS'],orders:['STOCK_DELTA','REFRESH_STOCK_FULL'],quotation:['OPEN_STOCK_ISSUE','MASTER_DELTA'],taxinvoice:['TAXINVOICE_READY','MASTER_DELTA']};
   var actions=allowed[page]||['MASTER_DELTA','REFRESH_DROPDOWNS'];
-  if(e.data.action!=='PAGE_READY'&&e.data.action!=='SESSION_EXPIRED'&&actions.indexOf(e.data.action)<0)return false;
+  if(e.data.action!=='PAGE_READY'&&e.data.action!=='SESSION_EXPIRED'&&e.data.action!=='CACHE_INVALIDATED'&&actions.indexOf(e.data.action)<0)return false;
   if(e.data.action==='MASTER_DELTA' && e.data.kind!==page && !(['quotation','taxinvoice'].indexOf(page)>=0 && e.data.kind==='customers'))return false;
   frame.syyReceiver=e.source;frame.syyOrigin=e.origin;
   return true;
@@ -66,19 +67,20 @@ function addCalendarDays(value,days){
 }
 var syyFreshState=null;
 function syyDataRevision(){return syyFreshState?syyFreshState.revision:0;}
-function syyDataLoaded(asOf){if(syyFreshState){syyFreshState.busy=false;syyFreshState.lastLoaded=Math.min(Date.now(),Number(asOf)||Date.now());syyFreshState.dirty=syyFreshState.startRevision!==syyFreshState.revision;}setTimeout(function(){syyViewStart();syyDraftStart();},0);}
+function syyDataLoaded(asOf){if(syyFreshState){syyFreshState.busy=false;syyFreshState.lastLoaded=Math.min(Date.now(),Number(asOf)||syyLastReadAt||Date.now());syyFreshState.dirty=syyFreshState.startRevision!==syyFreshState.revision;}setTimeout(function(){syyViewStart();syyDraftStart();},0);}
 function syyDataFailed(){if(syyFreshState)syyFreshState.busy=false;}
 function syyRegisterFreshness(options){
   var state=syyFreshState={revision:0,startRevision:0,lastLoaded:Date.now(),lastAttempt:0,busy:false,dirty:false,active:window.parent===window};
   function refresh(){
     if(!state.active||document.hidden||state.busy||Date.now()-state.lastAttempt<10000||options.canRefresh&& !options.canRefresh())return;
     if(!state.dirty&&Date.now()-state.lastLoaded<120000)return;
-    state.busy=true;state.startRevision=state.revision;state.lastAttempt=Date.now();options.reload();
+    state.busy=true;state.startRevision=state.revision;state.lastAttempt=Date.now();syyReadRevalidate=true;try{options.reload();}finally{syyReadRevalidate=false;}
   }
   window.addEventListener('message',function(event){
     if(!syyTrustedParentMessage(event))return;var data=event.data;
     if(data.action==='PAGE_HIDDEN'){state.active=false;return;}
     if(data.action==='PAGE_ACTIVATED'){state.active=true;refresh();return;}
+    if(data.action==='CACHE_INVALIDATED'){if(state.dirty&&state.active)setTimeout(refresh,500);return;}
     if(['STOCK_DELTA','PRODUCT_DELTA','MASTER_DELTA'].indexOf(data.action)<0)return;
     state.revision++;state.dirty=true;
     if(data.action==='STOCK_DELTA'&&options.stock)options.stock(data.productStocks);
@@ -368,17 +370,17 @@ function swyConfirm(o){
    หน้า login ไม่ได้เรียกผ่าน callApi() นี้เลย (เรียก google.script.run ตรงๆ เฉพาะฟังก์ชัน auth ที่
    ตั้งใจเปิดให้ก่อน login อยู่แล้ว — authLogin/authForgotPassword/authResetPassword/ฯลฯ) จึงตัด
    ทางลัดนี้ออกได้โดยไม่กระทบการ login */
-function syyCallApiRaw(fnName,args,onSuccess,onFailure){
+function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache){
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
   function settled(failed){syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&/^(get|fetch)/.test(fnName))syyUxLoaded=Date.now();syyUxStatus();}
   function fail(error){settled(true);if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
-  function expired(){syyDraftFlush();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});settled(true);if(window.syyExpiryStarted)return;window.syyExpiryStarted=true;swyError('เซสชันหมดอายุ','ร่างที่รองรับถูกเก็บไว้ในเบราว์เซอร์ กรุณาเข้าสู่ระบบด้วยบัญชีเดิมเพื่อตรวจและกู้คืน').then(function(){setTimeout(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';},200);});}
+  function expired(){syyClearReadCache();syyDraftFlush();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});settled(true);if(window.syyExpiryStarted)return;window.syyExpiryStarted=true;swyError('เซสชันหมดอายุ','ร่างที่รองรับถูกเก็บไว้ในเบราว์เซอร์ กรุณาเข้าสู่ระบบด้วยบัญชีเดิมเพื่อตรวจและกู้คืน').then(function(){setTimeout(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';},200);});}
   if(!token){expired();return;}
   google.script.run.withSuccessHandler(function(res){
     if(res&&res.__authError){expired();return;}
     if(res&&res.success===false&&/^(get|fetch)/.test(fnName)){fail({message:res.message});return;}
     settled(res&&res.success===false);if(onSuccess)onSuccess(res);
-  }).withFailureHandler(fail).apiGateway(token,fnName,args||[],navigator.userAgent);
+  }).withFailureHandler(fail).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);
 }
 
 // Fetch only requested pages; incomplete lists are visibly marked and cannot claim full totals.
@@ -408,21 +410,102 @@ function syyDocumentPager(options){
     window:function(rows,scope){var signature=String(scope||'');if(signature!==viewScope){viewPage=1;viewScope=signature;}viewTotal=rows.length;viewPage=Math.max(1,Math.min(viewPage,Math.ceil(viewTotal/viewSize)||1));render();return rows.slice((viewPage-1)*viewSize,viewPage*viewSize);},offset:function(){return (viewPage-1)*viewSize;}};
 }
 
-var syyPendingReads=new Map();
+// Bounded business-data cache. Returned objects are copies so table/draft edits
+// cannot mutate the stored snapshot. Credentials, users and backup APIs bypass it.
+var syyCacheScopes=['Master_Products','Product_Images','Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers','Stock_Movements','Purchase_Orders','Quotations','Master_Tax_Invoice'];
+var syyReadCache=new Map(),syyCacheEpochs={},syyReadRevalidate=false,syyCacheIdentity='',syyCacheUsedScopes=new Set(),syyLastReadAt=0;
+var syyCacheStats={hits:0,misses:0,revalidations:0,notModified:0,invalidations:0};
+function syyReadPolicy(name){
+ var masters=['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'],catalog=['Master_Products'].concat(masters),images=catalog.concat(['Product_Images']);
+ var scopes={getBrands:['Master_Brands'],getCategories:['Master_Categories'],getVendorsFull:['Master_Vendors'],getZonesFull:['Master_Zones'],getCarsFull:['Master_Cars'],getCustomersFull:['Master_Customers'],
+  getAllMasterDropdowns:masters,getAllProducts:images,getProductCatalogPage:images,getProductCatalogFacets:catalog,getProductImageBatch:['Product_Images'],
+  getDashboardBootstrap:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovementPage:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovements:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovementDetail:catalog.concat(['Stock_Movements','Purchase_Orders']),
+  getPurchaseOrderPageData:images.concat(['Purchase_Orders']),getQuotationPageData:images.concat(['Master_Customers','Quotations']),getQuotationListData:['Quotations'],getTaxInvoicePageData:images.concat(['Master_Customers','Master_Tax_Invoice']),getTaxInvoiceListData:['Master_Tax_Invoice']};
+ if(!Object.prototype.hasOwnProperty.call(scopes,name))return null;
+ var stable=scopes[name].every(function(x){return masters.indexOf(x)>=0||x==='Master_Customers';});
+ return {scopes:scopes[name],ttl:stable?120000:30000,maxAge:stable?300000:120000,persist:stable||name==='getProductCatalogFacets'};
+}
+function syyCanonical(value){if(Array.isArray(value))return value.map(syyCanonical);if(value&&typeof value==='object'){var result={};Object.keys(value).sort().forEach(function(k){if(!['__proto__','constructor','prototype'].includes(k))result[k]=syyCanonical(value[k]);});return result;}return value;}
+function syyReadArgs(name,args){
+ args=JSON.parse(JSON.stringify(args||[]));
+ if(name==='getProductCatalogFacets'){
+  var filters={},column=args[1];Object.keys(args[0]&&args[0].filters||{}).sort().forEach(function(k){var values=args[0].filters[k];if(k!==column&&Array.isArray(values)&&values.length)filters[k]=Array.from(new Set(values)).sort();});args=[{filters:filters},column];
+ }
+ return syyCanonical(args);
+}
+function syyCachePrefix(){var id=syyIdentity();return id&&id.owner?'syy_data_v1:'+encodeURIComponent(id.owner)+':'+id.role+':'+encodeURIComponent(typeof WEB_APP_URL==='string'?WEB_APP_URL:location.origin+location.pathname)+':':null;}
+function syyCacheStorageKey(key){var hash=2166136261;for(var i=0;i<key.length;i++)hash=Math.imul(hash^key.charCodeAt(i),16777619);return syyCachePrefix()+String(hash>>>0);}
+function syyClearReadCache(){syyReadCache.clear();syyCacheScopes.forEach(function(scope){syyCacheEpochs[scope]=(syyCacheEpochs[scope]||0)+1;});try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(k.startsWith(prefix))sessionStorage.removeItem(k);});}catch(e){}}
+function syyEnsureCacheIdentity(){var id=syyIdentity(),identity=JSON.stringify([id,typeof AUTH_TOKEN==='string'?AUTH_TOKEN:'']);if(identity!==syyCacheIdentity){syyReadCache.clear();syyCacheScopes.forEach(function(s){syyCacheEpochs[s]=(syyCacheEpochs[s]||0)+1;});syyCacheIdentity=identity;}return !!(id&&id.owner&&typeof AUTH_TOKEN==='string'&&AUTH_TOKEN&&!window.syyExpiryStarted);}
+function syyCacheEpoch(scopes){return scopes.map(function(s){return syyCacheEpochs[s]||0;}).join('|');}
+function syyInvalidateReadScopes(scopes,notify){
+ scopes=(scopes||[]).filter(function(s){return syyCacheScopes.includes(s);});if(!scopes.length)return;
+ scopes.forEach(function(s){syyCacheEpochs[s]=(syyCacheEpochs[s]||0)+1;});syyCacheStats.invalidations++;
+ syyReadCache.forEach(function(record,key){if(record.scopes.some(function(s){return scopes.includes(s);}))syyReadCache.delete(key);});
+ try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(!k.startsWith(prefix))return;try{var record=JSON.parse(sessionStorage.getItem(k));if(record.scopes.some(function(s){return scopes.includes(s);}))sessionStorage.removeItem(k);}catch(e){sessionStorage.removeItem(k);}});}catch(e){}
+ if(syyFreshState&&scopes.some(function(s){return syyCacheUsedScopes.has(s);})){syyFreshState.revision++;syyFreshState.dirty=true;}
+ if(notify){var message={action:'CACHE_INVALIDATED',scopes:scopes};syyPostParent(message);document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,message);});}
+}
+function syyWriteScopes(name,args){
+ var mapping={saveBrand:['Master_Brands'],deleteBrand:['Master_Brands'],saveCategory:['Master_Categories'],deleteCategory:['Master_Categories'],saveVendor:['Master_Vendors'],deleteVendor:['Master_Vendors'],saveZone:['Master_Zones'],deleteZone:['Master_Zones'],saveCar:['Master_Cars'],deleteCar:['Master_Cars'],saveCustomer:['Master_Customers'],deleteCustomer:['Master_Customers'],
+  saveProduct:['Master_Products'],deleteProduct:['Master_Products','Product_Images'],generateProductBarcode:['Master_Products'],uploadProductImage:['Product_Images'],deleteProductImage:['Product_Images'],setPrimaryProductImage:['Product_Images'],moveProductImage:['Product_Images'],commitProductImageDraft:['Product_Images'],
+  savePurchaseOrder:['Purchase_Orders'],updatePurchaseOrderStatus:['Purchase_Orders'],deletePurchaseOrder:['Purchase_Orders'],receiveGoods:['Master_Products','Stock_Movements','Purchase_Orders'],issueStock:['Master_Products','Stock_Movements','Quotations'],
+  saveQuotation:['Quotations'],updateQuotationStatus:['Quotations'],deleteQuotation:['Quotations'],markQuotationStockIssued:['Quotations'],saveTaxInvoice:['Master_Tax_Invoice'],deleteTaxInvoice:['Master_Tax_Invoice']};
+ return name==='saveMasterData'?[args&&args[0]]:mapping[name]||[];
+}
+function syyCacheRecord(key,policy){
+ var record=syyReadCache.get(key);
+ if(!record&&policy.persist)try{var raw=syyCachePrefix()&&sessionStorage.getItem(syyCacheStorageKey(key));record=raw&&JSON.parse(raw);if(record&&record.key===key&&Array.isArray(record.scopes)&&record.scopes.join('|')===policy.scopes.join('|')&&typeof record.raw==='string'&&typeof record.version==='string'){JSON.parse(record.raw);syyReadCache.set(key,record);}else record=null;}catch(e){record=null;}
+ if(!record||!Number.isFinite(record.loadedAt)||!Number.isFinite(record.checkedAt)||record.loadedAt>Date.now()||record.checkedAt>Date.now()||Date.now()-record.loadedAt>=policy.maxAge){syyReadCache.delete(key);return null;}
+ return record;
+}
+function syyStoreRead(key,policy,data,version,previous,serialized){
+ try{var raw=serialized||JSON.stringify(data);if(raw.length>3000000)return;var now=Date.now(),record={key:key,raw:raw,version:version,scopes:policy.scopes,loadedAt:previous?previous.loadedAt:now,checkedAt:now};syyReadCache.delete(key);syyReadCache.set(key,record);
+  var size=0;syyReadCache.forEach(function(r){size+=r.raw.length;});while(syyReadCache.size>40||size>6000000){var oldest=syyReadCache.keys().next().value;size-=syyReadCache.get(oldest).raw.length;syyReadCache.delete(oldest);}
+  if(policy.persist&&syyCachePrefix()&&raw.length<100000){var prefix=syyCachePrefix(),storageKey=syyCacheStorageKey(key),keys=Object.keys(sessionStorage).filter(function(k){return k.startsWith(prefix);}),total=0;keys.forEach(function(k){total+=(sessionStorage.getItem(k)||'').length;});if(total+raw.length>250000)keys.forEach(function(k){sessionStorage.removeItem(k);});sessionStorage.setItem(storageKey,JSON.stringify(record));}
+ }catch(e){} // Quota/private mode never blocks a successful business read.
+}
+window.addEventListener('message',function(event){
+ if(!syyTrustedParentMessage(event))return;var d=event.data,scopes=[];
+ if(d.action==='CACHE_INVALIDATED')scopes=d.scopes;
+ if(d.action==='PRODUCT_DELTA')scopes=['Master_Products','Product_Images'];
+ if(d.action==='STOCK_DELTA')scopes=['Master_Products','Stock_Movements'];
+ if(d.action==='MASTER_DELTA'){var map={brands:'Master_Brands',categories:'Master_Categories',vendors:'Master_Vendors',zones:'Master_Zones',cars:'Master_Cars',customers:'Master_Customers'};scopes=[map[d.kind]];}
+ if(['REFRESH_PRODUCTS','REFRESH_STOCK_FULL','REFRESH_DROPDOWNS'].includes(d.action))scopes=syyCacheScopes;
+ if(['SESSION_EXPIRED','CLEAR_LOCAL_STATE'].includes(d.action))syyClearReadCache();else syyInvalidateReadScopes(scopes,false);
+});
+// Explicit refresh buttons bypass browser reuse; automatic freshness reloads
+// validate known versions without resending unchanged payloads.
+document.addEventListener('click',function(event){var button=event.target.closest&&event.target.closest('button');if(button&&/รีเฟรช/.test(button.textContent)){syyReadFresh=true;setTimeout(function(){syyReadFresh=false;},0);}},true);
+var syyReadFresh=false,syyPendingReads=new Map();
 function syyUnpackCatalog(data){
  if(!data||data.catalogFormat!==1)return data;
  if(!Array.isArray(data.fields)||!Array.isArray(data.rows)||data.fields.some(function(key){return typeof key!=='string';})||data.rows.some(function(row){return !Array.isArray(row)||row.length!==data.fields.length;}))throw Error('ข้อมูลสินค้าไม่ครบ กรุณาลองใหม่');
  return data.rows.map(function(values){var row={imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:''};data.fields.forEach(function(key,i){if(key!=='__proto__'&&key!=='constructor'&&key!=='prototype')row[key]=values[i];});row.id=row.productCode;return row;});
 }
-function callApi(fnName,args,onSuccess,onFailure){
- if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,onSuccess,onFailure);
- var key=fnName+JSON.stringify(args||[]),listeners=syyPendingReads.get(key);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
- listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(key,listeners);
- function failed(error){syyPendingReads.delete(key);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
+function syyDecodeRead(data){data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);return data;}
+function callApi(fnName,args,onSuccess,onFailure,options){
+ if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,function(data){if(data&&data.success!==false)syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onSuccess)onSuccess(data);},function(error){syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onFailure)onFailure(error);else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));});
+ options=options||{};var policy=syyReadPolicy(fnName),canCache=syyEnsureCacheIdentity(),force=options.fresh||syyReadFresh||(args||[]).some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor);});
+ var canonical=syyReadArgs(fnName,args),key=fnName+JSON.stringify(canonical),record=policy&&canCache&& !force?syyCacheRecord(key,policy):null;
+ if(policy)policy.scopes.forEach(function(s){syyCacheUsedScopes.add(s);});
+ var identity=syyCacheIdentity,epoch=policy&&syyCacheEpoch(policy.scopes);
+ if(record&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){syyCacheStats.hits++;setTimeout(function(){if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)));},0);return;}
+ var pendingKey=key+':'+identity+':'+epoch+':'+!!force,listeners=syyPendingReads.get(pendingKey);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
+ syyCacheStats.misses++;if(record)syyCacheStats.revalidations++;
+ listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);
+ function failed(error){syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
  syyCallApiRaw(fnName,args,function(data){
-   try{data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);}catch(error){failed(error);return;}
-   syyPendingReads.delete(key);listeners.forEach(function(x){try{if(x.ok)x.ok(data);}catch(e){setTimeout(function(){throw e;},0);}});
- },failed);
+   if(policy&&(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes))){failed({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
+   var version=null,previous=null;if(data&&data.__syyCache===1){version=data.version;if(data.notModified){if(!record){failed({message:'แคชหมดอายุ กรุณาโหลดใหม่'});return;}previous=record;data=JSON.parse(record.raw);syyCacheStats.notModified++;}else data=data.data;}
+   var wireRaw;try{if(policy&&canCache&&version!==null)wireRaw=JSON.stringify(data);data=syyDecodeRead(data);}catch(error){failed(error);return;}
+   syyLastReadAt=previous?previous.loadedAt:Date.now();
+   // Only protocol-aware servers produce cacheable results. Old deployments
+   // retain their existing behavior until source is synchronized as one release.
+   if(policy&&canCache&&version!==null)syyStoreRead(key,policy,data,version,previous,wireRaw);
+   if(canCache&&data&&data.facets&&typeof data.facetVersion==='string')Object.keys(data.facets).forEach(function(column){var facet=data.facets[column];if(facet&&Array.isArray(facet.values))syyStoreRead('getProductCatalogFacets'+JSON.stringify(syyReadArgs('getProductCatalogFacets',[{},column])),syyReadPolicy('getProductCatalogFacets'),facet,data.facetVersion,previous);});
+   syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data);}catch(e){setTimeout(function(){throw e;},0);}});
+ },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt}:undefined);
 }
 /* UI state is local to this browser session and the server-verified account. Never store credentials. */
 var syyFieldSequence=0,syyDrafts={},syyModalBaselines={},syyUxBusy=0,syyUxLoaded=0,syyUxFailed=false;
@@ -431,7 +514,7 @@ function syyStorageKey(kind,name){var id=syyIdentity();return id&&id.owner?'syy_
 function syyLocalGet(kind,name){try{var key=syyStorageKey(kind,name),raw=key&&sessionStorage.getItem(key),record=raw&&JSON.parse(raw);if(record&&record.version===1&&Number.isFinite(record.at)&&Date.now()-record.at<28800000&&record.at<=Date.now()+60000)return record.value;if(key)sessionStorage.removeItem(key);}catch(e){}return null;}
 function syyLocalSet(kind,name,value){try{var key=syyStorageKey(kind,name);if(!key)return false;var raw=JSON.stringify({version:1,at:Date.now(),value:value});if(raw.length>500000)throw Error('large draft');sessionStorage.setItem(key,raw);return true;}catch(e){syyLocalRemove(kind,name);return false;}}
 function syyLocalRemove(kind,name){try{var key=syyStorageKey(kind,name);if(key)sessionStorage.removeItem(key);}catch(e){}}
-function syyClearAccountState(){var id=syyIdentity();if(!id)return;try{Object.keys(sessionStorage).forEach(function(key){if(key.indexOf('syy_ux_v1:'+encodeURIComponent(id.owner)+':')===0)sessionStorage.removeItem(key);});}catch(e){}}
+function syyClearAccountState(){syyClearReadCache();var id=syyIdentity();if(!id)return;try{Object.keys(sessionStorage).forEach(function(key){if(key.indexOf('syy_ux_v1:'+encodeURIComponent(id.owner)+':')===0||key.indexOf('syy_data_v1:'+encodeURIComponent(id.owner)+':')===0)sessionStorage.removeItem(key);});}catch(e){}}
 function syyFieldName(field){
   var label=field.labels&&field.labels[0];if(!label){var group=field.closest('.form-group,.form-field,.fg');label=group&&group.querySelector('label');}
   return field.getAttribute('aria-label')||(label&&label.textContent.trim())||field.getAttribute('placeholder')||(field.closest('td')&&field.closest('td').dataset.label)||field.title||field.name||field.id||'เลือกข้อมูล';

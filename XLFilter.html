@@ -89,6 +89,16 @@ var XLF = (function () {
     openPop=null;
   }
 
+  document.addEventListener('keydown',function(event){if(event.key==='Escape')closePopover();});
+  function positionPopover(pop,anchorBtn){
+    var r=anchorBtn.getBoundingClientRect(),pw=pop.offsetWidth||250,ph=pop.offsetHeight||300;
+    var left=r.left+window.scrollX,top=r.bottom+window.scrollY+4;
+    if(left+pw>window.scrollX+document.documentElement.clientWidth-8)left=window.scrollX+document.documentElement.clientWidth-pw-8;
+    if(r.bottom+ph>document.documentElement.clientHeight-8&&r.top>ph)top=r.top+window.scrollY-ph-4;
+    pop.style.left=Math.max(8,left)+'px';pop.style.top=top+'px';
+    setTimeout(function(){if(openPop!==pop)return;outsideHandler=function(e){if(!pop.contains(e.target)&&!anchorBtn.contains(e.target))closePopover();};document.addEventListener('click',outsideHandler);},0);
+  }
+
   function openFilterPopover(anchorBtn,key,col,rows,onChange){
     var wasOpen = openPop && openPop.dataset.col===col && openPop.dataset.key===key;
     closePopover();
@@ -194,19 +204,7 @@ var XLF = (function () {
     });
 
     // ตำแหน่ง: ใต้ปุ่ม เลื่อนเข้าจอถ้าล้นขวา/ล่าง
-    var r=anchorBtn.getBoundingClientRect();
-    var pw=pop.offsetWidth||250, ph=pop.offsetHeight||300;
-    var left=r.left+window.scrollX;
-    var top=r.bottom+window.scrollY+4;
-    if(left+pw > window.scrollX+document.documentElement.clientWidth-8) left=window.scrollX+document.documentElement.clientWidth-pw-8;
-    if(r.bottom+ph > document.documentElement.clientHeight-8 && r.top>ph) top=r.top+window.scrollY-ph-4;
-    pop.style.left=Math.max(8,left)+'px';
-    pop.style.top=top+'px';
-
-    setTimeout(function(){
-      outsideHandler=function(e){ if(!pop.contains(e.target) && e.target!==anchorBtn) closePopover(); };
-      document.addEventListener('click',outsideHandler);
-    },0);
+    positionPopover(pop,anchorBtn);
   }
 
   function th(label,key,col,opt){
@@ -225,13 +223,23 @@ var XLF = (function () {
   }
 
   function bindHeaderClicks(tableSelector,getRowsFn,onChange){
-    var request=0;
-    document.addEventListener('click',async function(e){
+    document.addEventListener('click',function(e){
       var btn=e.target.closest ? e.target.closest('.xlf-th-btn') : null;
       if(!btn) return;
       if(!btn.closest(tableSelector)) return;
       e.stopPropagation();
-      var seq=++request;try{var rows=await getRowsFn(btn.dataset.xlfCol);if(seq===request&&btn.isConnected)openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,rows,onChange);}catch(error){if(typeof toast==='function')toast(syyErrorMessage(error),'err');}
+      if(openPop&&openPop.dataset.col===btn.dataset.xlfCol&&openPop.dataset.key===btn.dataset.xlfKey){closePopover();return;}
+      closePopover();
+      try{
+        var rows=getRowsFn(btn.dataset.xlfCol);
+        if(!rows||typeof rows.then!=='function'){openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,rows,onChange);return;}
+        var loading=document.createElement('div');loading.className='xlf-popover';loading.dataset.col=btn.dataset.xlfCol;loading.dataset.key=btn.dataset.xlfKey;loading.setAttribute('aria-busy','true');
+        loading.innerHTML='<div role="status" style="padding:18px;color:#64748b">กำลังโหลดตัวเลือก…</div>';document.body.appendChild(loading);openPop=loading;positionPopover(loading,btn);
+        rows.then(function(value){if(openPop!==loading||!btn.isConnected)return;closePopover();openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,value,onChange);},function(error){
+          if(openPop!==loading)return;loading.setAttribute('aria-busy','false');loading.firstChild.textContent=typeof syyErrorMessage==='function'?syyErrorMessage(error):'โหลดไม่สำเร็จ';
+          var retry=document.createElement('button');retry.type='button';retry.className='xlf-sort-btn';retry.textContent='ลองอีกครั้ง';retry.onclick=function(){closePopover();btn.click();};loading.appendChild(retry);
+        });
+      }catch(error){if(typeof toast==='function')toast(syyErrorMessage(error),'err');}
     });
   }
 

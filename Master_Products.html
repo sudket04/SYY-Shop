@@ -914,7 +914,7 @@
       function next(){callApi('getProductCatalogPage',[options],function(data){
         collected=collected.concat(data.products);exportButton.textContent='Export '+collected.length+' / '+data.total;
         if(data.hasMore){options.cursor=data.nextCursor;setTimeout(next,0);}else{productExportBusy=false;btnDone(exportButton);exportAllProductFields(collected);}
-      },function(error){productExportBusy=false;btnDone(exportButton);swyError('Export ไม่สำเร็จ',esc(syyErrorMessage(error)));});}
+      },function(error){productExportBusy=false;btnDone(exportButton);swyError('Export ไม่สำเร็จ',esc(syyErrorMessage(error)));},{fresh:true});}
       next();return;
     }
     var rows=Array.isArray(exportRows)?exportRows:(filteredProducts||[]).slice();

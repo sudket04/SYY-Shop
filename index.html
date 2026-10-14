@@ -591,8 +591,8 @@
 
   // กระจายเฉพาะ stock delta ไปยัง iframe หน้าจัดการสินค้า ถ้าเคยโหลดไว้แล้ว
   // ไม่อ่าน Firestore เพิ่ม และไม่เปลี่ยนโครงสร้างข้อมูลใน DB
-  function broadcastDataDelta(data){document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)try{syyPostFrame(frame,data);}catch(e){}});}
-  function forwardStockDeltaToProducts(productStocks){if(Array.isArray(productStocks)&&productStocks.length)broadcastDataDelta({action:'STOCK_DELTA',productStocks:productStocks});}
+  function broadcastDataDelta(data,exceptChannel){document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src&&frame.dataset.channel!==exceptChannel)try{syyPostFrame(frame,data);}catch(e){}});}
+  function forwardStockDeltaToProducts(productStocks,exceptChannel){if(Array.isArray(productStocks)&&productStocks.length)broadcastDataDelta({action:'STOCK_DELTA',productStocks:productStocks},exceptChannel);}
 
   function shellMasterDeltaLabel(kind,item){
     if(!item)return '';
@@ -639,9 +639,10 @@
     if(!syyTrustedChildMessage(e))return;
     var d = e.data || {};
     if(/_READY$/.test(d.action)){var readyFrame=Array.from(document.querySelectorAll('iframe')).find(function(f){return f.contentWindow===e.source||f.dataset.channel===d.channel;});if(readyFrame&&readyFrame.parentElement?.classList.contains('active'))syyPostFrame(readyFrame,{action:'PAGE_ACTIVATED'});}
-    if(d.action==='PRODUCT_DELTA'){ applyDashboardProductDelta(d.product,d.deleted);broadcastDataDelta(d); }
-    else if(d.action==='STOCK_DELTA'){ forwardStockDeltaToProducts(d.productStocks); }
-    else if(d.action==='MASTER_DELTA'){ applyMasterDelta(d.kind,d.item,d.deleted);broadcastDataDelta(d); }
+    if(d.action==='CACHE_INVALIDATED'){syyInvalidateReadScopes(d.scopes,false);broadcastDataDelta(d,d.channel);}
+    else if(d.action==='PRODUCT_DELTA'){syyInvalidateReadScopes(['Master_Products','Product_Images'],false);applyDashboardProductDelta(d.product,d.deleted);broadcastDataDelta(d,d.channel); }
+    else if(d.action==='STOCK_DELTA'){syyInvalidateReadScopes(['Master_Products','Stock_Movements'],false);forwardStockDeltaToProducts(d.productStocks,d.channel); }
+    else if(d.action==='MASTER_DELTA'){var cacheMasterScope={brands:'Master_Brands',categories:'Master_Categories',vendors:'Master_Vendors',zones:'Master_Zones',cars:'Master_Cars',customers:'Master_Customers'};syyInvalidateReadScopes([cacheMasterScope[d.kind]],false);applyMasterDelta(d.kind,d.item,d.deleted);broadcastDataDelta(d,d.channel); }
     else if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
     else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }
     else if(d.action==='REFRESH_STOCK_FULL'){ dashRefreshDelta(); }

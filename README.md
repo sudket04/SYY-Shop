@@ -38,6 +38,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [Browser cache และ XLFilter: การซิงก์ ขอบเขตแคช และผลทดสอบ](docs/CLIENT-CACHE-2026-10-15.md)
 - [RPC Security 1–2](docs/SECURITY-RPC-2026-10-11.md)
 - [Integrity/Performance 3–18](docs/INTEGRITY-PERFORMANCE-2026-10-11.md)
 - [Audit 19–40](docs/AUDIT-19-40-2026-10-11.md)

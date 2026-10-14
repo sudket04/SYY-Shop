@@ -572,7 +572,7 @@ function clearCollectionCache_(collectionName){
  catch(e){try{PropertiesService.getScriptProperties().setProperty('cache_gen_'+collectionName,Utilities.getUuid());}catch(ignored){}return false;}
 }
 function invalidateCollectionCache_(collectionName,canEnable){
- if(CACHEABLE_COLLECTIONS.indexOf(collectionName)<0 && ['Purchase_Orders','Stock_Movements'].indexOf(collectionName)<0)return true;
+ if(CACHEABLE_COLLECTIONS.indexOf(collectionName)<0 && ['Purchase_Orders','Stock_Movements','Quotations','Master_Tax_Invoice'].indexOf(collectionName)<0)return true;
  var cache=CacheService.getScriptCache(),base=collectionCacheBaseKey_(collectionName),disabled=base+'__disabled';
  try{cache.put(disabled,'1',21600);}catch(e){}
  var changed=false;try{PropertiesService.getScriptProperties().setProperty('cache_gen_'+collectionName,Utilities.getUuid());changed=true;}catch(e){console.error('Cache generation unavailable; bypass collection cache',collectionName);}
@@ -1198,14 +1198,25 @@ function getProductCatalogPage_(options){
   selected.forEach(function(row){Object.assign(row,images[row.productCode]);});
   if(PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|')!==version)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
   var more=offset+selected.length<total;
-  return {products:selected,catalogPage:true,total:total,unfilteredTotal:all.length,page:Math.floor(offset/size)+1,pageSize:size,nextCursor:more?productCatalogCursor_({query:query,version:version,snapshot:all.catalogSnapshot,offset:offset+selected.length,at:issuedAt}):'',hasMore:more};
+  var response={products:selected,catalogPage:true,total:total,unfilteredTotal:all.length,page:Math.floor(offset/size)+1,pageSize:size,nextCursor:more?productCatalogCursor_({query:query,version:version,snapshot:all.catalogSnapshot,offset:offset+selected.length,at:issuedAt}):'',hasMore:more};
+  // Seed only small, unfiltered facets from the catalog already in memory.
+  // No extra RPC/Firestore reads and no eager 10,000-name/code payload.
+  if(options.includeMasters&&!Object.keys(spec.filters).length)try{
+    var columns=['partType','brandName','categoryName','zoneName','status'],sets={};columns.forEach(function(c){sets[c]=new Set();});
+    all.forEach(function(row){columns.forEach(function(c){if(sets[c].size<=300){var v=row[c];sets[c].add(v==null||v===''?'(ว่าง)':String(v));}});});
+    response.facets={};columns.forEach(function(c){if(sets[c].size<=300)response.facets[c]={values:Array.from(sets[c]),numeric:false};});response.facetVersion=readCacheVersion_(PRODUCT_CATALOG_SCOPES);
+  }catch(ignored){delete response.facets;}
+  return response;
 }
 function getProductCatalogFacets_(options,column){
   if(PRODUCT_FILTER_FIELDS.indexOf(column)<0)throw new Error('คอลัมน์สินค้าไม่ถูกต้อง');
   // Match the existing Excel popover: other column filters apply; free text does not.
   var spec=productCatalogSpec_(options);spec.search='';spec.sortCol='';
-  var values=new Set();filterProductCatalog_(getProductCatalogRows_(),spec,column).forEach(function(row){var v=row[column];values.add(v==null||v===''?'(ว่าง)':String(v));});
-  return {values:Array.from(values),numeric:['costPrice','sellingPrice','currentStock'].indexOf(column)>=0};
+  delete spec.filters[column];
+  return cachedReadResult_('product-facets:'+column+':'+JSON.stringify(spec.filters),PRODUCT_CATALOG_SCOPES,120000,function(){
+    var values=new Set();filterProductCatalog_(getProductCatalogRows_(),spec,column).forEach(function(row){var v=row[column];values.add(v==null||v===''?'(ว่าง)':String(v));});
+    return {values:Array.from(values),numeric:['costPrice','sellingPrice','currentStock'].indexOf(column)>=0};
+  });
 }
 function getProductImageBatch_(codes){
   if(!Array.isArray(codes)||codes.length>200||codes.some(function(id){return typeof id!=='string'||!validDocumentId_(id);}))throw new Error('รหัสสินค้าไม่ถูกต้อง');
@@ -3940,7 +3951,26 @@ function logActivity_(username, fnName, args, result) {
   }
 }
 
-function apiGateway(token, fnName, args, userAgent) {
+// Optional transport metadata preserves the legacy API result shape. Versions
+// use existing Script Properties only; no Firestore revision documents/writes.
+function clientReadScopes_(name){
+  var masters=['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'];
+  var catalog=['Master_Products'].concat(masters),images=catalog.concat(['Product_Images']);
+  var scopes={getBrands:['Master_Brands'],getCategories:['Master_Categories'],getVendorsFull:['Master_Vendors'],getZonesFull:['Master_Zones'],getCarsFull:['Master_Cars'],getCustomersFull:['Master_Customers'],
+    getAllMasterDropdowns:masters,getAllProducts:images,getProductCatalogPage:images,getProductCatalogFacets:catalog,getProductImageBatch:['Product_Images'],
+    getDashboardBootstrap:catalog.concat(['Stock_Movements','Purchase_Orders']),
+    getStockMovementPage:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovements:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovementDetail:catalog.concat(['Stock_Movements','Purchase_Orders']),
+    getPurchaseOrderPageData:images.concat(['Purchase_Orders']),getQuotationPageData:images.concat(['Master_Customers','Quotations']),getQuotationListData:['Quotations'],
+    getTaxInvoicePageData:images.concat(['Master_Customers','Master_Tax_Invoice']),getTaxInvoiceListData:['Master_Tax_Invoice']};
+  return scopes[name]||null;
+}
+function clientReadVersion_(scopes){
+  var keys=scopes.map(function(name){return collectionCacheBaseKey_(name)+'__disabled';}),disabled=CacheService.getScriptCache().getAll(keys);
+  if(keys.some(function(key){return disabled[key];}))throw new Error('Cache bypass');
+  var props=PropertiesService.getScriptProperties().getProperties();
+  return scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
+}
+function apiGateway(token, fnName, args, userAgent, clientCache) {
   try {
     var session = getSession_(token, userAgent);
     if (!session) {
@@ -3987,12 +4017,24 @@ function apiGateway(token, fnName, args, userAgent) {
       console.error("apiGateway: ไม่พบฟังก์ชันจริงสำหรับ", fnName, "(อยู่ใน API_REGISTRY แต่ไม่มีใน API_FUNCTIONS — ตรวจ Code.gs)");
       return { success: false, message: "เกิดข้อผิดพลาดภายในระบบ กรุณาแจ้งผู้ดูแลระบบ" };
     }
+    var cacheScopes=clientCache&&clientCache.protocol===1?clientReadScopes_(fnName):null,cacheVersion=null;
+    if(cacheScopes)try{cacheVersion=clientReadVersion_(cacheScopes);}catch(ignored){}
+    // Authorization always runs before conditional responses. Force requests,
+    // cursors and old snapshots must execute the ordinary read operation.
+    var force=a.some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor);});
+    var maxClientAge=cacheScopes&&cacheScopes.every(function(x){return ['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers'].indexOf(x)>=0;})?300000:120000;
+    if(cacheVersion!==null&&!force&&clientCache.version===cacheVersion&&Number.isFinite(clientCache.loadedAt)&&clientCache.loadedAt<=Date.now()&&Date.now()-clientCache.loadedAt<maxClientAge){
+      return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes};
+    }
     var referenceOperations=['saveProduct','saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveMasterData','savePurchaseOrder','saveQuotation',
       'deleteProduct','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone','deleteCar','deletePurchaseOrder'];
     var result = referenceOperations.indexOf(fnName)>=0 ? withReferenceMutationLock_(function(){return fn.apply(null,a);}) : fn.apply(null,a);
 
     logActivity_(session.username, fnName, a, result);
 
+    if(cacheVersion!==null&&!(result&&result.success===false))try{
+      if(clientReadVersion_(cacheScopes)===cacheVersion)return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes};
+    }catch(ignored){}
     return result;
 
   } catch (e) {
@@ -4679,7 +4721,7 @@ function fsCommit_(writes) {
 
 function invalidateCommittedReadScopes_(writes,uncertain){
  var names={};writes.forEach(function(w){var path=w.update&&w.update.name||w.transform&&w.transform.document||w.delete||'',parts=path.split('/documents/');if(parts.length>1)names[parts[1].split('/')[0]]=true;});
- Object.keys(names).forEach(function(name){if(name==='Purchase_Orders'||name===STOCK_MOVEMENT_COLLECTION||uncertain&&name==='Master_Products')clearCollectionCache_(name);});
+ Object.keys(names).forEach(function(name){if(['Purchase_Orders','Quotations','Master_Tax_Invoice'].indexOf(name)>=0||name===STOCK_MOVEMENT_COLLECTION||uncertain&&name==='Master_Products')clearCollectionCache_(name);});
 }
 
 // ★ ใช้เช็คว่า fsCommit_ ล้มเหลวเพราะ currentDocument precondition ไม่ตรง (มีคนเขียนเอกสารแทรก
