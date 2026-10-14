@@ -674,7 +674,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
 
   var apiName = taxInvoiceBootstrapped && !forceFull ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
   if(!taxInvoiceBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','invoice-year');if(savedYear)yearParam=savedYear;}
-  callApi(apiName, [yearParam || '',{search:documentPager?documentPager.searchOptions():{}}], function(data) {
+  callApi(apiName, [yearParam || '',{compactCatalog:true,search:documentPager?documentPager.searchOptions():{}}], function(data) {
       if(requestGeneration!==invoiceLoadGeneration)return;
       if(revision!==syyDataRevision()){syyDataFailed();document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
       if (!data || data.success === false || !Array.isArray(data.invoices)) {

@@ -843,7 +843,7 @@
     btnBusy(btn,'กำลังโหลด...');
     if(!DASH.loaded) document.getElementById('dashHealthBody').innerHTML = skeletonRows(9,6);
     var requestedYear=DASH.year;
-    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true}], function(data){
+    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true}], function(data){
       btnDone(btn);
       DASH.loading=false;
       data = data||{};
@@ -876,7 +876,7 @@
   //   บันทึกสินค้าไม่ได้สร้างรายการ Stock_Movements และไม่กระทบ Purchase_Orders เลย จึงอ่านแค่
   //   Master_Products ใหม่พอ แล้วคำนวณ badge/กราฟซ้ำจาก movements ที่มีอยู่แล้วในเครื่อง (ไม่อ่านซ้ำ)
   function refreshDashboardProductsOnly(){
-    callApi('getAllProducts', [], function(products){
+    callApi('getAllProducts', [{compact:true}], function(products){
       DASH.products = products||[];
       allProducts = DASH.products;
       if(DASH.loaded){ dashBuildAggregates(); dashRenderAll(); }

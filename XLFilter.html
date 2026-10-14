@@ -99,7 +99,7 @@ var XLF = (function () {
     var numeric = type==='number';
 
     // ตัวเลือกคำนวณจากแถวที่ผ่านตัวกรองคอลัมน์อื่นแล้ว (cascading แบบ Excel)
-    var contextRows=(rows||[]).filter(function(row){
+    var contextRows=(Array.isArray(rows)?rows:[]).filter(function(row){
       for(var other in st.filters){
         if(other===col) continue;
         var allowed=st.filters[other];
@@ -109,7 +109,8 @@ var XLF = (function () {
       return true;
     });
 
-    var allValues=uniqueValues(contextRows,col,numeric);
+    if(rows && Array.isArray(rows.values)){numeric=!!rows.numeric;st.colType[col]=numeric?'number':'text';}
+    var allValues=rows&&Array.isArray(rows.values)?rows.values.slice().sort(function(a,b){return numeric?(parseFloat(a)-parseFloat(b)):String(a).localeCompare(String(b),'th');}):uniqueValues(contextRows,col,numeric);
     var currentAllowed=st.filters[col];
     var checkedSet=currentAllowed?new Set(currentAllowed):new Set(allValues);
 
@@ -137,17 +138,19 @@ var XLF = (function () {
       var ft=searchEl.value.trim().toLowerCase();
       return ft ? allValues.filter(function(v){return String(v).toLowerCase().indexOf(ft)>-1;}) : allValues;
     }
+    var valueLimit=200;
     function renderList(){
       listEl.innerHTML='';
       var vis=visibleValues();
       if(!vis.length){ listEl.innerHTML='<div style="padding:12px;text-align:center;color:#94a3b8;font-size:12px">ไม่พบค่าที่ค้นหา</div>'; }
-      vis.forEach(function(v){
+      vis.slice(0,valueLimit).forEach(function(v){
         var row=document.createElement('label'); row.className='xlf-item';
         var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=checkedSet.has(v);
         cb.addEventListener('change',function(){ if(cb.checked) checkedSet.add(v); else checkedSet.delete(v); syncCheckAll(); });
         var sp=document.createElement('span'); sp.textContent=v;
         row.appendChild(cb); row.appendChild(sp); listEl.appendChild(row);
       });
+      if(vis.length>valueLimit){var more=document.createElement('button');more.type='button';more.className='xlf-sort-btn';more.textContent='แสดงเพิ่ม ('+valueLimit+' / '+vis.length+')';more.onclick=function(){valueLimit+=200;renderList();};listEl.appendChild(more);}
       syncCheckAll();
     }
     function syncCheckAll(){
@@ -156,7 +159,7 @@ var XLF = (function () {
     }
     renderList();
 
-    searchEl.addEventListener('input',renderList);
+    searchEl.addEventListener('input',function(){valueLimit=200;renderList();});
     pop.querySelector('.xlf-check-all').addEventListener('change',function(e){
       var vis=visibleValues();
       if(e.target.checked) vis.forEach(function(v){checkedSet.add(v);});
@@ -222,12 +225,13 @@ var XLF = (function () {
   }
 
   function bindHeaderClicks(tableSelector,getRowsFn,onChange){
-    document.addEventListener('click',function(e){
+    var request=0;
+    document.addEventListener('click',async function(e){
       var btn=e.target.closest ? e.target.closest('.xlf-th-btn') : null;
       if(!btn) return;
       if(!btn.closest(tableSelector)) return;
       e.stopPropagation();
-      openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,getRowsFn(),onChange);
+      var seq=++request;try{var rows=await getRowsFn(btn.dataset.xlfCol);if(seq===request&&btn.isConnected)openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,rows,onChange);}catch(error){if(typeof toast==='function')toast(syyErrorMessage(error),'err');}
     });
   }
 

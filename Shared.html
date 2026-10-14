@@ -409,11 +409,20 @@ function syyDocumentPager(options){
 }
 
 var syyPendingReads=new Map();
+function syyUnpackCatalog(data){
+ if(!data||data.catalogFormat!==1)return data;
+ if(!Array.isArray(data.fields)||!Array.isArray(data.rows)||data.fields.some(function(key){return typeof key!=='string';})||data.rows.some(function(row){return !Array.isArray(row)||row.length!==data.fields.length;}))throw Error('ข้อมูลสินค้าไม่ครบ กรุณาลองใหม่');
+ return data.rows.map(function(values){var row={imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:''};data.fields.forEach(function(key,i){if(key!=='__proto__'&&key!=='constructor'&&key!=='prototype')row[key]=values[i];});row.id=row.productCode;return row;});
+}
 function callApi(fnName,args,onSuccess,onFailure){
  if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,onSuccess,onFailure);
  var key=fnName+JSON.stringify(args||[]),listeners=syyPendingReads.get(key);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
  listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(key,listeners);
- syyCallApiRaw(fnName,args,function(data){syyPendingReads.delete(key);listeners.forEach(function(x){try{if(x.ok)x.ok(data);}catch(e){setTimeout(function(){throw e;},0);}});},function(error){syyPendingReads.delete(key);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});});
+ function failed(error){syyPendingReads.delete(key);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
+ syyCallApiRaw(fnName,args,function(data){
+   try{data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);}catch(error){failed(error);return;}
+   syyPendingReads.delete(key);listeners.forEach(function(x){try{if(x.ok)x.ok(data);}catch(e){setTimeout(function(){throw e;},0);}});
+ },failed);
 }
 /* UI state is local to this browser session and the server-verified account. Never store credentials. */
 var syyFieldSequence=0,syyDrafts={},syyModalBaselines={},syyUxBusy=0,syyUxLoaded=0,syyUxFailed=false;

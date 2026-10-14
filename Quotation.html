@@ -391,7 +391,7 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
   if (badge) badge.style.display = 'inline';
   var apiName = quotationBootstrapped && !forceFull ? 'getQuotationListData' : 'getQuotationPageData';
   if(!quotationBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','quotation-year');if(savedYear)yearParam=savedYear;}
-  callApi(apiName, [yearParam || '',{search:documentPager?documentPager.searchOptions():{}}], function (data) {
+  callApi(apiName, [yearParam || '',{compactCatalog:true,search:documentPager?documentPager.searchOptions():{}}], function (data) {
     if(requestGeneration!==quotationLoadGeneration)return;
     if(revision!==syyDataRevision()){syyDataFailed();if(btn)btnDone(btn);if(badge)badge.style.display='none';return;}
     if (!data || data.success === false || !Array.isArray(data.quotations)) {

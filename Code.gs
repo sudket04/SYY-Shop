@@ -487,7 +487,7 @@ function fetchAllPagesRaw_(collectionName, firstPageJson) {
     do {
       if (!json) {
         var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                + "/databases/(default)/documents/" + collectionName + "?pageSize=300"
+                + "/databases/(default)/documents/" + collectionName + "?pageSize=1000"
                 + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
         var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
         if (res.getResponseCode() !== 200) {
@@ -525,7 +525,7 @@ function fetchCollectionsParallelUncached_(collectionNames) {
     toFetch.push(name);
     requests.push({
       url: "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-         + "/databases/(default)/documents/" + name + "?pageSize=300",
+         + "/databases/(default)/documents/" + name + "?pageSize=1000",
       method: "get", headers: getAuthHeader_(), muteHttpExceptions: true
     });
   });
@@ -594,7 +594,7 @@ function readCacheVersion_(scopes){
 function readResultCache_(key,scopes,maxAge){
  try{
   var version=readCacheVersion_(scopes),cache=CacheService.getScriptCache(),base=readCacheKey_(key),raw=cache.get(base);
-  if(!raw)return null;var m=JSON.parse(raw);if(m.version!==version||m.expiresAt<=Date.now()||Date.now()-m.createdAt>=maxAge||m.count<1||m.count>60)return null;
+  if(!raw)return null;var m=JSON.parse(raw);if(m.version!==version||m.expiresAt<=Date.now()||Date.now()-m.createdAt>=maxAge||m.count<1||m.count>(key==='product-catalog-v1'?200:60))return null;
   var keys=[];for(var i=0;i<m.count;i++)keys.push(base+'_'+m.id+'_'+i);var parts=cache.getAll(keys),text='';
   for(var j=0;j<keys.length;j++){if(typeof parts[keys[j]]!=='string')return null;text+=parts[keys[j]];}
   return readCacheVersion_(scopes)===version?JSON.parse(text):null;
@@ -603,7 +603,7 @@ function readResultCache_(key,scopes,maxAge){
 function writeResultCache_(key,scopes,value,maxAge,version,createdAt){
  try{
   if(readCacheVersion_(scopes)!==version)return;
-  var text=JSON.stringify(value),count=Math.ceil(text.length/16000);if(count>60)return;
+  var text=JSON.stringify(value),count=Math.ceil(text.length/16000);if(count>(key==='product-catalog-v1'?200:60))return;
   var cache=CacheService.getScriptCache(),base=readCacheKey_(key),id=Utilities.getUuid(),parts={},ttl=Math.floor((createdAt+maxAge-Date.now())/1000);if(ttl<1)return;
   for(var i=0;i<count;i++)parts[base+'_'+id+'_'+i]=text.slice(i*16000,(i+1)*16000);
   cache.putAll(parts,ttl);if(readCacheVersion_(scopes)!==version)return;
@@ -613,12 +613,18 @@ function writeResultCache_(key,scopes,value,maxAge,version,createdAt){
 function withReadLease_(key,read,worker){
  var cached=read();if(cached!==null)return cached;
  var leaseKey=readCacheKey_('lease:'+key),owner=Utilities.getUuid(),claimed=false;
+ function claim(){return withCacheGuard_(function(){var cache=CacheService.getScriptCache(),raw=cache.get(leaseKey),lease=raw?JSON.parse(raw):null;if(lease&&lease.until>Date.now())return false;cache.put(leaseKey,JSON.stringify({owner:owner,until:Date.now()+30000}),30);return true;},function(){return false;});}
  try{
-  try{claimed=withCacheGuard_(function(){var cache=CacheService.getScriptCache(),raw=cache.get(leaseKey),lease=raw?JSON.parse(raw):null;if(lease&&lease.until>Date.now())return false;cache.put(leaseKey,JSON.stringify({owner:owner,until:Date.now()+15000}),15);return true;},function(){return false;});}catch(e){return worker();}
-  if(!claimed){for(var i=0;i<6;i++){Utilities.sleep(150);cached=read();if(cached!==null)return cached;}}
-  else {cached=read();if(cached!==null)return cached;}
-  return worker();
- }catch(e){throw e;}finally{
+  // Wait for a live producer instead of starting another full scan after 900 ms.
+  // Bounded waiting releases the execution with a retryable error, never partial data.
+  for(var attempt=0;attempt<20;attempt++){
+   try{claimed=claim();}catch(e){return worker();} // Cache outage: preserve availability.
+   cached=read();if(cached!==null)return cached;
+   if(claimed)return worker();
+   Utilities.sleep(500);
+  }
+  throw new Error('กำลังเตรียมข้อมูลสินค้า กรุณารอสักครู่แล้วลองใหม่');
+ }finally{
   if(claimed)try{withCacheGuard_(function(){var cache=CacheService.getScriptCache(),raw=cache.get(leaseKey);if(raw&&JSON.parse(raw).owner===owner)cache.remove(leaseKey);},function(){});}catch(e){}
  }
 }
@@ -1056,6 +1062,12 @@ function buildCarMapFromDocs_(docs) {
 // 10. ★ getAllProducts
 // ==========================================
 function getAllProducts_(options) {
+  if(options && options.paged) {
+    var page=getProductCatalogPage_(options);
+    if(options.includeMasters)page.masters=getAllMasterDropdowns_();
+    return page;
+  }
+  if(options && options.compact)return packProductCatalog_(getProductCatalogRows_());
   var products = [];
   try {
     var masters = fetchCollectionsParallel_(
@@ -1066,7 +1078,7 @@ function getAllProducts_(options) {
     var vendorMap = buildMapFromDocs_(masters["Master_Vendors"],    "Vendor_name");
     var zoneMap   = buildZoneMapFromDocs_(masters["Master_Zones"]);
     var carMap    = buildCarMapFromDocs_(masters["Master_Cars"]);
-    var imageMap  = getProductImageUrlMap_();
+    var imageMap  = options && options.omitImages ? {} : getProductImageUrlMap_();
     var productDocs = fetchCollectionDocsCached_("Master_Products");
 
     productDocs.forEach(function(doc) {
@@ -1125,10 +1137,98 @@ function getAllProducts_(options) {
 // ==========================================
 // 11. ★ getProductById
 // ==========================================
+// The searchable catalog intentionally retains all rows: Thai substring search,
+// cross-column filters and stock/minimum comparisons cannot be replaced by a
+// first-page Firestore query without changing existing results. Images are lazy.
+var PRODUCT_CATALOG_SCOPES = ['Master_Products','Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'];
+var PRODUCT_CATALOG_FIELDS = ['productCode','productName','partType','partNumber','barcode','barcodeGenerated','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carIds','carModel','costPrice','sellingPrice','currentStock','minStock','status'];
+var PRODUCT_FILTER_FIELDS = ['productCode','productName','partType','partNumber','brandName','categoryName','vendorName','zoneName','costPrice','sellingPrice','currentStock','status'];
+function packProductCatalog_(rows){
+  return {catalogFormat:1,fields:PRODUCT_CATALOG_FIELDS,rows:rows.map(function(row){return PRODUCT_CATALOG_FIELDS.map(function(key){return row[key];});})};
+}
+function unpackProductCatalog_(data){
+  return data.rows.map(function(values){var row={imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:''};data.fields.forEach(function(key,i){row[key]=values[i];});row.id=row.productCode;return row;});
+}
+function getProductCatalogRows_(){
+  var data=cachedReadResult_('product-catalog-v1',PRODUCT_CATALOG_SCOPES,120000,function(){var packed=packProductCatalog_(getAllProducts_({omitImages:true}));packed.snapshot=readCacheKey_(JSON.stringify(packed.rows));return packed;});
+  var rows=unpackProductCatalog_(data);rows.catalogSnapshot=data.snapshot;return rows;
+}
+function productCatalogSpec_(options){
+  options=options||{};
+  var search=options.search==null?'':options.search,filters=options.filters||{},sort=options.sortCol||'';
+  if(typeof search!=='string'||search.length>200||!filters||typeof filters!=='object'||Array.isArray(filters)||sort&&PRODUCT_FILTER_FIELDS.indexOf(sort)<0)throw new Error('ตัวกรองสินค้าไม่ถูกต้อง');
+  var normalized=Object.create(null);
+  Object.keys(filters).sort().forEach(function(key){
+    var values=filters[key];
+    if(PRODUCT_FILTER_FIELDS.indexOf(key)<0||!Array.isArray(values)||values.length>20000||values.some(function(v){return typeof v!=='string'||v.length>2000;}))throw new Error('ตัวกรองสินค้าไม่ถูกต้อง');
+    if(values.length)normalized[key]=Array.from(new Set(values)).sort();
+  });
+  return {search:search.trim().toLowerCase(),filters:normalized,sortCol:sort,sortAsc:options.sortAsc!==false};
+}
+function filterProductCatalog_(rows,spec,except){
+  var sets=Object.create(null);Object.keys(spec.filters).forEach(function(k){if(k!==except)sets[k]=new Set(spec.filters[k]);});
+  var searchable=['productName','productCode','partNumber','barcode','brandName','categoryName','carModel'];
+  var result=rows.filter(function(row){
+    if(spec.search&&!searchable.some(function(key){return String(row[key]||'').toLowerCase().indexOf(spec.search)>=0;}))return false;
+    return Object.keys(sets).every(function(key){var v=row[key];return sets[key].has(v==null||v===''?'(ว่าง)':String(v));});
+  });
+  if(spec.sortCol){
+    var numeric=['costPrice','sellingPrice','currentStock'].indexOf(spec.sortCol)>=0;
+    result.sort(function(a,b){var av=a[spec.sortCol],bv=b[spec.sortCol];av=numeric?Number(av)||0:String(av==null?'':av).toLowerCase();bv=numeric?Number(bv)||0:String(bv==null?'':bv).toLowerCase();return (av<bv?-1:av>bv?1:0)*(spec.sortAsc?1:-1);});
+  }
+  return result;
+}
+function productCatalogCursor_(value){var encoded=Utilities.base64Encode(JSON.stringify(value));return encoded+'.'+movementCursorSignature_('catalog-v1:'+encoded);}
+function getProductCatalogPage_(options){
+  options=options||{};var spec=productCatalogSpec_(options),size=options.pageSize==null?50:Number(options.pageSize),page=options.page==null?1:Number(options.page);
+  if(!Number.isInteger(size)||size<1||size>200||!Number.isInteger(page)||page<1||page>100000)throw new Error('ขนาดหน้าสินค้าไม่ถูกต้อง');
+  var version=PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|'),offset=(page-1)*size,query=readCacheKey_(JSON.stringify(spec)),issuedAt=Date.now();
+  if(options.cursor){try{
+    if(typeof options.cursor!=='string'||options.cursor.length>4096)throw Error('invalid');
+    var parts=options.cursor.split('.');if(parts.length!==2||movementCursorSignature_('catalog-v1:'+parts[0])!==parts[1])throw Error('invalid');
+    var cursor=JSON.parse(Utilities.newBlob(Utilities.base64Decode(parts[0])).getDataAsString());
+    if(cursor.query!==query||cursor.version!==version||!Number.isInteger(cursor.offset)||cursor.offset<1||!Number.isFinite(cursor.at)||Date.now()-cursor.at>300000||cursor.at>Date.now()+60000)throw Error('invalid');
+    offset=cursor.offset;issuedAt=cursor.at;
+  }catch(e){throw new Error('รายการสินค้าเปลี่ยนแปลงหรือหมดอายุ กรุณาโหลดใหม่ก่อน Export');}}
+  var all=getProductCatalogRows_(),rows=filterProductCatalog_(all,spec),total=rows.length;
+  if(options.cursor&&cursor.snapshot!==all.catalogSnapshot)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาเริ่ม Export ใหม่');
+  if(options.cursor&&offset>=total)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
+  if(!options.cursor)offset=Math.min(offset,Math.max(0,(Math.ceil(total/size)-1)*size));
+  var selected=rows.slice(offset,offset+size),images=getProductImageBatch_(selected.map(function(p){return p.productCode;}));
+  selected.forEach(function(row){Object.assign(row,images[row.productCode]);});
+  if(PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|')!==version)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
+  var more=offset+selected.length<total;
+  return {products:selected,catalogPage:true,total:total,unfilteredTotal:all.length,page:Math.floor(offset/size)+1,pageSize:size,nextCursor:more?productCatalogCursor_({query:query,version:version,snapshot:all.catalogSnapshot,offset:offset+selected.length,at:issuedAt}):'',hasMore:more};
+}
+function getProductCatalogFacets_(options,column){
+  if(PRODUCT_FILTER_FIELDS.indexOf(column)<0)throw new Error('คอลัมน์สินค้าไม่ถูกต้อง');
+  // Match the existing Excel popover: other column filters apply; free text does not.
+  var spec=productCatalogSpec_(options);spec.search='';spec.sortCol='';
+  var values=new Set();filterProductCatalog_(getProductCatalogRows_(),spec,column).forEach(function(row){var v=row[column];values.add(v==null||v===''?'(ว่าง)':String(v));});
+  return {values:Array.from(values),numeric:['costPrice','sellingPrice','currentStock'].indexOf(column)>=0};
+}
+function getProductImageBatch_(codes){
+  if(!Array.isArray(codes)||codes.length>200||codes.some(function(id){return typeof id!=='string'||!validDocumentId_(id);}))throw new Error('รหัสสินค้าไม่ถูกต้อง');
+  codes=Array.from(new Set(codes)).sort();if(!codes.length)return {};
+  return cachedReadResult_('product-images:'+JSON.stringify(codes),[PRODUCT_IMAGES_COLLECTION],120000,function(){
+    var response=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:batchGet',{method:'post',headers:getAuthHeader_(),muteHttpExceptions:true,payload:JSON.stringify({documents:codes.map(function(id){return fsDocPath_(PRODUCT_IMAGES_COLLECTION,id);})})});
+    if(response.getResponseCode()!==200)throw new Error('โหลดข้อมูลรูปสินค้าไม่สำเร็จ กรุณาลองใหม่');
+    var map=Object.create(null);
+    JSON.parse(response.getContentText()).forEach(function(entry){
+      var doc=entry.found,id=String(doc?doc.name:entry.missing||'').split('/').pop();if(codes.indexOf(id)<0)return;
+      var image=imageDataFromFields_(doc?doc.fields:{});
+      map[id]={imageUrl:image.primaryUrl,imageUrls:image.urls,primaryImageIndex:image.primaryIndex,imageUpdateTime:doc&&doc.updateTime||''};
+    });
+    if(codes.some(function(id){return !Object.prototype.hasOwnProperty.call(map,id);}))throw new Error('โหลดข้อมูลรูปสินค้าไม่ครบ กรุณาลองใหม่');
+    return map;
+  });
+}
+
 function getProductById_(productCode) {
+  if(typeof productCode!=='string'||!validDocumentId_(productCode))throw new Error('รหัสสินค้าไม่ถูกต้อง');
   try {
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/Master_Products/" + productCode;
+            + "/databases/(default)/documents/Master_Products/" + encodeURIComponent(productCode);
     var res = UrlFetchApp.fetch(url, {
       method: "get",
       headers: getAuthHeader_(),
@@ -1976,7 +2076,7 @@ function getTaxInvoiceList_(){var out=[],cursor='';do{var p=getTaxInvoiceListDat
 
 function getTaxInvoiceListData_(yearFilter,options){var page=queryDocumentPage_('Master_Tax_Invoice','Invoice_Date',yearFilter,options);return {invoices:page.docs.map(function(doc){return mapTaxInvoiceQueryDoc_(doc);}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getTaxInvoiceAvailableYears_()};}
 
-function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=getAllProducts_();result.seller=TAX_INVOICE_SELLER;return result;}
+function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=options&&options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();result.seller=TAX_INVOICE_SELLER;return result;}
 
 function deleteTaxInvoice_(docId) { return deleteFirestoreDocument_("Master_Tax_Invoice", docId); }
 
@@ -2281,7 +2381,7 @@ function seedQuotationYearsMeta_() {
 //   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
 function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(function(doc){return mapQuotationDoc_({id:doc.name.split('/').pop(),fields:doc.fields||{}});}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getQuotationAvailableYears_()};}
 
-function getQuotationPageData_(yearFilter,options){var result=getQuotationListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=getAllProducts_();result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
+function getQuotationPageData_(yearFilter,options){var result=getQuotationListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=options&&options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
 
 function updateQuotationStatus_(docId, status) {
   if (QUOTATION_STATUSES.indexOf(status) === -1) {
@@ -2890,7 +2990,7 @@ function getLowStockProductsForOrder_() {
 function buildLowStockList_(vendorMap) {
   var result = [];
   try {
-    var products = getAllProducts_();
+    var products = getProductCatalogRows_();
     result = products
       .filter(function(p) { return p.currentStock <= p.minStock; })
       .map(function(p) {
@@ -3596,6 +3696,10 @@ function authLogout_(token) {
 // ─────────────────────────────────────────────────────────────
 var API_REGISTRY = {
   // ── อ่านข้อมูล: viewer ขึ้นไป ──
+  getProductById           : "viewer",
+  getProductCatalogPage    : "viewer",
+  getProductCatalogFacets  : "viewer",
+  getProductImageBatch     : "viewer",
   getAllProducts           : "viewer",
   getAllMasterDropdowns    : "viewer",
   getBrands                : "viewer",
@@ -3688,6 +3792,10 @@ var ROLE_RANK = { viewer: 1, staff: 2, admin: 3 };
 //   การเช็คจะกลายเป็นเรียกฟังก์ชันตามชื่อที่ผู้เรียกกำหนดได้ทันที — ใช้ map ตรงๆ แทน ไม่มี eval เลย
 //   ต้องมีทุก key ตรงกับ API_REGISTRY เป๊ะ (ตรวจแล้วครบ 56 รายการตอนแก้ไขจุดนี้)
 var API_FUNCTIONS = {
+  getProductById            : getProductById_,
+  getProductCatalogPage     : getProductCatalogPage_,
+  getProductCatalogFacets   : getProductCatalogFacets_,
+  getProductImageBatch      : getProductImageBatch_,
   getAllProducts            : getAllProducts_,
   getAllMasterDropdowns     : getAllMasterDropdowns_,
   getBrands                 : getBrands_,
@@ -3896,7 +4004,7 @@ function apiGateway(token, fnName, args, userAgent) {
 // Server-side cost protection for authenticated read routes. It adds no DB writes
 // and never rate-limits stock commits, permissions checks, or document saves.
 function allowReadRequest_(name,username){
- var limits={getDashboardBootstrap:30,getDashboardDelta:120,getStockMovementPage:120,getStockMovements:60,getStockMovementDetail:120,getPurchaseOrderPageData:120,getAllProducts:60};
+ var limits={getProductById:120,getProductCatalogPage:120,getProductCatalogFacets:120,getProductImageBatch:120,getDashboardBootstrap:30,getDashboardDelta:120,getStockMovementPage:120,getStockMovements:60,getStockMovementDetail:120,getPurchaseOrderPageData:120,getAllProducts:60};
  if(!limits[name])return true;
  var key='read_rate_'+readCacheKey_(name+':'+username),lock=LockService.getScriptLock();if(!lock.tryLock(250))return false;
  try{var props=PropertiesService.getScriptProperties(),raw=props.getProperty(key),state=raw?JSON.parse(raw):null,now=Date.now();
@@ -5050,7 +5158,7 @@ function getDashboardBootstrap_(options){
     var movements=[],readTime='';ranges.forEach(function(range){var rows=queryDashboardMovementsRange_(range.start,range.end,false,readTime);readTime=readTime||rows.readTime;movements=movements.concat(rows);});
     return {movements:movements,serverTime:readTime,snapshotLoadedAt:Date.parse(readTime)||Date.now()};
   },options.force===true);
-  return {products:getAllProducts_(),movements:snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
+  return {products:options&&options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_(),movements:snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
 }
 
 function getDashboardDelta_(sinceIso,options) {

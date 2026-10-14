@@ -781,6 +781,71 @@ async function main(){
     assert.equal(await p.locator('#printArea tbody tr').count(),40);for(const page of await p.locator('#printArea .a4-page').all())assert((await page.evaluate(el=>el.scrollHeight))<=1130);
     await p.addStyleTag({content:'.page-head,.page-header{visibility:hidden!important}'});await p.locator('#printArea .a4-page').first().screenshot({path:path.join(output,'quote-thai-print.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('10,000-row backend pages preserve Viewer search, global facets, pagination, export and retry',async()=>{
+    const {setup,plain}=require('./support/services.cjs'),s=setup();
+    for(let i=0;i<10000;i++)s.put('Master_Products/P'+String(i).padStart(5,'0'),{Product_Name:'อะไหล่ '+i,Part_Type:i%2?'แท้':'เทียบ',Barcode:'BC'+i,Current_Stock:10,Min_Stock:2,Cost_Price:i,Selling_Price:i+10});
+    const p=await pageFor('Master_Products.html','viewer');
+    await p.exposeFunction('catalogRpc',async(fn,args)=>plain(s.c[fn+'_'](...args)));
+    await p.evaluate(()=>{
+      const original=respond;respond=(fn,args)=>['getAllProducts','getProductCatalogPage','getProductCatalogFacets','getProductById'].includes(fn)?catalogRpc(fn,args):original(fn,args);
+      // The real gateway asynchronously serializes the result; retain this behavior for the VM-backed fixture.
+      google.script.run.withSuccessHandler=function(ok){
+        return {withFailureHandler:function(fail){
+          return {apiGateway:function(token,fn,args){
+            apiCalls.push({fn,args});
+            if(apiFailure===fn){fail({message:'mock network failure'});return;}
+            Promise.resolve(respond(fn,args)).then(ok,fail);
+          }};
+        }};
+      };
+      pageSize=25;currentPage=1;XLF.clearAll('products');document.getElementById('tableSearchInput').value='';loadTable(true);
+    });
+    await p.waitForFunction(()=>productRemote&&productRemote.total===10000);
+    assert.equal(await p.locator('#productBody tr').count(),25);
+    assert.match(await p.locator('#paginationInfo').innerText(),/10000/);
+    await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>productsCache[0].productCode),'P00025');
+    await p.locator('#tableSearchInput').fill('BC9999');await p.waitForFunction(()=>productRemote.total===1);assert.match(await p.locator('#productBody').innerText(),/อะไหล่ 9999/);
+    await p.locator('[data-xlf-col="productName"]').click();await p.waitForSelector('.xlf-popover');
+    assert.equal(await p.locator('.xlf-item').count(),200);
+    await p.locator('.xlf-search').fill('อะไหล่ 9998');assert.equal(await p.locator('.xlf-item').count(),1);await p.evaluate(()=>XLF.closePopover());
+    // Export every match, including rows not loaded in the table, with the real cursor implementation.
+    await p.locator('#tableSearchInput').fill('อะไหล่ 99');await p.waitForFunction(()=>productRemote.total===111);
+    await p.evaluate(()=>changePageSize(25));await p.waitForFunction(()=>productsCache.length===25);
+    const download=p.waitForEvent('download');await p.evaluate(()=>exportAllProductFields());const file=await download;
+    const csv=fs.readFileSync(await file.path(),'utf8');assert.equal(csv.trim().split('\r\n').length,112);assert.match(csv,/P09999/);
+    assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);
+    await p.evaluate(()=>{apiFailure='getAllProducts';loadTable(true);});await p.waitForFunction(()=>document.getElementById('recordCountToolbar').innerText.includes('โหลดไม่สำเร็จ'));
+    await p.evaluate(()=>{apiFailure='';loadTable(true);});await p.waitForFunction(()=>productRemote.total===111&&document.querySelectorAll('#productBody tr').length===25);
+    await p.screenshot({path:path.join(output,'catalog-10000-viewer.png')});assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('10,000 POS matches mount only 60 rows; keyboard crosses windows and barcode selects the final product',async()=>{
+    const p=await pageFor('StockIssue.html');
+    await p.evaluate(()=>{
+      products=Array.from({length:10000},(_,i)=>Object.assign({},fixtureProduct,{id:'P'+i,productCode:'P'+i,barcode:'BC'+i,productName:'สินค้า '+String(i).padStart(5,'0'),_imageLoaded:true}));
+      selIdx=0;renderResults();
+    });
+    assert.equal(await p.locator('#resultList .res-row').count(),60);assert.equal(await p.evaluate(()=>results.length),10000);
+    await p.evaluate(()=>{selIdx=59;moveSel(1);});assert.equal(await p.evaluate(()=>resultWindowStart),60);assert.equal(await p.locator('#resultList .sel').count(),1);
+    await p.evaluate(()=>moveSel(-1));assert.equal(await p.evaluate(()=>resultWindowStart),0);
+    await p.locator('#searchInput').fill('BC9999');await p.locator('#searchInput').press('Enter');assert.equal(await p.evaluate(()=>basket[0].productCode),'P9999');
+    await p.screenshot({path:path.join(output,'catalog-10000-pos.png')});assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('compact catalog RPC decoding preserves zero values, IDs, Unicode and nested document bootstraps',async()=>{
+    const p=await pageFor('Quotation.html');
+    await p.evaluate(()=>{
+      respond=()=>({products:{catalogFormat:1,fields:['productCode','productName','sellingPrice','currentStock','carIds'],rows:[['Pท้าย','ชื่อไทย',0,0,['CAR1']]]}});
+      callApi('getQuotationPageData',[],value=>{window.decodedCatalog=value.products;});
+    });
+    await p.waitForFunction(()=>window.decodedCatalog);assert.deepEqual(await p.evaluate(()=>({id:decodedCatalog[0].id,price:decodedCatalog[0].sellingPrice,stock:decodedCatalog[0].currentStock,cars:decodedCatalog[0].carIds})),{id:'Pท้าย',price:0,stock:0,cars:['CAR1']});
+    await p.evaluate(()=>{
+      respond=()=>({catalogFormat:1,fields:['productCode'],rows:[null]});window.decodeFailures=0;
+      callApi('getAllProducts',[],()=>{throw Error('malformed result accepted');},()=>decodeFailures++);
+      callApi('getAllProducts',[],()=>{throw Error('malformed duplicate accepted');},()=>decodeFailures++);
+    });
+    await p.waitForFunction(()=>decodeFailures===2);assert.equal(await p.evaluate(()=>syyPendingReads.size),0);
+    await p.evaluate(()=>{respond=()=>({catalogFormat:1,fields:['productCode'],rows:[['RECOVERED']]});callApi('getAllProducts',[],rows=>window.recoveredCatalog=rows);});
+    await p.waitForFunction(()=>window.recoveredCatalog);assert.equal(await p.evaluate(()=>recoveredCatalog[0].id),'RECOVERED');assert.deepEqual(p.errors,[]);await p.close();
+  });
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));
 }

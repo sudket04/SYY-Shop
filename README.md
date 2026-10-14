@@ -4,6 +4,8 @@
 
 Source ผ่านการแก้ audit 1–40 และทดสอบในเครื่องแล้ว **Production URL ที่อนุมัติอัปเดตเป็นรุ่น 93 เมื่อ 13 ตุลาคม 2569 เวลา 17:40** โดยตรวจ Source ครบ 24 ไฟล์และหน้า Login จริงผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-13.md). ผล local/mock และการเปิดหน้า Login ยังไม่ยืนยันการใช้งานหลัง Login, OAuth/Mail, IAM/indexes, billing หรือข้อมูลจริงทุก workflow; งาน [Staging UAT](docs/STAGING-UAT-2026-10-12.md) และการตรวจรับที่ต้องใช้บัญชีจริงยังค้างอยู่
 
+งานรองรับสินค้า 10,000 รายการปรับ Source แล้ว: ตารางแบ่งหน้าจาก server, metadata รูปเฉพาะรายการที่แสดง, compact catalog และ POS ครั้งละ 60 แถว ดู [ผลทดสอบและข้อจำกัด](docs/CATALOG-SCALE-2026-10-14.md) — ชุดนี้ยังไม่ได้ Deploy และ cold product scan ยังคงอ่านครบทั้งแค็ตตาล็อกเพื่อรักษาผลค้นหาเดิม
+
 ## โครงสร้าง
 
 - `Code.gs`: routing, authenticated API gateway, Firestore, stock/documents, accounts, backup/restore และ maintenance workers

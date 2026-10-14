@@ -150,7 +150,7 @@
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
     <button class="btn btn-ghost" onclick="loadTable()">🔄 รีเฟรช</button>
-    <button class="btn btn-ghost" onclick="exportAllProductFields()">📥 Export CSV ตามตัวกรอง</button>
+    <button id="btnProductExport" class="btn btn-ghost" onclick="exportAllProductFields()">📥 Export CSV ตามตัวกรอง</button>
     <button id="btnAddProduct" class="btn btn-primary" onclick="openAddModal()" <?= ['admin','staff'].indexOf(userRole)<0 ? 'hidden' : '' ?>>+ เพิ่มสินค้า</button>
   </div>
 </div>
@@ -592,6 +592,7 @@
 
   // State variables
   var productsCache     = [];
+  var productRemote=null,productLoadSequence=0,productSearchTimer=null,productExportBusy=false;
   var filteredProducts  = [];
   var masterData        = {};
   var editingDocId      = null;
@@ -613,18 +614,16 @@
     loadProductColumnPreference();
     renderProductColumnPicker();
     renderProductTableStructure();
-    // ★ โหลดแบบเรียงลำดับ (ไม่ใช่พร้อมกัน) เพื่อลดการอ่าน Firestore ซ้ำ
-    //   getAllMasterDropdowns() และ getAllProducts() ต่างดึง 5 master collections ชุดเดียวกัน
-    //   ถ้ายิงพร้อมกัน = คนละ Apps Script execution รันขนานกัน มักอ่าน cache ไม่ทันกัน (race)
-    //   ทำให้ยิง Firestore ซ้ำเป็น 10 reads แทนที่จะเป็น 5 ทุกครั้งที่เปิดหน้า
-    //   เรียงลำดับแทน: คำขอแรกเขียน cache เสร็จก่อน คำขอที่สองจึงอ่าน cache เจอแน่นอน
-    //   (ไม่รวมเป็น endpoint เดียว เพราะเคยลองแล้วชนข้อจำกัดขนาด response ทำให้หน้าค้าง — ดูหมายเหตุด้านล่าง)
+    // Initial response contains one product page and reusable master dropdowns.
     loadTable(true);
     document.addEventListener('click',function(e){if(!e.target.closest('.column-picker'))closeColumnPicker();});
     document.addEventListener('keydown',function(e){if(e.key==='Escape')closeColumnPicker();});
   };
 
-  XLF.bindHeaderClicks('#productThead', function() { return productsCache; }, filterAndRenderTable);
+  XLF.bindHeaderClicks('#productThead', function(column) {
+    if(!productRemote)return productsCache;
+    return new Promise(function(resolve,reject){callApi('getProductCatalogFacets',[productPageOptions(),column],resolve,reject);});
+  }, function(){currentPage=1;filterAndRenderTable();});
 
   // ★ (ทำความสะอาดโค้ด) เดิมมี window.addEventListener('message', ...) รอรับ 'REFRESH_MAIN_TABLE'
   //   จากหน้าอื่น แต่ index.html (parent) ไม่ได้ forward ข้อความไปยัง iframe พี่น้องเลย
@@ -689,11 +688,7 @@
     else if (d.action === 'MASTER_DELTA') applyMasterDeltaToProduct(d);
   });
 
-  // ★ ย้อนกลับมาใช้ 2 คำขอแยกกัน (loadDropdowns + loadTable) แทนการรวมเป็น endpoint เดียว
-  //   เพราะการรวม response ก้อนใหญ่ (dropdown ทั้งหมด + สินค้าทั้งหมด) เป็นคำขอเดียวของ
-  //   google.script.run เสี่ยงชนข้อจำกัดเรื่องขนาด/การ serialize ทำให้หน้าค้างที่ "กำลังโหลด..."
-  //   ตลอดโดยไม่ขึ้น error เลย (ทั้ง success และ failure handler ไม่ถูกเรียก) — แยกกลับเป็น 2 คำขอ
-  //   เล็กเหมือนเดิมเพื่อความเสถียร แลกกับการลด round-trip ที่ได้ประโยชน์น้อยกว่าความเสี่ยงนี้
+  // Standalone dropdown refresh for existing form integrations.
   var dropdownRetried = false;
   function loadDropdowns(onDone) {
     callApi('getAllMasterDropdowns', [], function(data) {
@@ -745,28 +740,24 @@
     if (currentVal) { sel.value = currentVal; }
   }
 
-  function loadTable(withMasters) {
-    var revision=syyDataRevision();
-    var tbody = document.getElementById('productBody');
-    tbody.innerHTML = skeletonRows(visibleProductColumns.length,6);
-    updateProductRecordCounts('กำลังโหลด');
-
-    callApi('getAllProducts', withMasters?[{includeMasters:true}]:[], function(data) {
-        if(revision!==syyDataRevision()){syyDataFailed();filterAndRenderTable();return;}
-        if(withMasters){masterData=data.masters||{};data=data.products;applyProductDropdowns();syyPostParent({action:'PRODUCTS_READY'});}
-        syyDataLoaded();
-        try {
-          productsCache = data || [];
-          filterAndRenderTable();
-        } catch (e) {
-          console.error('filterAndRenderTable error:', e);
-          tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'แสดงข้อมูลไม่สำเร็จ',sub:e.message});
-        }
-      }, function(err) {
-        syyDataFailed();updateProductRecordCounts('โหลดไม่สำเร็จ');
-        tbody.innerHTML = emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:syyErrorMessage(err),
-          actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]});
-      });
+  function productPageOptions(){return Object.assign({},XLF.snapshot('products'),{search:document.getElementById('tableSearchInput').value,page:currentPage,pageSize:pageSize});}
+  function loadTable(withMasters) { loadProductPage(!!withMasters,true); }
+  function loadProductPage(withMasters,bootstrap){
+    var revision=syyDataRevision(),sequence=++productLoadSequence,tbody=document.getElementById('productBody');
+    tbody.innerHTML=skeletonRows(visibleProductColumns.length,6);updateProductRecordCounts('กำลังโหลด');
+    var options=productPageOptions();options.paged=true;options.includeMasters=withMasters;
+    callApi(bootstrap?'getAllProducts':'getProductCatalogPage',[options],function(data){
+      if(sequence!==productLoadSequence)return;
+      if(revision!==syyDataRevision()){syyDataFailed();loadProductPage(withMasters,bootstrap);return;}
+      try{
+        if(withMasters){masterData=data.masters||{};applyProductDropdowns();syyPostParent({action:'PRODUCTS_READY'});}
+        productRemote=data.catalogPage?data:null;
+        productsCache=Array.isArray(data)?data:data.products||[];
+        if(productRemote)currentPage=data.page;
+        syyDataLoaded();filterAndRenderTable(true);
+      }catch(e){failed(e);}
+    },failed);
+    function failed(err){if(sequence!==productLoadSequence)return;syyDataFailed();updateProductRecordCounts('โหลดไม่สำเร็จ');tbody.innerHTML=emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:syyErrorMessage(err),actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable(true)'}]});}
   }
 
   // ==========================================
@@ -774,7 +765,8 @@
   // ==========================================
   function onSearchInput() {
     currentPage = 1;
-    filterAndRenderTable();
+    clearTimeout(productSearchTimer);
+    if(productRemote){++productLoadSequence;productSearchTimer=setTimeout(filterAndRenderTable,200);}else filterAndRenderTable();
   }
 
   function changePageSize(val) {
@@ -784,7 +776,8 @@
     filterAndRenderTable();
   }
 
-  function filterAndRenderTable() {
+  function filterAndRenderTable(alreadyLoaded) {
+    if(productRemote && alreadyLoaded!==true){loadProductPage(false,false);return;}
     renderProductTableStructure();
 
     var query = (document.getElementById('tableSearchInput').value || '').trim().toLowerCase();
@@ -805,7 +798,7 @@
     }
 
     // ★ ผ่านตัวกรอง/เรียงคอลัมน์แบบ Excel ก่อนแบ่งหน้า (filter/sort ต้องทำก่อน paginate เสมอ)
-    filteredProducts = XLF.apply('products', searched, [
+    filteredProducts = productRemote ? productsCache.slice() : XLF.apply('products', searched, [
       { col: 'productCode' }, { col: 'productName' }, { col: 'partType' }, { col: 'partNumber' },
       { col: 'brandName' }, { col: 'categoryName' }, { col: 'vendorName' }, { col: 'zoneName' },
       { col: 'costPrice', type: 'number' }, { col: 'sellingPrice', type: 'number' },
@@ -816,18 +809,18 @@
     if (XLF.anyActiveFilter('products')) {
       summaryEl.classList.add('show');
       document.getElementById('xlfSummaryText').innerText =
-        'กรองอยู่ ' + filteredProducts.length + ' จาก ' + productsCache.length + ' รายการ';
+        'กรองอยู่ ' + (productRemote?productRemote.total:filteredProducts.length) + ' จาก ' + (productRemote?productRemote.unfilteredTotal:productsCache.length) + ' รายการ';
     } else {
       summaryEl.classList.remove('show');
     }
 
-    var total = filteredProducts.length;
+    var total = productRemote?productRemote.total:filteredProducts.length;
     updateProductRecordCounts('📋 ทั้งหมด '+total+' รายการ');
 
     var tbody = document.getElementById('productBody');
 
     if (total === 0) {
-      tbody.innerHTML = productsCache.length
+      tbody.innerHTML = (productRemote?productRemote.unfilteredTotal:productsCache.length)
         ? emptyStateHtml(visibleProductColumns.length,{title:'ไม่พบสินค้าที่ตรงกับตัวกรอง',sub:'ลองลดคำค้นหรือล้างตัวกรอง',
             actions:[{label:'ล้างตัวกรอง',onclick:'XLF.clearAll(\'products\');document.getElementById(\'tableSearchInput\').value=\'\';onSearchInput();'}].concat(PRODUCT_CAN_EDIT?[{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]:[])})
         : emptyStateHtml(visibleProductColumns.length,{icon:'🛒',title:'ยังไม่มีข้อมูลสินค้า',sub:PRODUCT_CAN_EDIT?'เพิ่มรายการแรกเพื่อเริ่มใช้งาน':'ยังไม่มีสินค้าให้แสดง กรุณาติดต่อผู้ดูแล',
@@ -842,7 +835,7 @@
 
     var startIdx = (currentPage - 1) * pageSize;
     var endIdx   = Math.min(startIdx + pageSize, total);
-    var pageItems = filteredProducts.slice(startIdx, endIdx);
+    var pageItems = productRemote?filteredProducts:filteredProducts.slice(startIdx, endIdx);
 
     var rowsHtml = pageItems.map(function(item, index) {
       var rowNum = startIdx + index + 1;
@@ -905,16 +898,26 @@
   }
 
   function nextPage() {
-    var totalPages = Math.ceil(filteredProducts.length / pageSize);
+    var totalPages = Math.ceil((productRemote?productRemote.total:filteredProducts.length) / pageSize);
     if (currentPage < totalPages) {
       currentPage++;
       filterAndRenderTable();
     }
   }
 
-  // Export ใช้ทุก field เสมอ ไม่ขึ้นกับคอลัมน์ที่ผู้ใช้เลือกแสดง และไม่อ่าน Firestore เพิ่ม
-  function exportAllProductFields(){
-    var rows=(filteredProducts||[]).slice();
+  // Export retains every filtered row/field. Server pages hydrate images on demand.
+  function exportAllProductFields(exportRows){
+    if(productRemote&&!Array.isArray(exportRows)){
+      if(productExportBusy)return;productExportBusy=true;
+      var options=productPageOptions(),collected=[];options.page=1;options.pageSize=200;
+      var exportButton=document.getElementById('btnProductExport');btnBusy(exportButton,'กำลังเตรียม Export…');
+      function next(){callApi('getProductCatalogPage',[options],function(data){
+        collected=collected.concat(data.products);exportButton.textContent='Export '+collected.length+' / '+data.total;
+        if(data.hasMore){options.cursor=data.nextCursor;setTimeout(next,0);}else{productExportBusy=false;btnDone(exportButton);exportAllProductFields(collected);}
+      },function(error){productExportBusy=false;btnDone(exportButton);swyError('Export ไม่สำเร็จ',esc(syyErrorMessage(error)));});}
+      next();return;
+    }
+    var rows=Array.isArray(exportRows)?exportRows:(filteredProducts||[]).slice();
     if(!rows.length){swyWarning('ไม่มีข้อมูลสำหรับ Export');return;}
     var fields=[
       ['รหัสสินค้า','productCode'],['ชื่อสินค้า','productName'],['ประเภท','partType'],['รหัสผู้ผลิต (P/N)','partNumber'],
@@ -1602,7 +1605,7 @@ function applyProductDropdowns(){
 <script>
 window.addEventListener('load',function(){if(!PRODUCT_CAN_EDIT)return;syyDraftRegister('product',{
  capture:function(){if(!document.getElementById('productModal').classList.contains('active'))return null;return {fields:syyReadFields('#productModal'),editingDocId:editingDocId,originalStock:document.getElementById('inp_currentStock').dataset.originalStock,cars:selectedCarIds,images:productImageUrls,base64:productImageDraftBase64,primary:productPrimaryImageIndex,imageDirty:productImageDraftDirty,imageUpdateTime:productImageUpdateTime,unknown:!!syyUnknownWrites.saveProduct};},
- restore:function(d){if(!d||!d.fields)return;if(d.editingDocId){if(!productsCache.some(function(p){return (p.id||p.productCode)===d.editingDocId;})){toast('สินค้าเดิมไม่อยู่ในรายการล่าสุด กรุณาตรวจร่างกับผู้ดูแล','warn');return;}openEditModal(d.editingDocId,true);}else openAddModal('',true);syyWriteFields(d.fields);document.getElementById('inp_currentStock').dataset.originalStock=d.originalStock;selectedCarIds=d.cars||[];productImageUrls=d.images||[];productImageDraftBase64=d.base64||[];productPrimaryImageIndex=d.primary||0;productImageDraftDirty=!!d.imageDirty;productImageUpdateTime=d.imageUpdateTime||'';renderProductImageSlots(editingDocId);renderCarChips();if(d.unknown){syyUnknownWrites.saveProduct=true;syyLockUnknownWrite('saveProduct');}}
+ restore:function(d){if(!d||!d.fields)return;if(d.editingDocId){if(!productsCache.some(function(p){return (p.id||p.productCode)===d.editingDocId;})){callApi('getProductById',[d.editingDocId],function(item){if(!item){toast('ไม่พบสินค้าเดิม กรุณาตรวจร่างกับผู้ดูแล','warn');return;}item.id=item.productCode;productsCache.push(item);syyDrafts.product.adapter.restore(d);},function(error){toast(syyErrorMessage(error),'err');});return;}openEditModal(d.editingDocId,true);}else openAddModal('',true);syyWriteFields(d.fields);document.getElementById('inp_currentStock').dataset.originalStock=d.originalStock;selectedCarIds=d.cars||[];productImageUrls=d.images||[];productImageDraftBase64=d.base64||[];productPrimaryImageIndex=d.primary||0;productImageDraftDirty=!!d.imageDirty;productImageUpdateTime=d.imageUpdateTime||'';renderProductImageSlots(editingDocId);renderCarChips();if(d.unknown){syyUnknownWrites.saveProduct=true;syyLockUnknownWrite('saveProduct');}}
 });});
 </script>
 <script>

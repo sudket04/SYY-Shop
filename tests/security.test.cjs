@@ -77,7 +77,7 @@ test('unauthenticated callers cannot reach any registered V1 or V2 worker',()=>{
 });
 test('all V1 operations retain names, private dispatch, response and existing role policy',()=>{
   const s=setup();
-  const expected={viewer: ['getAllProducts','getAllMasterDropdowns','getBrands','getCategories','getVendorsFull','getCustomersFull',
+  const expected={viewer: ['getProductById','getProductCatalogPage','getProductCatalogFacets','getProductImageBatch','getAllProducts','getAllMasterDropdowns','getBrands','getCategories','getVendorsFull','getCustomersFull',
     'getZonesFull','getCarsFull','getPurchaseOrderPageData','getTaxInvoicePageData','getTaxInvoiceListData','getQuotationPageData',
     'getQuotationListData','getStockMovements','getStockMovementPage','getDashboardBootstrap','getDashboardDelta','saveTaxInvoice','saveQuotation',
     'updateQuotationStatus','authGetMyProfile','authChangePassword','authLogout'],
