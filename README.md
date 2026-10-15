@@ -38,6 +38,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [Production รุ่น 96: Deploy main 3860e9d, checksum 24 ไฟล์ และ Login smoke](docs/DEPLOYMENT-2026-10-16.md)
 - [Hybrid Cache: IndexedDB, product cursor, ผลจำลองลด product reads 99.49% และ Delta Sync ที่ยังเหลือ](docs/HYBRID-CACHE-2026-10-16.md)
 - [Cache quality: รีเฟรช DB จริง แยกโหลดส่วนเปลี่ยน และผลจำลอง 10,000 สินค้า](docs/CACHE-QUALITY-2026-10-15.md)
 - [Backup timeout: สาเหตุจาก Execution จริง การทำต่อด้วย checkpoint และ rollout ที่รออนุมัติ](docs/BACKUP-TIMEOUT-FIX-2026-10-15.md)
@@ -56,7 +57,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 งานค้างที่ต้องใช้บริการจริง: การตรวจรับหลัง Login ด้วยบัญชีจริง, Staging UAT, OAuth/Mail/IAM/index confirmation, ผล Backup รอบแรก และ Firestore/latency measurements. สถานะส่ง source รอบก่อนอยู่ใน [Main delivery](docs/MAIN-DELIVERY-2026-10-12.md); รายงานรอบก่อนบันทึกสถานะ ณ เวลาที่จัดทำ
 
-ณ 13 ตุลาคม 2569 Head และ Production รุ่น 93 ตรงกับ runtime commit `4763480` ครบ 24 ไฟล์ อัปเดต Deployment เดิมจากรุ่น 92 โดยคง URL และสิทธิ์เดิม เปลี่ยนเฉพาะ 4 ไฟล์ UI ล่าสุด; Backend/manifest ตรงกับรุ่น 92 และ Trigger Backup เดิมยังอยู่ หน้า Login บน `/exec` เปิดได้โดยไม่พบ ReferenceError
+สถานะล่าสุด 16 ตุลาคม 2569: Deployment URL เดิมอัปเดตเป็น **รุ่น 96** ด้วย runtime `3860e9d` แล้ว ยืนยัน Source ของรุ่นที่เผยแพร่ครบ 24/24 ไฟล์และหน้า Login จริงเปิดได้ คง URL/สิทธิ์เดิม Trigger `dailyBackupJob_` แสดงรุ่น 96; authenticated UAT และผล Backup รอบใหม่ยังรอตรวจจริง ดูรายงาน Deployment ด้านบน
 
 ## แนวทาง Git ปัจจุบัน
 

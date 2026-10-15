@@ -1,5 +1,7 @@
 # Hybrid Cache audit and implementation — 16 October 2026
 
+**Rollout ภายหลัง:** ผู้ใช้อนุมัติ Deploy และอัปเดต URL เดิมเป็น Version 96 เมื่อ 16 ตุลาคม 2569 เวลา 06:31 แล้ว ตรวจ published Source ครบ 24/24 ไฟล์ตรง `3860e9d` และ Login smoke ผ่าน ดู [ผล Deployment](DEPLOYMENT-2026-10-16.md) ข้อความ “ยังไม่ Deploy” ด้านล่างเป็นสถานะ ณ implementation; ข้อจำกัด Delta/production UAT ยังใช้ตามเดิม
+
 ## ขอบเขตและสถานะ
 
 ตรวจและปรับจาก `main` baseline `57da06e22b500629bcad9751cef10e6ec722ec54` ตาม Hybrid Cache task โดยคง HTML Service → `google.script.run` → `apiGateway` → Firestore REST เดิม ไม่เพิ่ม Firebase SDK, Redis, Cloud Functions หรือ dependency ใหม่
