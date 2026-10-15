@@ -44,9 +44,9 @@ test('force/explicit refresh and security APIs bypass browser cache; legacy resu
  const old=b.read('getZonesFull');b.calls.at(-1).ok([{id:'Z1'}]);assert.equal(old.value[0].id,'Z1');b.read('getZonesFull');assert.equal(b.calls.length,7);
 });
 test('session persistence is bounded and survives reload, isolates accounts/roles and clears on logout',()=>{
- const b=browser();b.read('getBrands');b.complete([{id:'B1'}]);assert.equal(Object.keys(b.storage).length,1);b.c.syyReadCache.clear();const restored=b.read('getBrands');b.flush();assert.equal(restored.value[0].id,'B1');assert.equal(b.calls.length,1);
- b.identity({owner:'alice',role:'viewer'});b.read('getBrands');assert.equal(b.calls.length,2);b.complete([{id:'VIEWER'}]);b.c.syyClearReadCache();assert(!Object.keys(b.storage).some(k=>k.includes(':viewer:')));
- b.identity({owner:'bob',role:'staff'});b.read('getBrands');assert.equal(b.calls.length,3);
+ const b=browser();b.read('getBrands');b.complete([{id:'B1'}]);assert.equal(Object.keys(b.storage).length,1);b.c.syyReadCache.clear();const restored=b.read('getBrands');assert.equal(restored.value,undefined);assert.equal(b.calls.length,2);b.calls.at(-1).ok({__syyCache:1,version:'v1',notModified:true});assert.equal(restored.value[0].id,'B1');
+ b.identity({owner:'alice',role:'viewer'});b.read('getBrands');assert.equal(b.calls.length,3);b.complete([{id:'VIEWER'}]);b.c.syyClearReadCache();assert(!Object.keys(b.storage).some(k=>k.includes(':viewer:')));
+ b.identity({owner:'bob',role:'staff'});b.read('getBrands');assert.equal(b.calls.length,4);
 });
 test('quota failure preserves memory cache and cached table bootstrap seeds only supplied complete facets',()=>{
  const b=browser();b.c.sessionStorage.setItem=()=>{throw Error('quota');};b.read('getAllProducts',[{paged:true,includeMasters:true}]);b.complete({products:[],facets:{partType:{values:['แท้','เทียบ'],numeric:false}},facetVersion:'catalog-v1'});
@@ -181,5 +181,10 @@ test('server and browser conditional caches cannot extend source expiry even whe
 test('read metrics count actual coalesced RPCs and elapsed time without recording arguments or cached hits as requests',()=>{
  const b=browser();b.read('getBrands');b.read('getBrands');b.tick(25);b.complete([]);b.read('getBrands');b.flush();assert.deepEqual(plain(b.c.syyCacheStats.byApi.getBrands),{rpcCount:1,errorCount:0,totalMs:25,maxMs:25,lastMs:25});
  b.read('getBrands',[],{fresh:true});b.tick(10);b.calls.at(-1).fail({message:'network'});assert.equal(b.c.syyCacheStats.byApi.getBrands.rpcCount,2);assert.equal(b.c.syyCacheStats.byApi.getBrands.errorCount,1);assert.equal(b.c.syyCacheStats.byApi.getBrands.totalMs,35);assert.equal(b.c.syyCacheStats.hits,1);
+});
+
+test('changing token or role without starting another read still rejects pending and scheduled cached responses',()=>{
+ const b=browser(),pending=b.read('getBrands');b.c.AUTH_TOKEN='new-session';b.complete([{id:'OLD'}]);assert.match(pending.error.message,/เปลี่ยนแปลง/);assert.equal(b.c.syyReadCache.size,0);
+ b.read('getBrands');b.complete([{id:'NEW'}]);const scheduled=b.read('getBrands');b.identity({owner:'alice',role:'viewer'});b.flush();assert.match(scheduled.error.message,/เปลี่ยนแปลง/);assert.equal(b.c.syyReadCache.size,0);
 });
 

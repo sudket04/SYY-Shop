@@ -1085,63 +1085,9 @@ function getAllProducts_(options) {
     var masters = fetchCollectionsParallel_(
       ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars"]
     );
-    var brandMap  = buildMapFromDocs_(masters["Master_Brands"],     "Brand_Name");
-    var catMap    = buildMapFromDocs_(masters["Master_Categories"], "Category_Name");
-    var vendorMap = buildMapFromDocs_(masters["Master_Vendors"],    "Vendor_name");
-    var zoneMap   = buildZoneMapFromDocs_(masters["Master_Zones"]);
-    var carMap    = buildCarMapFromDocs_(masters["Master_Cars"]);
-    var imageMap  = options && options.omitImages ? {} : getProductImageUrlMap_();
+    var imageMap = options && options.omitImages ? {} : getProductImageUrlMap_();
     var productDocs = fetchCollectionDocsCached_("Master_Products");
-
-    productDocs.forEach(function(doc) {
-      var id = doc.id, f = doc.fields || {};
-      var brandId  = parseFirestoreValue_(f.Brand_ID)         || "";
-      var catId    = parseFirestoreValue_(f.Category_ID)      || "";
-      var vendorId = parseFirestoreValue_(f.Default_Vendor_ID)|| "";
-      var zoneId   = parseFirestoreValue_(f.Zone_ID)          || "";
-      var carIds = parseFirestoreValue_(f.Car_IDs);
-      if (!carIds || (Array.isArray(carIds) && carIds.length === 0)) {
-        var legacyCarId = parseFirestoreValue_(f.Car_ID);
-        carIds = legacyCarId ? [legacyCarId] : [];
-      } else if (!Array.isArray(carIds)) carIds = [carIds];
-      var carModelNames = carIds.map(function(cid) { return carMap[cid] || cid; }).filter(Boolean);
-
-      var imageState = imageMap[id] || {};
-      if (typeof imageState === "string") {
-        imageState = { primary: imageState, urls: imageState ? [imageState] : [], primaryIndex: 0 };
-      }
-      var imageUrls = Array.isArray(imageState.urls) ? imageState.urls.slice(0, 3) : [];
-      var primaryIndex = parseInt(imageState.primaryIndex, 10) || 0;
-
-      products.push({
-        id           : id, // alias สำหรับ UI เก่าที่อ้าง p.id
-        productCode  : id,
-        productName  : parseFirestoreValue_(f.Product_Name) || "",
-        partType     : parseFirestoreValue_(f.Part_Type)    || "",
-        partNumber   : String(parseFirestoreValue_(f.Part_Number) || ""),
-        barcode      : String(parseFirestoreValue_(f.Barcode) || ""),
-        barcodeGenerated : parseFirestoreValue_(f.Barcode_Generated) === "true",
-        imageUrl     : imageState.primary || imageUrls[primaryIndex] || imageUrls[0] || "",
-        imageUrls    : imageUrls,
-        primaryImageIndex: primaryIndex,
-        imageUpdateTime:imageState.updateTime || "",
-        brandId      : brandId,
-        brandName    : brandMap[brandId] || brandId,
-        categoryId   : catId,
-        categoryName : catMap[catId] || catId,
-        vendorId     : vendorId,
-        vendorName   : vendorMap[vendorId] || vendorId,
-        zoneId       : zoneId,
-        zoneName     : zoneId === "PENDING" ? "รอดำเนินการ" : (zoneMap[zoneId] || zoneId),
-        carIds       : carIds,
-        carModel     : carModelNames.join(', '),
-        costPrice    : parseFloat(parseFirestoreValue_(f.Cost_Price) || 0),
-        sellingPrice : parseFloat(parseFirestoreValue_(f.Selling_Price) || 0),
-        currentStock : parseFloat(parseFirestoreValue_(f.Current_Stock) || 0),
-        minStock     : parseFloat(parseFirestoreValue_(f.Min_Stock) || 0),
-        status       : parseFirestoreValue_(f.Status) || "Active"
-      });
-    });
+    products=mapProductPageDocs_(productDocs,masters,imageMap);
   } catch (e) { console.error("getAllProducts_ read failed", e); throw e; }
   return options && options.includeMasters ? {products:products,masters:getAllMasterDropdowns_(masters)} : products;
 }
@@ -1196,6 +1142,9 @@ function productCatalogCursor_(value){var encoded=Utilities.base64Encode(JSON.st
 function getProductCatalogPage_(options){
   options=options||{};var spec=productCatalogSpec_(options),size=options.pageSize==null?50:Number(options.pageSize),page=options.page==null?1:Number(options.page);
   if(!Number.isInteger(size)||size<1||size>200||!Number.isInteger(page)||page<1||page>100000)throw new Error('ขนาดหน้าสินค้าไม่ถูกต้อง');
+  // Opt-in wire format for new clients. Complex substring/XLFilter queries keep
+  // their complete-dataset semantics; ordinary browsing never scans the catalog.
+  if(options.cursorMode===true&&!spec.search&&!Object.keys(spec.filters).length&&(!spec.sortCol||spec.sortCol==='productCode'))return getProductBrowsePage_(options,spec,size,page);
   var version=PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|'),offset=(page-1)*size,query=readCacheKey_(JSON.stringify(spec)),issuedAt=Date.now();
   if(options.cursor){try{
     if(typeof options.cursor!=='string'||options.cursor.length>4096)throw Error('invalid');
@@ -1223,6 +1172,53 @@ function getProductCatalogPage_(options){
     response.facets={};columns.forEach(function(c){if(sets[c].size<=300)response.facets[c]={values:Array.from(sets[c]),numeric:false};});response.facetVersion=readCacheVersion_(PRODUCT_CATALOG_SCOPES);
   }catch(ignored){delete response.facets;}
   return response;
+}
+function getProductBrowsePage_(options,spec,size,page){
+  var version=PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|'),scope=validatedGatewaySession_&&validatedGatewaySession_.session;
+  var owner=scope?scope.username+':'+scope.role:'internal',query=readCacheKey_(JSON.stringify([spec,size,owner])),cursor=null;
+  if(options.cursor){try{
+    if(typeof options.cursor!=='string'||options.cursor.length>4096)throw Error('cursor');
+    var parts=options.cursor.split('.');if(parts.length!==2||movementCursorSignature_('catalog-v1:'+parts[0])!==parts[1])throw Error('signature');
+    cursor=JSON.parse(Utilities.newBlob(Utilities.base64Decode(parts[0])).getDataAsString());
+    if(cursor.mode!=='browse-v1'||cursor.query!==query||cursor.version!==version||cursor.page!==page||!validDocumentId_(cursor.last)||!Number.isFinite(cursor.at)||Date.now()-cursor.at>=120000||cursor.at>Date.now()+60000||!validIsoTimestamp_(cursor.readTime))throw Error('stale');
+  }catch(e){productBrowseRestart_();}}
+  else if(page!==1)throw new Error('กรุณาเปิดหน้าก่อนหน้าก่อนเปลี่ยนหน้า');
+  // Shared rows contain no caller-specific data. Sign continuation per caller
+  // after cache reuse, so five authorized users share the same initial query.
+  var key='product-browse-v1:'+readCacheKey_(JSON.stringify([spec,size,cursor&&cursor.last,cursor&&cursor.readTime]));
+  var response=cachedReadResult_(key,PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]),30000,function(){
+    var fields=['Product_Name','Part_Type','Part_Number','Barcode','Barcode_Generated','Brand_ID','Category_ID','Default_Vendor_ID','Zone_ID','Car_IDs','Car_ID','Cost_Price','Selling_Price','Current_Stock','Min_Stock','Status'];
+    var q={from:[{collectionId:'Master_Products'}],select:{fields:fields.map(function(f){return {fieldPath:f};})},orderBy:[{field:{fieldPath:'__name__'},direction:spec.sortAsc?'ASCENDING':'DESCENDING'}],limit:size+1};
+    if(cursor)q.startAt={values:[{referenceValue:fsDocPath_('Master_Products',cursor.last)}],before:false};
+    var body={structuredQuery:q};if(cursor)body.readTime=cursor.readTime;
+    var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});
+    if(res.getResponseCode()!==200)throw new Error('โหลดหน้าสินค้าไม่สำเร็จ กรุณารีเฟรชแล้วลองใหม่');
+    var entries=JSON.parse(res.getContentText()),readTime=cursor&&cursor.readTime||'',docs=[];
+    entries.forEach(function(entry){if(!readTime&&entry.readTime)readTime=entry.readTime;if(entry.document){var d=entry.document;docs.push({id:d.name.split('/').pop(),fields:d.fields||{},updateTime:d.updateTime||''});}});
+    if(!validIsoTimestamp_(readTime))throw new Error('ไม่พบ snapshot ของหน้าสินค้า กรุณาลองใหม่');
+    var more=docs.length>size;docs=docs.slice(0,size);
+    var refs={Master_Brands:[],Master_Categories:[],Master_Vendors:[],Master_Zones:[],Master_Cars:[]};
+    docs.forEach(function(d){var f=d.fields;[['Master_Brands','Brand_ID'],['Master_Categories','Category_ID'],['Master_Vendors','Default_Vendor_ID'],['Master_Zones','Zone_ID']].forEach(function(pair){var id=parseFirestoreValue_(f[pair[1]]);if(id&&id!=='PENDING')refs[pair[0]].push(id);});var cars=parseFirestoreValue_(f.Car_IDs);if(!cars||!cars.length)cars=[parseFirestoreValue_(f.Car_ID)];if(!Array.isArray(cars))cars=[cars];refs.Master_Cars=refs.Master_Cars.concat(cars.filter(Boolean));});
+    var masters=readProductReferenceDocs_(refs,true),rows=mapProductPageDocs_(docs,masters),images=getProductImageBatch_(docs.map(function(d){return d.id;}));
+    rows.forEach(function(row){Object.assign(row,images[row.id]);});
+    if(PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|')!==version)productBrowseRestart_();
+    return {catalogPage:true,cursorMode:true,products:rows,page:page,pageSize:size,total:null,unfilteredTotal:null,readTime:readTime,hasMore:more,createdAt:Date.now(),last:docs.length?docs[docs.length-1].id:''};
+  });
+  response=Object.assign({},response);response.page=page;
+  response.cacheExpiresAt=Math.min(response.createdAt+30000,(cursor?cursor.at:response.createdAt)+120000);
+  response.nextCursor=response.hasMore?productCatalogCursor_({mode:'browse-v1',query:query,version:version,page:page+1,last:response.last,readTime:response.readTime,at:cursor?cursor.at:response.createdAt}):'';
+  delete response.createdAt;delete response.last;return response;
+}
+function productBrowseRestart_(){var error=new Error('รายการสินค้าเปลี่ยนแปลงหรือหมดอายุ กรุณารีเฟรชเพื่อเริ่มหน้าแรก');error.restartPage=true;throw error;}
+function validIsoTimestamp_(value){return typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z$/.test(value)&&Number.isFinite(Date.parse(value));}
+function mapProductPageDocs_(docs,masters,imageMap){
+  var brands=buildMapFromDocs_(masters.Master_Brands,'Brand_Name'),categories=buildMapFromDocs_(masters.Master_Categories,'Category_Name'),vendors=buildMapFromDocs_(masters.Master_Vendors,'Vendor_name'),zones=buildZoneMapFromDocs_(masters.Master_Zones),cars=buildCarMapFromDocs_(masters.Master_Cars);
+  return docs.map(function(doc){var f=doc.fields,brand=parseFirestoreValue_(f.Brand_ID)||'',category=parseFirestoreValue_(f.Category_ID)||'',vendor=parseFirestoreValue_(f.Default_Vendor_ID)||'',zone=parseFirestoreValue_(f.Zone_ID)||'',carIds=parseFirestoreValue_(f.Car_IDs);if(!carIds||!carIds.length)carIds=[parseFirestoreValue_(f.Car_ID)].filter(Boolean);if(!Array.isArray(carIds))carIds=[carIds];
+    var row={id:doc.id,productCode:doc.id,productName:parseFirestoreValue_(f.Product_Name)||'',partType:parseFirestoreValue_(f.Part_Type)||'',partNumber:String(parseFirestoreValue_(f.Part_Number)||''),barcode:String(parseFirestoreValue_(f.Barcode)||''),barcodeGenerated:parseFirestoreValue_(f.Barcode_Generated)==='true',brandId:brand,brandName:brands[brand]||brand,categoryId:category,categoryName:categories[category]||category,vendorId:vendor,vendorName:vendors[vendor]||vendor,zoneId:zone,zoneName:zone==='PENDING'?'รอดำเนินการ':zones[zone]||zone,carIds:carIds,carModel:carIds.map(function(id){return cars[id]||id;}).filter(Boolean).join(', '),costPrice:parseFloat(parseFirestoreValue_(f.Cost_Price))||0,sellingPrice:parseFloat(parseFirestoreValue_(f.Selling_Price))||0,currentStock:parseFloat(parseFirestoreValue_(f.Current_Stock))||0,minStock:parseFloat(parseFirestoreValue_(f.Min_Stock))||0,status:parseFirestoreValue_(f.Status)||'Active'};
+    var image=imageMap&&imageMap[doc.id]||{};if(typeof image==='string')image={primary:image,urls:image?[image]:[],primaryIndex:0};
+    var urls=Array.isArray(image.urls)?image.urls.slice(0,3):[],primary=parseInt(image.primaryIndex,10)||0;
+    return Object.assign(row,{imageUrl:image.primary||urls[primary]||urls[0]||'',imageUrls:urls,primaryImageIndex:primary,imageUpdateTime:image.updateTime||''});
+  });
 }
 function getProductCatalogFacets_(options,column){
   if(PRODUCT_FILTER_FIELDS.indexOf(column)<0)throw new Error('คอลัมน์สินค้าไม่ถูกต้อง');
@@ -4143,13 +4139,13 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     logActivity_(session.username, fnName, a, result);
 
     if(cacheVersion!==null&&!(result&&result.success===false))try{
-      if(clientReadVersion_(cacheScopes)===cacheVersion)return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:clientReadExpiry_(cacheScopes,maxClientAge)};
+      if(clientReadVersion_(cacheScopes)===cacheVersion){var responseExpiry=clientReadExpiry_(cacheScopes,maxClientAge);if(result&&result.cursorMode===true&&Number.isFinite(result.cacheExpiresAt))responseExpiry=Math.min(responseExpiry,result.cacheExpiresAt);return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:responseExpiry};}
     }catch(ignored){}
     return result;
 
   } catch (e) {
     console.error("apiGateway error [" + fnName + "]:", e);
-    return { success: false, message: friendlyErrorMessage_(e) };
+    return { success: false, message: friendlyErrorMessage_(e), restartPage:e.restartPage===true };
   } finally { validatedGatewaySession_ = null; executionReadContext_ = null; }
 }
 
@@ -5710,8 +5706,21 @@ function readDocumentNumberSeeds_(collection,numberField){
  return JSON.parse(res.getContentText()).filter(function(row){return row.document;}).map(function(row){return {id:row.document.name.split('/').pop(),fields:row.document.fields||{}};});
 }
 
-function readProductReferenceDocs_(references){
- var result={};Object.keys(references).forEach(function(collection){var ids=references[collection].filter(Boolean),cached=peekCollectionDocsCache_(collection);
-   result[collection]=cached!==null?cached.filter(function(doc){return ids.indexOf(doc.id)>=0;}):ids.map(function(id){return Object.assign({id:id},readExistingDocument_(collection,id));});
- });return result;
+function readProductReferenceDocs_(references,projected){
+ var result={},requests=[],groups=[],fields={Master_Brands:['Brand_Name'],Master_Categories:['Category_Name'],Master_Vendors:['Vendor_name'],Master_Zones:['Area','Build','Floor','Rack_no','Rack_Level'],Master_Cars:['Brand','Model','Year','Type_Car']};
+ Object.keys(references).forEach(function(collection){
+   if(!Object.prototype.hasOwnProperty.call(fields,collection))throw new Error('ชุดข้อมูลอ้างอิงไม่ถูกต้อง');
+   var ids=Array.from(new Set(references[collection].filter(Boolean)));if(ids.length>2000||ids.some(function(id){return typeof id!=='string'||!validDocumentId_(id);}))throw new Error('ข้อมูลอ้างอิงสินค้าไม่ถูกต้อง');
+   var cached=ids.length?peekCollectionDocsCache_(collection):[];result[collection]=[];
+   if(cached!==null){result[collection]=cached.filter(function(doc){return ids.indexOf(doc.id)>=0;});return;}
+   if(ids.length===1&&!projected){groups.push({collection:collection,ids:ids,single:true});requests.push({url:'https://firestore.googleapis.com/v1/'+fsDocPath_(collection,ids[0]),method:'get',headers:getAuthHeader_(),muteHttpExceptions:true});return;}
+   for(var i=0;i<ids.length;i+=100){var batch=ids.slice(i,i+100),body={documents:batch.map(function(id){return fsDocPath_(collection,id);})};if(projected)body.mask={fieldPaths:fields[collection]};groups.push({collection:collection,ids:batch});requests.push({url:'https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:batchGet',method:'post',headers:getAuthHeader_(),muteHttpExceptions:true,payload:JSON.stringify(body)});}
+ });
+ if(requests.length)UrlFetchApp.fetchAll(requests).forEach(function(res,i){
+   var group=groups[i],seen=Object.create(null);if(group.single&&res.getResponseCode()===404)return;
+   if(res.getResponseCode()!==200)throw new Error('โหลดข้อมูลอ้างอิงสินค้าไม่สำเร็จ');
+   var rows=JSON.parse(res.getContentText());if(group.single)rows=[{found:rows}];rows.forEach(function(row){var name=row.found&&row.found.name||row.missing||'',id=name.split('/').pop();if(group.ids.indexOf(id)<0||name!==fsDocPath_(group.collection,id)||seen[id])throw new Error('ข้อมูลอ้างอิงสินค้าไม่ครบ');seen[id]=true;if(row.found)result[group.collection].push({id:id,fields:row.found.fields||{},updateTime:row.found.updateTime||''});});
+   if(group.ids.some(function(id){return !seen[id];}))throw new Error('ข้อมูลอ้างอิงสินค้าไม่ครบ');
+ });
+ return result;
 }

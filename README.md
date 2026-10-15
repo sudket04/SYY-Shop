@@ -38,6 +38,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [Hybrid Cache: IndexedDB, product cursor, ผลจำลองลด product reads 99.49% และ Delta Sync ที่ยังเหลือ](docs/HYBRID-CACHE-2026-10-16.md)
 - [Cache quality: รีเฟรช DB จริง แยกโหลดส่วนเปลี่ยน และผลจำลอง 10,000 สินค้า](docs/CACHE-QUALITY-2026-10-15.md)
 - [Backup timeout: สาเหตุจาก Execution จริง การทำต่อด้วย checkpoint และ rollout ที่รออนุมัติ](docs/BACKUP-TIMEOUT-FIX-2026-10-15.md)
 - [แก้รูปค้างและตรวจการแสดงผล/Reads ทั้งโปรเจกต์](docs/DISPLAY-READ-AUDIT-2026-10-15.md)

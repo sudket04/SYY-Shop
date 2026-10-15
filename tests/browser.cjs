@@ -800,9 +800,9 @@ async function main(){
       };
       pageSize=25;currentPage=1;XLF.clearAll('products');document.getElementById('tableSearchInput').value='';loadTable(true);
     });
-    await p.waitForFunction(()=>productRemote&&productRemote.total===10000);
+    await p.waitForFunction(()=>productRemote&&productRemote.cursorMode===true);
     assert.equal(await p.locator('#productBody tr').count(),25);
-    assert.match(await p.locator('#paginationInfo').innerText(),/10000/);
+    assert.match(await p.locator('#paginationInfo').innerText(),/1 - 25/);assert.match(await p.locator('#recordCountToolbar').innerText(),/โหลดแล้ว/);
     await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>productsCache[0].productCode),'P00025');
     await p.locator('#tableSearchInput').fill('BC9999');await p.waitForFunction(()=>productRemote.total===1);assert.match(await p.locator('#productBody').innerText(),/อะไหล่ 9999/);
     await p.locator('[data-xlf-col="productName"]').click();await p.waitForSelector('.xlf-popover');
@@ -814,7 +814,7 @@ async function main(){
     const download=p.waitForEvent('download');await p.evaluate(()=>exportAllProductFields());const file=await download;
     const csv=fs.readFileSync(await file.path(),'utf8');assert.equal(csv.trim().split('\r\n').length,112);assert.match(csv,/P09999/);
     assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);
-    await p.evaluate(()=>{apiFailure='getAllProducts';loadTable(true);});await p.waitForFunction(()=>document.getElementById('recordCountToolbar').innerText.includes('โหลดไม่สำเร็จ'));
+    await p.evaluate(()=>{apiFailure='getAllProducts';loadTable(true);});await p.waitForFunction(()=>document.getElementById('toastWrap')?.innerText.includes('ข้อมูลเดิม'));assert.match(await p.locator('#productBody').innerText(),/อะไหล่/);
     await p.evaluate(()=>{apiFailure='';loadTable(true);});await p.waitForFunction(()=>productRemote.total===111&&document.querySelectorAll('#productBody tr').length===25);
     await p.screenshot({path:path.join(output,'catalog-10000-viewer.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
@@ -974,6 +974,92 @@ async function main(){
     await p.evaluate(()=>syyPostFrame(document.getElementById('iframe-orders'),{action:'STOCK_DELTA',productStocks:[{productCode:'P1',currentStock:1}]}));await p.waitForTimeout(40);assert.deepEqual(errors,[]);assert.deepEqual(p.errors,[]);
     await child.evaluate(()=>{syyDrafts.orders.adapter.restore({checked:{P1:true},qty:{P1:1},unknown:true});});assert.equal(await child.evaluate(()=>syyUnknownWrites.savePurchaseOrder),true);await p.close();
   });
+  const hybridContext=await browser.newContext({viewport:{width:1365,height:950}});await hybridContext.route('https://**/*',r=>r.abort());
+  async function hybridPage(query=''){
+    const p=await hybridContext.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));
+    await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{
+      const prior=respond;respond=(fn,args,meta)=>fn==='getBrands'?{__syyCache:1,version:'disk-v1',expiresAt:Date.now()+120000,...(meta&&meta.version==='disk-v1'?{notModified:true}:{data:[{id:'B1',Name:'Honda',name:'honda',updateTime:'v1'}]})}:prior(fn,args,meta);
+      if(location.search.includes('hold=1'))apiHold='getBrands';
+    }));
+    await p.goto('http://127.0.0.1:'+port+'/?file=Master_Brands.html&role=staff'+query);return p;
+  }
+  await check('IndexedDB persists only safe references, restores after reload only after server validation, and L1 avoids repeated disk/RPC work',async()=>{
+    const p=await hybridPage();await p.waitForFunction(()=>syyDiskCache.stats.writes>0);const saved=await p.evaluate(()=>syyDiskCache.lookup('getBrands[]'));
+    assert.equal(JSON.parse(saved.record.raw)[0].Name,'Honda');assert.equal(saved.record.schema,1);assert.equal(saved.record.scope.length,64);assert(!JSON.stringify(saved).includes('test-token'));assert(!JSON.stringify(saved).includes('authToken'));
+    await p.goto('http://127.0.0.1:'+port+'/?file=Master_Brands.html&role=staff&hold=1');await p.waitForFunction(()=>apiPending.length===1);
+    assert.equal(await p.evaluate(()=>cache.length),0);assert.equal(await p.evaluate(()=>apiRequests[0].metadata.version),'disk-v1');
+    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>cache.length===1);
+    const result=await p.evaluate(async()=>{const before=apiCalls.length,hits=syyDiskCache.stats.hits;for(let i=0;i<10;i++)await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));return {rpc:apiCalls.length-before,disk:syyDiskCache.stats.hits-hits,hits:syyCacheStats.hits};});assert.equal(result.rpc,0);assert.equal(result.disk,0);assert(result.hits>=10);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('IndexedDB rejects corruption, expires old records and never stores contacts, costs, permissions, transactions or tokens',async()=>{
+    const p=await hybridPage();await p.waitForFunction(()=>cache.length===1);
+    const result=await p.evaluate(async()=>{
+      const saved=await syyDiskCache.lookup('getBrands[]');
+      const excluded=['getCustomersFull[]','getVendorsFull[]','getAllMasterDropdowns[]','getProductCatalogPage[]','getProductById[]','getAllUsers[]','getStockMovementPage[]'].every(key=>!syyDiskCache.eligible(key));
+      const sensitive=syyDiskCache.eligible('getBrands[]',JSON.stringify([{id:'X',Name:'X',password:'secret'}]));
+      await new Promise(resolve=>{const request=indexedDB.open('syy-hybrid-cache',1);request.onsuccess=()=>{const db=request.result,tx=db.transaction('records','readwrite');tx.objectStore('records').put({...saved.record,raw:'{corrupt'});tx.oncomplete=()=>{db.close();resolve();};};});
+      syyReadCache.clear();Object.keys(sessionStorage).filter(k=>k.startsWith('syy_data_v1:')).forEach(k=>sessionStorage.removeItem(k));const start=apiCalls.length;await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));
+      const repaired=await syyDiskCache.lookup('getBrands[]');
+      await syyDiskCache.put('getBrands[]',{...repaired.record,loadedAt:Date.now()-400000,expiresAt:Date.now()-1},repaired);
+      syyReadCache.clear();Object.keys(sessionStorage).filter(k=>k.startsWith('syy_data_v1:')).forEach(k=>sessionStorage.removeItem(k));await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));
+      return {excluded,sensitive,calls:apiCalls.length-start,versions:apiRequests.slice(-2).map(x=>x.metadata.version)};
+    });assert.equal(result.excluded,true);assert.equal(result.sensitive,false);assert.equal(result.calls,2);assert.deepEqual(result.versions,[null,null]);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('IndexedDB isolates role/session changes and clears current-session records on logout',async()=>{
+    const p=await hybridPage();await p.waitForFunction(()=>cache.length===1);
+    const result=await p.evaluate(async()=>{
+      const before=await syyDiskCache.lookup('getBrands[]');AUTH_TOKEN='different-session';document.querySelector('meta[name="syy-role"]').content='viewer';
+      syyEnsureCacheIdentity();const isolated=await syyDiskCache.lookup('getBrands[]');
+      await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));const after=await syyDiskCache.lookup('getBrands[]');await syyDiskCache.clear();const cleared=await syyDiskCache.lookup('getBrands[]');
+      return {different:before.scope!==isolated.scope,isolated:!isolated.record,persisted:!!after.record,cleared:!cleared.record,version:apiRequests.at(-1).metadata.version};
+    });assert.deepEqual(result,{different:true,isolated:true,persisted:true,cleared:true,version:null});assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('cross-tab invalidation rejects delayed responses and revision fences prevent old IndexedDB writes from resurrecting deleted snapshots',async()=>{
+    const a=await hybridPage(),b=await hybridPage();await a.waitForFunction(()=>cache.length===1);await b.waitForFunction(()=>cache.length===1);
+    await b.evaluate(()=>{window.oldStamp=null;window.oldRead=null;apiHold='getBrands';callApi('getBrands',[],()=>oldRead='accepted',e=>oldRead=e.message,{validate:true});});await b.waitForFunction(()=>apiPending.length===1);
+    const before=await b.evaluate(()=>syyCacheStats.invalidations);const stamp=await a.evaluate(()=>syyDiskCache.lookup('getBrands[]'));
+    await a.evaluate(()=>syyInvalidateReadScopes(['Master_Brands'],true));await b.waitForFunction(n=>syyCacheStats.invalidations>n,before);
+    await b.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await b.waitForFunction(()=>oldRead!==null);assert.match(await b.evaluate(()=>oldRead),/เปลี่ยนแปลง/);
+    const stale=await a.evaluate(async stamp=>{await syyDiskCache.put('getBrands[]',stamp.record,stamp);return syyDiskCache.lookup('getBrands[]');},stamp);assert.equal(stale.record,null);assert.equal(await b.evaluate(()=>syyReadCache.size),0);assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);await a.close();await b.close();
+  });
+  await check('IndexedDB open failure and blocked open fall back to authenticated RPC and memory cache without breaking the page',async()=>{
+    for(const blocked of [false,true]){
+      const p=await hybridContext.newPage();const errors=[];p.on('pageerror',e=>errors.push(e.message));await p.addInitScript(blocked=>{Object.defineProperty(window,'indexedDB',{value:{open(){if(blocked)return {};throw Error('private mode denied');}}});document.addEventListener('DOMContentLoaded',()=>{respond=()=>({__syyCache:1,version:'fallback-v1',data:[{id:'B1',Name:'Fallback'}]});});},blocked);
+      await p.goto('http://127.0.0.1:'+port+'/?file=Master_Brands.html&role=staff');await p.waitForFunction(()=>cache.length===1);assert.match(await p.locator('#tbodyMain').innerText(),/Fallback/);
+      const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>new Promise((ok,fail)=>callApi('getBrands',[],ok,fail)));assert.equal(await p.evaluate(()=>apiCalls.length),before);assert.deepEqual(errors,[]);await p.close();
+    }
+  });
+  await check('cursor UI reuses visited pages, resets expired cursors once, preserves prior page on network failure and keeps pagination visible',async()=>{
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{
+      window.fixtureBrowseFailure='';respond=(fn,args)=>{
+        if(fn==='getAllProducts'||fn==='getProductCatalogPage'){
+          const o=args[0];if(o.cursor&&fixtureBrowseFailure==='expired')return {success:false,restartPage:true,message:'รายการสินค้าเปลี่ยนแปลงหรือหมดอายุ กรุณารีเฟรชเพื่อเริ่มหน้าแรก'};
+          if(o.cursor&&fixtureBrowseFailure==='network')return {success:false,message:'network unavailable'};
+          return {__syyCache:1,version:'browse-v1',data:{catalogPage:true,cursorMode:true,products:Array.from({length:50},(_,i)=>({...fixtureProduct,id:'P'+(o.page*100+i),productCode:'P'+(o.page*100+i)})),page:o.page,pageSize:50,total:null,unfilteredTotal:null,readTime:new Date().toISOString(),hasMore:o.page<3,nextCursor:o.page<3?'cursor-'+(o.page+1):'',...(o.includeMasters?{masters:{brands:[],categories:[],vendors:[],zones:[],cars:[]}}:{})}};
+        }return [];
+      };pageSize=50;loadTable(true);
+    });await p.waitForFunction(()=>productRemote&&productRemote.cursorMode);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);await p.evaluate(()=>prevPage());await p.waitForFunction(()=>productRemote.page===1);
+    const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>apiCalls.length),before);
+    await p.evaluate(()=>{fixtureBrowseFailure='network';nextPage();});await p.waitForFunction(()=>document.getElementById('toastWrap')?.innerText.includes('ข้อมูลเดิม'));assert.equal(await p.evaluate(()=>currentPage),2);
+    await p.evaluate(()=>{fixtureBrowseFailure='expired';nextPage();});await p.waitForTimeout(100);assert.equal(await p.evaluate(()=>productRemote.page),1,JSON.stringify({state:await p.evaluate(()=>({page:currentPage,remote:productRemote.page,requests:apiCalls.slice(-4),toast:document.getElementById('toastWrap')?.innerText})),errors:p.errors}));assert.equal(await p.locator('#productBody tr').count(),50);assert.match(await p.locator('#pageIndicator').innerText(),/หน้า 1/);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('IndexedDB evicts corrupt/expired records and bounds storage across sessions without blocking business reads',async()=>{
+    const p=await hybridPage();await p.waitForFunction(()=>cache.length===1);
+    const result=await p.evaluate(async()=>{
+      const stamp=await syyDiskCache.lookup('getBrands[]');
+      await new Promise(resolve=>{const request=indexedDB.open('syy-hybrid-cache',1);request.onsuccess=()=>{const db=request.result,tx=db.transaction('records','readwrite'),store=tx.objectStore('records');for(let i=0;i<100;i++)store.put({...stamp.record,id:'old-'+i,scope:'old-'+i,checkedAt:Date.now()-1000});store.put({...stamp.record,id:'bad',raw:undefined});store.put({...stamp.record,id:'expired',expiresAt:Date.now()-1});tx.oncomplete=()=>{db.close();resolve();};};});
+      await syyDiskCache.put('getBrands[]',stamp.record,stamp);return {count:syyDiskCache.stats.entries,bytes:syyDiskCache.stats.bytes,evicted:syyDiskCache.stats.evictions,stillReadable:!!(await syyDiskCache.lookup('getBrands[]')).record};
+    });assert(result.count<=80);assert(result.bytes<=8000000);assert(result.evicted>=23);assert.equal(result.stillReadable,true);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('IndexedDB quota/transaction exceptions never break successful business reads or memory fallback',async()=>{
+    const p=await hybridPage();await p.waitForFunction(()=>cache.length===1);
+    const result=await p.evaluate(async()=>{
+      const stamp=await syyDiskCache.lookup('getBrands[]'),original=IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put=function(){throw new DOMException('fixture quota','QuotaExceededError');};
+      try{const stored=await syyDiskCache.put('getBrands[]',stamp.record,stamp);const data=await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));return {failedSafely:stored===null,name:data[0].Name,errors:syyDiskCache.stats.errors};}finally{IDBObjectStore.prototype.put=original;}
+    });assert.equal(result.failedSafely,true);assert.equal(result.name,'Honda');assert(result.errors>0);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));
 }
