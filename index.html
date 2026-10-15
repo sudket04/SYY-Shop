@@ -436,6 +436,7 @@
         <br><span style="color:var(--faint)">Incremental ลดขนาดไฟล์สำรอง แต่ยังอ่านตรวจข้อมูลครบเพื่อพบรายการที่ลบ · การสำรอง Full ด้วยตนเองนับรวมใน 4 รุ่น</span>
       </div>
       <div id="backupScheduleStatus" role="status" style="font-size:13px;margin-bottom:10px">กำลังตรวจตารางเวลา...</div>
+      <div id="backupJobStatus" role="status" hidden style="font-size:13px;margin-bottom:10px"></div>
       <button class="btn btn-ghost" style="width:100%;margin-bottom:10px" id="btnBackupSchedule" onclick="configureBackupSchedule()">ตั้งค่า Backup อัตโนมัติ</button>
       <button class="btn btn-primary" style="width:100%" id="btnBackupNow" onclick="runBackupNow()">💾 สำรอง Full ตอนนี้</button>
       <div class="section-label">ไฟล์สำรองที่มีอยู่</div>
@@ -1755,20 +1756,25 @@
 
   /* ═══ Backup ═══ */
   function openBackup(){ openModal('backupModal'); loadBackupList(); }
+  var backupStatusTimer=null;
   function loadBackupList(){
+    clearTimeout(backupStatusTimer);
     var el=document.getElementById('backupList');
     el.innerHTML='<div style="padding:16px"><span class="sk" style="width:80%"></span></div>';
     callApi('getBackupOverview', [], function(overview){
       var schedule=overview&&overview.schedule||{},files=overview&&overview.files||[];
+      var job=overview&&overview.activeJob,status=document.getElementById('backupJobStatus');status.hidden=!job;
+      document.getElementById('btnBackupNow').textContent=job?'ทำ Backup ที่ค้างต่อ':'💾 สำรอง Full ตอนนี้';
+      if(job){status.textContent=(job.lastError?'พักงานไว้ · กดทำต่อ: '+syyErrorMessage(job.lastError):'กำลังสำรอง '+(job.kind==='full'?'Full':'Incremental')+' เป็นช่วง · อ่านแล้ว '+num(job.readDocuments).toLocaleString()+' รายการ · ระบบจะทำต่ออัตโนมัติ');backupStatusTimer=setTimeout(function(){if(document.getElementById('backupModal').classList.contains('active'))loadBackupList();},30000);}
       document.getElementById('backupScheduleStatus').textContent=schedule.duplicate?'พบทริกเกอร์ซ้ำ กรุณาตั้งค่าใหม่':schedule.enabled?'เปิดใช้งานอัตโนมัติแล้ว · ประมาณ 22:00 เวลาไทย':'ยังไม่ได้เปิดใช้งานอัตโนมัติ · กดตั้งค่าก่อน';
-      if(!files||!files.length){ el.innerHTML='<div class="empty-state"><div class="ic">📭</div><div class="ti">ยังไม่มีไฟล์สำรอง</div></div>'; return; }
+      if(!files||!files.length){ el.innerHTML='<div class="empty-state"><div class="ic">📭</div><div class="ti">'+(job?'ยังไม่มีชุดที่สำรองครบ · งานกำลังดำเนินต่อ':'ยังไม่มีไฟล์สำรอง')+'</div></div>'; return; }
       el.innerHTML=files.map(function(f){
         return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:13px">'+
           '<div><div style="font-weight:600;color:var(--ink)">'+esc(thDate(f.date,true))+' น.</div>'+
           '<div style="font-size:11px;color:var(--faint)">'+esc(f.kind==='full'?'Full':f.kind==='incremental'?'Incremental':'Backup รุ่นเดิม')+' · '+esc(f.sizeKB)+' KB'+(f.kind==='incremental'?' · เปลี่ยน '+esc(f.written||0)+' / ลบ '+esc(f.deleted||0):'')+'</div></div>'+
           '<a href="'+esc(f.url)+'" target="_blank" rel="noopener noreferrer">เปิดใน Drive</a></div>';
       }).join('');
-    }, function(err){document.getElementById('backupScheduleStatus').textContent='ตรวจตารางเวลาไม่สำเร็จ กรุณาลองใหม่'; el.innerHTML='<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดรายการไม่สำเร็จ</div></div>'; });
+    }, function(err){document.getElementById('backupScheduleStatus').textContent='ตรวจตารางเวลาไม่สำเร็จ กรุณาลองใหม่'; el.innerHTML='<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดรายการไม่สำเร็จ</div><p>'+esc(syyErrorMessage(err))+'</p></div>'; });
   }
   function configureBackupSchedule(){
     var btn=document.getElementById('btnBackupSchedule');btnBusy(btn,'กำลังตั้งค่า...');
@@ -1779,7 +1785,8 @@
     btnBusy(btn,'กำลังสำรองข้อมูล...');
     callApi('backupNow', [], function(res){
       btnDone(btn);
-      if(res && res.success){
+      if(res&&res.pending){toast(res.needsResume?'งานพักไว้ สามารถกดทำต่อได้':'กำลังสำรองข้อมูลเป็นช่วง ระบบจะทำต่ออัตโนมัติ','warn',6000);}
+      else if(res && res.success){
         var n=Object.keys(res.collections||{}).reduce(function(s,k){return s+res.collections[k];},0);
         toast('สำรองข้อมูลสำเร็จ ('+n+' รายการ · '+res.fileSizeKB+' KB)');
         if(res.warnings&&res.warnings.length)toast(res.warnings.join('; '),'warn',7000);

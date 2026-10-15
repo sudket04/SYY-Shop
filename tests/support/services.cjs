@@ -113,7 +113,7 @@ function setup(options={}){
       computeHmacSha256Signature:(data,key)=>Array.from(crypto.createHmac('sha256',String(key)).update(String(data)).digest()),
       computeDigest:(algo,input)=>Array.from(crypto.createHash('sha256').update(typeof input==='string'?input:Buffer.from(Uint8Array.from(input))).digest())},
     CacheService:{getScriptCache:()=>({get:k=>cache.get(k)||null,getAll:keys=>Object.fromEntries(keys.filter(k=>cache.has(k)).map(k=>[k,cache.get(k)])),put:(k,v)=>cache.set(k,v),putAll:values=>Object.entries(values).forEach(([k,v])=>cache.set(k,v)),remove:k=>cache.delete(k),removeAll:keys=>keys.forEach(k=>cache.delete(k))})},
-    PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k]||null,setProperty:(k,v)=>props[k]=v,getProperties:()=>({...props}),setProperties:p=>Object.assign(props,p)})},
+    PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k]||null,setProperty:(k,v)=>props[k]=v,deleteProperty:k=>{delete props[k];},getProperties:()=>({...props}),setProperties:p=>Object.assign(props,p)})},
     LockService:{getScriptLock:()=>({tryLock:()=>!c.lockBusy,waitLock(){if(c.lockBusy)throw Error('busy');},releaseLock(){}}),getUserLock:()=>({tryLock:()=>!c.backupBusy,releaseLock(){}})},
     UrlFetchApp:{fetch,fetchAll:requests=>requests.map(r=>c.UrlFetchApp.fetch(r.url,r))},
     DriveApp:{Access:{PRIVATE:'PRIVATE',ANYONE_WITH_LINK:'LINK'},Permission:{VIEW:'VIEW'},getFileById:id=>{if(!files.has(id))throw Error('Missing file');return files.get(id);},getFolderById:id=>folders.get(id),getFoldersByName:n=>iterator([...folders.values()].filter(f=>f.name===n)),createFolder:makeFolder},

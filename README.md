@@ -38,6 +38,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [Backup timeout: สาเหตุจาก Execution จริง การทำต่อด้วย checkpoint และ rollout ที่รออนุมัติ](docs/BACKUP-TIMEOUT-FIX-2026-10-15.md)
 - [แก้รูปค้างและตรวจการแสดงผล/Reads ทั้งโปรเจกต์](docs/DISPLAY-READ-AUDIT-2026-10-15.md)
 - [Browser cache และ XLFilter: การซิงก์ ขอบเขตแคช และผลทดสอบ](docs/CLIENT-CACHE-2026-10-15.md)
 - [RPC Security 1–2](docs/SECURITY-RPC-2026-10-11.md)

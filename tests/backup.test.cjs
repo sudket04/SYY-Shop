@@ -135,3 +135,72 @@ test('Overview detects an old weekly trigger coexisting with the new daily trigg
   s.c.ScriptApp.getProjectTriggers=()=>[daily,weekly,other];let overview=s.c.getBackupOverview_();assert.equal(overview.schedule.enabled,false);assert.equal(overview.schedule.duplicate,true);
   s.c.ScriptApp.getProjectTriggers=()=>[daily,other];overview=s.c.getBackupOverview_();assert.equal(overview.schedule.enabled,true);assert.equal(overview.schedule.duplicate,false);assert.equal(s.calls.length,0);
 });
+
+function resumable(){
+ const s=fresh(),triggers=[],other={getHandlerFunction:()=> 'unrelated',getUniqueId:()=> 'other'};triggers.push(other);let seq=0;
+ s.c.ScriptApp.getProjectTriggers=()=>triggers.slice();s.c.ScriptApp.deleteTrigger=t=>{const i=triggers.indexOf(t);if(i>=0)triggers.splice(i,1);};
+ s.c.ScriptApp.newTrigger=handler=>{const builder={timeBased:()=>builder,after(ms){assert.equal(ms,60000);return builder;},create(){const id='resume-'+(++seq),t={getHandlerFunction:()=>handler,getUniqueId:()=>id};triggers.push(t);return t;}};return builder;};
+ s.c.BACKUP_SLICE_MS=25000;s.c.pageSize=3;const fetch=s.c.UrlFetchApp.fetch;
+ s.c.UrlFetchApp.fetch=(url,opts)=>{s.advance();return fetch(url,opts);};s.triggers=triggers;return s;
+}
+test('large backup checkpoints and continues one snapshot without publishing partial manifests or rereading completed pages',()=>{
+ const s=resumable();for(let i=0;i<15;i++)s.put('Data/P'+String(i).padStart(2,'0'),{Name:'Original '+i});s.put('constructor/toString',{Name:'prototype-safe'});
+ let result=s.c.backupNow_(),slices=1;assert.equal(result.pending,true);assert.equal(s.props.SYY_BACKUP_STATE_V3,undefined);assert.equal(s.c.listBackupFiles_().length,0);const before=s.calls.length,job=JSON.parse(s.props.SYY_BACKUP_PENDING_V3);assert.equal(s.c.getBackupOverview_().activeJob.readDocuments,3);assert.equal(s.calls.length,before);
+ s.put('Data/P00',{Name:'Changed after snapshot'});s.put('Data/NEW',{Name:'New after snapshot'});
+ while(result.pending){result=s.c.continueBackupJob_();if(++slices>20)throw Error('did not finish');}
+ const backup=materialize(s,result);assert.equal(Object.keys(backup.documents).length,16);assert.equal(backup.documents['Data/P00'].fields.Name.stringValue,'Original 0');assert(!backup.documents['Data/NEW']);assert(backup.documents['constructor/toString']);
+ assert.equal(s.props.SYY_BACKUP_PENDING_V3,undefined);assert.equal(s.triggers.length,1);assert.equal(s.triggers[0].getHandlerFunction(),'unrelated');assert.equal(s.commits.length,0);
+ const pages=s.calls.filter(x=>x.url.includes('/Data?'));assert.equal(pages.length,5);assert.equal(new Set(pages.map(x=>x.url)).size,5);assert.equal(new Set(s.calls.filter(x=>x.url.includes('showMissing')).map(x=>new URL(x.url).searchParams.get('readTime'))).size,1);
+ assert.equal(s.c.continueBackupJob_().skipped,true);assert.equal(job.folderId,result.folderId);
+});
+test('scheduled Full continuation creates its same-snapshot delta and marks the day only after completion',()=>{
+ const s=resumable();for(let i=0;i<12;i++)s.put('Data/P'+i,{Name:'Data'});
+ let r=s.c.dailyBackupJob_();assert(r.pending);assert.equal(s.props.SYY_BACKUP_LAST_DAY,undefined);let slices=0;
+ while(r.pending){r=s.c.continueBackupJob_();if(++slices>20)throw Error('did not finish');}
+ assert(s.props.SYY_BACKUP_LAST_DAY);const listed=s.c.listBackupFiles_();assert.equal(listed.filter(f=>f.kind==='full').length,1);assert.equal(listed.filter(f=>f.kind==='incremental').length,1);assert.equal(s.c.dailyBackupJob_().skipped,true);
+});
+test('incremental continuation preserves deletions and changed rows across page checkpoints',()=>{
+ const s=resumable();s.c.BACKUP_SLICE_MS=180000;for(let i=0;i<8;i++)s.put('Data/P'+i,{Name:'Original'});const full=s.c.backupAllDataToBackup_('full');assert.equal(full.success,true);
+ s.docs.delete('Data/P0');s.put('Data/P1',{Name:'Changed'});s.put('New/N1',{Name:'New'});s.c.BACKUP_SLICE_MS=25000;let r=s.c.backupAllDataToBackup_('incremental'),n=0;while(r.pending){r=s.c.continueBackupJob_();if(++n>20)throw Error('did not finish');}
+ const data=materialize(s,r);assert(!data.documents['Data/P0']);assert.equal(data.documents['Data/P1'].fields.Name.stringValue,'Changed');assert(data.documents['New/N1']);assert.equal(r.deleted,1);assert.equal(r.written,2);assert.equal(s.commits.length,0);
+});
+test('transient page failure retains the checkpoint for manual resume; expired and corrupt snapshots never publish',()=>{
+ for(const mode of ['network','expired','corrupt']){const s=resumable();for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});const first=s.c.backupNow_();assert(first.pending);const pointer=s.props.SYY_BACKUP_PENDING_V3,job=JSON.parse(pointer);
+  if(mode==='network')s.c.failRequest=url=>url.includes('showMissing')?503:0;
+  if(mode==='expired')s.c.BACKUP_SNAPSHOT_MAX_AGE_MS=-1;
+  if(mode==='corrupt')s.files.get(job.checkpoint.id).blob={getBytes:()=>[1],getDataAsString:()=> '{}'};
+  const failed=s.c.backupNow_();assert.equal(failed.success,false,mode);assert.equal(s.props.SYY_BACKUP_STATE_V3,undefined);assert.equal(s.c.listBackupFiles_().length,0);
+  if(mode==='network'){assert(failed.needsResume);assert(s.props.SYY_BACKUP_PENDING_V3);s.c.failRequest=null;let r=failed,n=0;while(r.pending){r=s.c.backupNow_();if(++n>20)throw Error('did not finish');}assert.equal(r.success,true);}
+  else assert.equal(s.props.SYY_BACKUP_PENDING_V3,undefined);
+ }
+});
+test('continuation scheduling failure preserves the last completed backup and never changes DB or the daily trigger',()=>{
+ const s=resumable();s.c.BACKUP_SLICE_MS=180000;s.seed();const full=s.c.backupNow_();assert.equal(full.success,true);const state=s.props.SYY_BACKUP_STATE_V3;s.c.BACKUP_SLICE_MS=1;s.c.ScriptApp.newTrigger=()=>{throw Error('trigger quota');};
+ const failed=s.c.backupNow_();assert.equal(failed.success,false);assert.match(failed.errors.join(' '),/trigger quota/);assert.equal(s.props.SYY_BACKUP_STATE_V3,state);assert.equal(s.props.SYY_BACKUP_PENDING_V3,undefined);assert.equal(s.folders.get(full.folderId).trashed,false);assert.equal(s.commits.length,0);
+});
+
+test('manual completion of a scheduled backup finalizes the daily delta and does not scan again',()=>{
+ const s=resumable();for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});let r=s.c.dailyBackupJob_(),n=0;assert(r.pending);
+ while(r.pending){r=s.c.backupNow_();if(++n>20)throw Error('did not finish');}
+ assert(r.success);assert(s.props.SYY_BACKUP_LAST_DAY);assert.equal(s.c.listBackupFiles_().filter(f=>f.kind==='incremental').length,1);const before=s.calls.length;assert(s.c.dailyBackupJob_().skipped);assert.equal(s.calls.length,before);assert.equal(s.commits.length,0);
+});
+
+test('daily schedule resumes an abandoned checkpoint and restarts an expired snapshot without losing completed backups',()=>{
+ for(const expired of [false,true]){const s=resumable();s.c.BACKUP_SLICE_MS=180000;s.seed();const full=s.c.backupNow_();const state=s.props.SYY_BACKUP_STATE_V3;s.c.BACKUP_SLICE_MS=25000;for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});
+  let r=s.c.dailyBackupJob_();assert(r.pending);const old=JSON.parse(s.props.SYY_BACKUP_PENDING_V3);if(expired)for(let i=0;i<310;i++)s.advance();
+  r=s.c.dailyBackupJob_();assert(r.success);assert(r.pending);const job=JSON.parse(s.props.SYY_BACKUP_PENDING_V3);assert.equal(job.folderId===old.folderId,!expired);assert.equal(s.folders.get(old.folderId).trashed,expired);assert.equal(s.props.SYY_BACKUP_STATE_V3,state);
+  let n=0;while(r.pending){r=s.c.continueBackupJob_();if(++n>30)throw Error('did not finish');}assert(r.success);assert.equal(s.folders.get(full.folderId).trashed,false);assert.equal(Object.keys(materialize(s,r).documents).length,s.docs.size);assert.equal(s.commits.length,0);
+ }
+});
+
+test('moved checkpoint folder cannot publish outside its original project/date hierarchy',()=>{
+ const s=resumable();for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});assert(s.c.backupNow_().pending);const job=JSON.parse(s.props.SYY_BACKUP_PENDING_V3),folder=s.folders.get(job.folderId),parent=s.c.backupParentFolder_(folder);parent.getName=()=> 'wrong-day';const count=s.calls.length;
+ const failed=s.c.backupNow_();assert.equal(failed.success,false);assert.match(failed.errors.join(' '),/Checkpoint/);assert.equal(s.props.SYY_BACKUP_PENDING_V3,undefined);assert.equal(s.props.SYY_BACKUP_STATE_V3,undefined);assert.equal(s.calls.length,count);assert.equal(s.commits.length,0);
+});
+
+test('state write failure after publication preserves the completed run and clears its checkpoint to prevent duplicate manifests',()=>{
+ const s=resumable();s.c.BACKUP_SLICE_MS=180000;s.seed();const full=s.c.backupNow_(),state=s.props.SYY_BACKUP_STATE_V3;for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});s.c.BACKUP_SLICE_MS=25000;let r=s.c.backupNow_();assert(r.pending);const job=JSON.parse(s.props.SYY_BACKUP_PENDING_V3),get=s.c.PropertiesService.getScriptProperties;
+ s.c.PropertiesService.getScriptProperties=()=>{const p=get();return {...p,setProperty(k,v){if(k==='SYY_BACKUP_STATE_V3')throw Error('properties unavailable');return p.setProperty(k,v);}};};
+ let n=0;while(r.success&&r.pending){r=s.c.backupNow_();if(++n>30)throw Error('did not finish');}
+ assert.equal(r.success,false);assert.equal(s.props.SYY_BACKUP_PENDING_V3,undefined);assert.equal(s.props.SYY_BACKUP_STATE_V3,state);assert.equal(s.folders.get(job.folderId).trashed,false);assert.equal(s.folders.get(full.folderId).trashed,false);assert.equal(materialize(s,job).manifest.complete,true);assert.equal(s.commits.length,0);
+});
