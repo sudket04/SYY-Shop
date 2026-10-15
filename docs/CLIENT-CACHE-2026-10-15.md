@@ -1,5 +1,7 @@
 # Business data cache and XLFilter — 15 October 2026
 
+This report records the first cache implementation. The later [cache quality update](CACHE-QUALITY-2026-10-15.md) supersedes its server TTL/refresh limitations and adds section reuse, source expiry propagation and Dashboard delta improvements. Production deployment is still pending.
+
 ## Diagnosis and delivered behavior
 
 Product XLFilter previously called Apps Script on every header click, waited for

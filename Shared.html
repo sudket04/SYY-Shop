@@ -285,7 +285,7 @@ function emptyStateHtml(colspan,opt){
 /* ── ปุ่มที่กำลังโหลด ── */
 function btnBusy(el,text){
   if(!el) return;
-  el.dataset.label=el.innerHTML;
+  if(!el.disabled||!el.dataset.label)el.dataset.label=el.innerHTML;
   el.disabled=true;
   el.innerHTML='<span class="spinner"></span>'+(text||'กำลังบันทึก...');
 }
@@ -378,7 +378,7 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache){
   if(!token){expired();return;}
   google.script.run.withSuccessHandler(function(res){
     if(res&&res.__authError){expired();return;}
-    if(res&&res.success===false&&/^(get|fetch)/.test(fnName)){fail({message:res.message});return;}
+    if(res&&res.success===false&&/^(get|fetch)/.test(fnName)&&!(fnName==='getDashboardDelta'&&res.fullRefresh===true)){fail({message:res.message});return;}
     settled(res&&res.success===false);if(onSuccess)onSuccess(res);
   }).withFailureHandler(fail).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);
 }
@@ -414,7 +414,7 @@ function syyDocumentPager(options){
 // cannot mutate the stored snapshot. Credentials, users and backup APIs bypass it.
 var syyCacheScopes=['Master_Products','Product_Images','Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers','Stock_Movements','Purchase_Orders','Quotations','Master_Tax_Invoice'];
 var syyReadCache=new Map(),syyCacheEpochs={},syyReadRevalidate=false,syyCacheIdentity='',syyCacheUsedScopes=new Set(),syyLastReadAt=0;
-var syyCacheStats={hits:0,misses:0,revalidations:0,notModified:0,invalidations:0};
+var syyCacheStats={hits:0,misses:0,revalidations:0,notModified:0,invalidations:0,authoritative:0,byApi:{}};
 function syyReadPolicy(name){
  var masters=['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'],catalog=['Master_Products'].concat(masters),images=catalog.concat(['Product_Images']);
  var scopes={getBrands:['Master_Brands'],getCategories:['Master_Categories'],getVendorsFull:['Master_Vendors'],getZonesFull:['Master_Zones'],getCarsFull:['Master_Cars'],getCustomersFull:['Master_Customers'],
@@ -438,12 +438,12 @@ function syyCacheStorageKey(key){var hash=2166136261;for(var i=0;i<key.length;i+
 function syyClearReadCache(){syyReadCache.clear();syyCacheScopes.forEach(function(scope){syyCacheEpochs[scope]=(syyCacheEpochs[scope]||0)+1;});try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(k.startsWith(prefix))sessionStorage.removeItem(k);});}catch(e){}}
 function syyEnsureCacheIdentity(){var id=syyIdentity(),identity=JSON.stringify([id,typeof AUTH_TOKEN==='string'?AUTH_TOKEN:'']);if(identity!==syyCacheIdentity){syyReadCache.clear();syyCacheScopes.forEach(function(s){syyCacheEpochs[s]=(syyCacheEpochs[s]||0)+1;});syyCacheIdentity=identity;}return !!(id&&id.owner&&typeof AUTH_TOKEN==='string'&&AUTH_TOKEN&&!window.syyExpiryStarted);}
 function syyCacheEpoch(scopes){return scopes.map(function(s){return syyCacheEpochs[s]||0;}).join('|');}
-function syyInvalidateReadScopes(scopes,notify){
+function syyInvalidateReadScopes(scopes,notify,preserveRevision){
  scopes=(scopes||[]).filter(function(s){return syyCacheScopes.includes(s);});if(!scopes.length)return;
  scopes.forEach(function(s){syyCacheEpochs[s]=(syyCacheEpochs[s]||0)+1;});syyCacheStats.invalidations++;
  syyReadCache.forEach(function(record,key){if(record.scopes.some(function(s){return scopes.includes(s);}))syyReadCache.delete(key);});
  try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(!k.startsWith(prefix))return;try{var record=JSON.parse(sessionStorage.getItem(k));if(record.scopes.some(function(s){return scopes.includes(s);}))sessionStorage.removeItem(k);}catch(e){sessionStorage.removeItem(k);}});}catch(e){}
- if(syyFreshState&&scopes.some(function(s){return syyCacheUsedScopes.has(s);})){syyFreshState.revision++;syyFreshState.dirty=true;}
+ if(!preserveRevision&&syyFreshState&&scopes.some(function(s){return syyCacheUsedScopes.has(s);})){syyFreshState.revision++;syyFreshState.dirty=true;}
  if(notify){var message={action:'CACHE_INVALIDATED',scopes:scopes};syyPostParent(message);document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,message);});}
 }
 function syyWriteScopes(name,args){
@@ -456,11 +456,15 @@ function syyWriteScopes(name,args){
 function syyCacheRecord(key,policy){
  var record=syyReadCache.get(key);
  if(!record&&policy.persist)try{var raw=syyCachePrefix()&&sessionStorage.getItem(syyCacheStorageKey(key));record=raw&&JSON.parse(raw);if(record&&record.key===key&&Array.isArray(record.scopes)&&record.scopes.join('|')===policy.scopes.join('|')&&typeof record.raw==='string'&&typeof record.version==='string'){JSON.parse(record.raw);syyReadCache.set(key,record);}else record=null;}catch(e){record=null;}
- if(!record||!Number.isFinite(record.loadedAt)||!Number.isFinite(record.checkedAt)||record.loadedAt>Date.now()||record.checkedAt>Date.now()||Date.now()-record.loadedAt>=policy.maxAge){syyReadCache.delete(key);return null;}
+ if(!record||!Number.isFinite(record.loadedAt)||!Number.isFinite(record.checkedAt)||record.loadedAt>Date.now()||record.checkedAt>Date.now()||Date.now()-record.loadedAt>=policy.maxAge||Number.isFinite(record.expiresAt)&&record.expiresAt<=Date.now()){syyReadCache.delete(key);return null;}
  return record;
 }
-function syyStoreRead(key,policy,data,version,previous,serialized){
- try{var raw=serialized||JSON.stringify(data);if(raw.length>3000000)return;var now=Date.now(),record={key:key,raw:raw,version:version,scopes:policy.scopes,loadedAt:previous?previous.loadedAt:now,checkedAt:now};syyReadCache.delete(key);syyReadCache.set(key,record);
+function syyStoreRead(key,policy,data,version,previous,serialized,expiresAt){
+ try{var raw=serialized||JSON.stringify(data);if(raw.length>3000000)return;var now=Date.now(),record={key:key,raw:raw,version:version,scopes:policy.scopes,loadedAt:previous?previous.loadedAt:now,checkedAt:now};
+  record.expiresAt=previous&&Number.isFinite(previous.expiresAt)?previous.expiresAt:now+policy.maxAge;var sections=data&&data.sectionVersions;
+  if(Number.isFinite(expiresAt))record.expiresAt=Math.min(record.expiresAt,expiresAt);
+  ['products','customers'].forEach(function(name){var s=sections&&sections[name];if(s&&Number.isFinite(s.loadedAt))record.expiresAt=Math.min(record.expiresAt,s.loadedAt+(name==='products'?300000:600000));});
+  syyReadCache.delete(key);syyReadCache.set(key,record);
   var size=0;syyReadCache.forEach(function(r){size+=r.raw.length;});while(syyReadCache.size>40||size>6000000){var oldest=syyReadCache.keys().next().value;size-=syyReadCache.get(oldest).raw.length;syyReadCache.delete(oldest);}
   if(policy.persist&&syyCachePrefix()&&raw.length<100000){var prefix=syyCachePrefix(),storageKey=syyCacheStorageKey(key),keys=Object.keys(sessionStorage).filter(function(k){return k.startsWith(prefix);}),total=0;keys.forEach(function(k){total+=(sessionStorage.getItem(k)||'').length;});if(total+raw.length>250000)keys.forEach(function(k){sessionStorage.removeItem(k);});sessionStorage.setItem(storageKey,JSON.stringify(record));}
  }catch(e){} // Quota/private mode never blocks a successful business read.
@@ -486,26 +490,30 @@ function syyUnpackCatalog(data){
 function syyDecodeRead(data){data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);return data;}
 function callApi(fnName,args,onSuccess,onFailure,options){
  if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,function(data){if(data&&data.success!==false)syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onSuccess)onSuccess(data);},function(error){syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onFailure)onFailure(error);else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));});
- options=options||{};var policy=syyReadPolicy(fnName),canCache=syyEnsureCacheIdentity(),force=options.fresh||syyReadFresh||(args||[]).some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor);});
- var canonical=syyReadArgs(fnName,args),key=fnName+JSON.stringify(canonical),record=policy&&canCache&& !force?syyCacheRecord(key,policy):null;
+ options=options||{};var policy=syyReadPolicy(fnName),canCache=syyEnsureCacheIdentity(),authoritative=options.authoritative===true||syyReadFresh,force=authoritative||options.fresh||(args||[]).some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor);});
+ var canonical=syyReadArgs(fnName,args),key=fnName+JSON.stringify(canonical);
+ if(authoritative&&policy){var refreshing=syyPendingReads.get(key+':'+syyCacheIdentity+':'+syyCacheEpoch(policy.scopes)+':true:true');if(refreshing){refreshing.push({ok:onSuccess,fail:onFailure});return;}syyInvalidateReadScopes(policy.scopes,true,true);}
+ var record=policy&&canCache&& !force?syyCacheRecord(key,policy):null;
  if(policy)policy.scopes.forEach(function(s){syyCacheUsedScopes.add(s);});
  var identity=syyCacheIdentity,epoch=policy&&syyCacheEpoch(policy.scopes);
  if(record&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){syyCacheStats.hits++;setTimeout(function(){if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)));},0);return;}
- var pendingKey=key+':'+identity+':'+epoch+':'+!!force,listeners=syyPendingReads.get(pendingKey);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
+ var pendingKey=key+':'+identity+':'+epoch+':'+!!force+':'+!!authoritative,listeners=syyPendingReads.get(pendingKey);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
+ if(authoritative)syyCacheStats.authoritative++;
  syyCacheStats.misses++;if(record)syyCacheStats.revalidations++;
- listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);
- function failed(error){syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
+ listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);var rpcStarted=Date.now(),measured=false;
+ function measure(failed){if(!policy||measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);}
+ function failed(error){measure(true);syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
  syyCallApiRaw(fnName,args,function(data){
    if(policy&&(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes))){failed({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
-   var version=null,previous=null;if(data&&data.__syyCache===1){version=data.version;if(data.notModified){if(!record){failed({message:'แคชหมดอายุ กรุณาโหลดใหม่'});return;}previous=record;data=JSON.parse(record.raw);syyCacheStats.notModified++;}else data=data.data;}
+   var version=null,previous=null,expiresAt=null;if(data&&data.__syyCache===1){version=data.version;expiresAt=data.expiresAt;if(data.notModified){if(!record){failed({message:'แคชหมดอายุ กรุณาโหลดใหม่'});return;}previous=record;data=JSON.parse(record.raw);syyCacheStats.notModified++;}else data=data.data;}
    var wireRaw;try{if(policy&&canCache&&version!==null)wireRaw=JSON.stringify(data);data=syyDecodeRead(data);}catch(error){failed(error);return;}
    syyLastReadAt=previous?previous.loadedAt:Date.now();
    // Only protocol-aware servers produce cacheable results. Old deployments
    // retain their existing behavior until source is synchronized as one release.
-   if(policy&&canCache&&version!==null)syyStoreRead(key,policy,data,version,previous,wireRaw);
-   if(canCache&&data&&data.facets&&typeof data.facetVersion==='string')Object.keys(data.facets).forEach(function(column){var facet=data.facets[column];if(facet&&Array.isArray(facet.values))syyStoreRead('getProductCatalogFacets'+JSON.stringify(syyReadArgs('getProductCatalogFacets',[{},column])),syyReadPolicy('getProductCatalogFacets'),facet,data.facetVersion,previous);});
-   syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data);}catch(e){setTimeout(function(){throw e;},0);}});
- },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt}:undefined);
+   if(policy&&canCache&&version!==null)syyStoreRead(key,policy,data,version,previous,wireRaw,expiresAt);
+   if(canCache&&data&&data.facets&&typeof data.facetVersion==='string')Object.keys(data.facets).forEach(function(column){var facet=data.facets[column];if(facet&&Array.isArray(facet.values))syyStoreRead('getProductCatalogFacets'+JSON.stringify(syyReadArgs('getProductCatalogFacets',[{},column])),syyReadPolicy('getProductCatalogFacets'),facet,data.facetVersion,previous,undefined,expiresAt);});
+   measure(false);syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data);}catch(e){setTimeout(function(){throw e;},0);}});
+ },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt,refresh:!!authoritative}:undefined);
 }
 /* UI state is local to this browser session and the server-verified account. Never store credentials. */
 var syyFieldSequence=0,syyDrafts={},syyModalBaselines={},syyUxBusy=0,syyUxLoaded=0,syyUxFailed=false;

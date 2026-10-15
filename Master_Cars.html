@@ -169,7 +169,7 @@
     { col:'_note',      label:'หมายเหตุ' }
   ];
 
-  var cache=[], editingId=null, deleteId=null, searchTimer=null;
+  var cache=[], editingId=null, deleteId=null, searchTimer=null,masterDataLoaded=false;
 
   window.onload = function(){
     initDensity();
@@ -193,7 +193,7 @@
     document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
       if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
-      syyDataLoaded();
+      syyDataLoaded();masterDataLoaded=true;
       // normalize ชื่อ field ให้เหลือชื่อเดียวต่อคอลัมน์ ไม่ว่า backend จะคืนรูปแบบไหน
       cache = (data || []).map(function(item){
         item._code      = item.id || item.carCode || '';
@@ -208,6 +208,7 @@
       renderRows();
     }, function(err){
       syyDataFailed();
+      if(masterDataLoaded){renderRows();toast(syyErrorMessage(err)+' · แสดงข้อมูลเดิมที่โหลดสำเร็จ','err');return;}
       document.getElementById('tbodyMain').innerHTML = emptyStateHtml(9,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]

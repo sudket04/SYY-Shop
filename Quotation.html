@@ -380,10 +380,11 @@ document.addEventListener('keydown', function (e) {
 //   ลดการอ่าน Firestore ลงมาก โดยเฉพาะร้านที่เปิดมานานสะสมใบเสนอราคาไว้เยอะ)
 var documentPager;
 window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getQuotationListData',key:'quotations',year:function(){return currentPageYear;},rows:function(){return quotations;},invalidate:function(){quotationLoadGeneration++;},render:function(){renderList();}});});
-var quotationLoadGeneration=0;
+var quotationLoadGeneration=0,quotationSectionVersions={};
 function loadPageData(yearParam, afterLoad, onError, forceFull) {
   var requestGeneration=++quotationLoadGeneration,revision=syyDataRevision();
   if(quotationBootstrapped && yearParam==null){yearParam=currentPageYear;forceFull=true;}
+  if(syyReadFresh)forceFull=true;
   if(documentPager)documentPager.cancel();
   var btn = document.querySelector('.page-head .btn-ghost');
   if (btn) btnBusy(btn, 'กำลังโหลด...');
@@ -391,7 +392,7 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
   if (badge) badge.style.display = 'inline';
   var apiName = quotationBootstrapped && !forceFull ? 'getQuotationListData' : 'getQuotationPageData';
   if(!quotationBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','quotation-year');if(savedYear)yearParam=savedYear;}
-  callApi(apiName, [yearParam || '',{compactCatalog:true,search:documentPager?documentPager.searchOptions():{}}], function (data) {
+  callApi(apiName, [yearParam || '',{compactCatalog:true,sectionVersions:syyReadFresh?{}:quotationSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function (data) {
     if(requestGeneration!==quotationLoadGeneration)return;
     if(revision!==syyDataRevision()){syyDataFailed();if(btn)btnDone(btn);if(badge)badge.style.display='none';return;}
     if (!data || data.success === false || !Array.isArray(data.quotations)) {
@@ -401,6 +402,7 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
     data = data || {};
     if (data.customers) customers = data.customers;
     if (data.products) products = data.products;
+    if(data.sectionVersions)quotationSectionVersions=data.sectionVersions;
     basket.forEach(function(item){var fresh=products.find(function(p){return p.productCode===item.productCode;});item.stock=fresh?num(fresh.currentStock):0;});updateBasketSummary();
     quotations = data.quotations || [];
     if(documentPager)documentPager.reset(data.pageInfo);

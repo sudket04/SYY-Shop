@@ -1158,7 +1158,7 @@
 </script>
 <script>
 syyRegisterFreshness({reload:loadAll,canRefresh:function(){return !receiveBusy && !(documentPager&&documentPager.busy()) && !document.querySelector('.modal-overlay.active');},
-  stock:function(stocks){syyApplyStockRows(lowStockItems,stocks);renderCreateTab();updateStatCards();if(d.unknown)syyUnknownWrites.savePurchaseOrder=true;}});
+  stock:function(stocks){syyApplyStockRows(lowStockItems,stocks);renderCreateTab();updateStatCards();}});
 </script>
 <script>
 function renderPurchaseOrderState(){rebuildPendingProductCodes();renderCreateTab();renderHistoryTab();updateStatCards();}
@@ -1168,7 +1168,7 @@ function refreshPurchaseOrder(id){callApi('getPurchaseOrderPageData',[{poId:id}]
 <script>
 window.addEventListener('load',function(){syyDraftRegister('orders',{
  capture:function(){return {checked:checkedState,qty:qtyState,unknown:!!syyUnknownWrites.savePurchaseOrder};},
- restore:function(d){if(!d||!d.checked||!d.qty)return;checkedState=d.checked;qtyState=d.qty;renderCreateTab();updateStatCards();}
+ restore:function(d){if(!d||!d.checked||!d.qty)return;checkedState=d.checked;qtyState=d.qty;renderCreateTab();updateStatCards();if(d.unknown){syyUnknownWrites.savePurchaseOrder=true;syyLockUnknownWrite('savePurchaseOrder');}}
 });});
 </script>
 <script>

@@ -398,6 +398,7 @@
     <div class="crumb"><span>เอกสาร</span><span class="sep">›</span><b>ใบกำกับภาษี</b></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
+      <button class="btn btn-ghost" id="btnInvoiceRefresh" title="รีเฟรชข้อมูลจากฐานข้อมูล" onclick="loadAll(currentPageYear,null,null,true)">🔄 รีเฟรช</button>
       <button class="btn btn-primary" onclick="openAddModal()">➕ เพิ่มใบกำกับภาษี</button>
     </div>
   </div>
@@ -662,21 +663,23 @@ function switchTab(which) {
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
 var documentPager;
 window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},invalidate:function(){invoiceLoadGeneration++;},render:function(){renderRows();renderDashboard();}});});
-var invoiceLoadGeneration=0;
+var invoiceLoadGeneration=0,invoiceSectionVersions={};
 function loadAll(yearParam, onDone, onError, forceFull) {
   var requestGeneration=++invoiceLoadGeneration,revision=syyDataRevision();
+  var refreshButton=document.getElementById('btnInvoiceRefresh');btnBusy(refreshButton,'กำลังโหลด...');
   if(taxInvoiceBootstrapped && yearParam==null){yearParam=currentPageYear;forceFull=true;}
+  if(syyReadFresh)forceFull=true;
   if(documentPager)documentPager.cancel();
   var tbody = document.getElementById('taxBody');
-  tbody.innerHTML = skeletonRows(9,5);
+  if(!taxInvoiceBootstrapped)tbody.innerHTML = skeletonRows(9,5);
   document.getElementById('recordCount').innerText = 'กำลังโหลด';
   document.getElementById('pageYearLoadingBadge').style.display = 'inline';
 
   var apiName = taxInvoiceBootstrapped && !forceFull ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
   if(!taxInvoiceBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','invoice-year');if(savedYear)yearParam=savedYear;}
-  callApi(apiName, [yearParam || '',{compactCatalog:true,search:documentPager?documentPager.searchOptions():{}}], function(data) {
+  callApi(apiName, [yearParam || '',{compactCatalog:true,sectionVersions:syyReadFresh?{}:invoiceSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function(data) {
       if(requestGeneration!==invoiceLoadGeneration)return;
-      if(revision!==syyDataRevision()){syyDataFailed();document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
+      if(revision!==syyDataRevision()){syyDataFailed();btnDone(refreshButton);document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
       if (!data || data.success === false || !Array.isArray(data.invoices)) {
         failedLoad({message:data && data.message || 'ข้อมูลใบกำกับภาษีไม่ถูกต้อง'}); return;
       }
@@ -685,6 +688,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
       if (data && data.seller) sellerInfo = data.seller;
       if (data && data.customers) customersCache = data.customers;
       if (data && data.products) productsCache = data.products;
+      if(data.sectionVersions)invoiceSectionVersions=data.sectionVersions;
       if(Array.isArray(data.availableYears))availableYearsCache=data.availableYears;else if(!availableYearsCache.length)availableYearsCache=[new Date().getFullYear()+543];
       taxInvoiceBootstrapped = true;
 
@@ -709,11 +713,13 @@ function loadAll(yearParam, onDone, onError, forceFull) {
       try { syyPostParent({ action: 'TAXINVOICE_READY' }); } catch (e) {}
 
       syyDataLoaded();
+      btnDone(refreshButton);
       if (typeof onDone === 'function') onDone();
     }, failedLoad);
   function failedLoad(err) {
       if(requestGeneration!==invoiceLoadGeneration)return;
       syyDataFailed();
+      btnDone(refreshButton);
       tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
       document.getElementById('recordCount').innerText = 'ผิดพลาด';

@@ -8,6 +8,16 @@ function products(s,n=769){for(let i=0;i<n;i++)s.put('Master_Products/P'+i,{Prod
 const issue={requestId:'read-test-stock-0001',reason:'ขายหน้าร้าน',items:[{productCode:'P1',qty:2}]};
 const queries=s=>s.calls.filter(x=>x.url.endsWith(':runQuery')).map(x=>JSON.parse(x.options.payload));
 
+test('10,000-product document refresh model measures section payload savings and reused year metadata without DB mutations',()=>{
+ const s=fresh();products(s,10000);s.put('Master_Customers/C1',{Customer_Name:'Buyer'});s.put('Meta_Counters/quotation_years',{Years:[2569]});
+ for(let i=0;i<50;i++)s.put('Quotations/Q'+i,{Quote_Date:'2026-10-01',Quote_No:'Q'+i,Items_JSON:'[]'});
+ const first=s.c.getQuotationPageData_(2569,{compactCatalog:true}),before=s.reads.Master_Products;let repeat;
+ for(let i=0;i<9;i++)repeat=s.c.getQuotationPageData_(2569,{compactCatalog:true,sectionVersions:first.sectionVersions});
+ const fullBytes=Buffer.byteLength(JSON.stringify(first)),repeatBytes=Buffer.byteLength(JSON.stringify(repeat)),saved=100*(1-repeatBytes/fullBytes),yearRequests=s.calls.filter(x=>x.url.includes('/Meta_Counters/quotation_years')).length;
+ assert.equal(first.products.rows.length,10000);assert.equal(repeat.products,undefined);assert.equal(repeat.customers,undefined);assert(saved>95);assert.equal(s.reads.Master_Products,before);assert.equal(yearRequests,1);assert.equal(s.commits.length,0);
+ require('node:fs').writeFileSync(require('node:path').join(__dirname,'..','test-results','cache-quality-read-model.json'),JSON.stringify({fixtureOnly:true,products:10000,requests:10,initialPayloadBytes:fullBytes,unchangedPayloadBytes:repeatBytes,payloadReductionPercent:Number(saved.toFixed(2)),yearMetadataRequests:yearRequests,yearRequestReductionPercent:90,additionalProductDocumentsRead:s.reads.Master_Products-before,productionMeasurements:false},null,2));
+});
+
 test('stock commit patches only one authoritative product; cache order/unknown fields/expiry survive, writes are unchanged',()=>{
  const s=fresh();products(s);s.c.getAllProducts_();const base=s.c.collectionCacheBaseKey_('Master_Products'),expiry=JSON.parse(s.cache.get(base+'__manifest')).expiresAt,order=s.c.readCollectionCache_('Master_Products').map(x=>x.id);
  s.reads={};const r=s.c.issueStock_(issue,'staff');assert.equal(r.success,true,r.message);assert.equal(s.value('Master_Products/P1','Current_Stock'),8);

@@ -17,7 +17,7 @@ function render(file, role, channel = '') {
   return html;
 }
 const fixture = `<script>
-window.apiCalls=[];window.alerts=[];window.apiFailure='';window.apiHold='';window.apiPending=[];window.fixtureMovements=[];window.fixtureMovementDetails={};
+window.apiCalls=[];window.apiRequests=[];window.alerts=[];window.apiFailure='';window.apiHold='';window.apiPending=[];window.fixtureMovements=[];window.fixtureMovementDetails={};
 window.Swal={fire:function(o){alerts.push(o);return Promise.resolve({isConfirmed:true});}};
 window.fixtureProduct={id:'P1',productCode:'P1',productName:'Test Part',partNumber:'PN1',barcode:'123',sellingPrice:200,costPrice:100,currentStock:10,minStock:2,zoneId:'Z1',zoneName:'A (Rack R1)',status:'Active',imageUrls:[]};
 window.fixtureCustomer={id:'C1',Customer_Name:'Buyer',Customer_Type:'ลูกค้าทั่วไป',Address:'Saved address',Branch:'สาขา 2',Tax_ID:'1234567890123'};
@@ -44,7 +44,7 @@ window.respond=function(fn,args){
  if(fn==='authGetMyProfile')return {success:true,username:'staff',fullName:'Staff',role:'staff',totpEnabled:false,recoveryCodesLeft:0};
  return {success:true};
 };
-window.google={script:{run:{withSuccessHandler:function(ok){var runner={withFailureHandler:function(fail){runner.fail=fail;return runner;},apiGateway:function(token,fn,args){invoke(fn,args);}};function invoke(fn,args){apiCalls.push({fn:fn,args:args});var done=function(){if(apiFailure===fn)runner.fail({message:'mock network failure'});else ok(respond(fn,args));};if(apiHold===fn)apiPending.push(done);else setTimeout(done,5);}['authLogin','authForgotPassword','authVerifyResetToken','authResetPassword','authChangePasswordForced'].forEach(function(fn){runner[fn]=function(){invoke(fn,Array.from(arguments));};});return runner;}}}};
+window.google={script:{run:{withSuccessHandler:function(ok){var runner={withFailureHandler:function(fail){runner.fail=fail;return runner;},apiGateway:function(token,fn,args,ua,metadata){apiRequests.push({fn:fn,metadata:metadata});invoke(fn,args,metadata);}};function invoke(fn,args,metadata){apiCalls.push({fn:fn,args:args});var done=function(){if(apiFailure===fn)runner.fail({message:'mock network failure'});else ok(respond(fn,args,metadata));};if(apiHold===fn)apiPending.push(done);else setTimeout(done,5);}['authLogin','authForgotPassword','authVerifyResetToken','authResetPassword','authChangePasswordForced'].forEach(function(fn){runner[fn]=function(){invoke(fn,Array.from(arguments));};});return runner;}}}};
 </script>`;
 const server = http.createServer((req,res)=>{
   const u = new URL(req.url,'http://localhost');
@@ -468,7 +468,7 @@ async function main(){
     await p.evaluate(()=>{apiFailure='getDashboardBootstrap';dashLoad();});await p.waitForTimeout(30);
     assert.equal(await p.evaluate(()=>JSON.stringify({products:DASH.products,movements:DASH.movements,sync:DASH.lastSync})),before);
     assert.equal(await p.evaluate(()=>DASH.nextReconcile>Date.now()),true,'Failed full reads wait before automatic reconciliation');
-    await p.evaluate(()=>{apiFailure='';apiCalls=[];DASH.lastFullLoad=Date.now()-300001;DASH.nextReconcile=0;dashRefreshDelta();});await p.waitForTimeout(30);
+    await p.evaluate(()=>{apiFailure='';apiCalls=[];DASH.lastFullLoad=Date.now()-DASH_RECONCILE_MS-1;DASH.nextReconcile=0;dashRefreshDelta();});await p.waitForTimeout(30);
     assert.equal(await p.evaluate(()=>apiCalls[0].fn),'getDashboardBootstrap');assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Real local frame handoff validates channel/source and supports quote, product and invoice workflows',async()=>{
@@ -939,6 +939,40 @@ async function main(){
     await p.screenshot({path:path.join(output,'backup-checkpoint-status.png')});
     const count=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getBackupOverview').length);await p.evaluate(()=>{closeModal('backupModal');backupPolls.forEach(fn=>fn());});await p.waitForTimeout(30);
     assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getBackupOverview').length),count);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('manual refresh explicitly bypasses all cache layers, coalesces simultaneous refreshes and retains master rows after failure',async()=>{
+    for(const file of ['Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html']){
+      const p=await pageFor(file,'admin');await p.evaluate(()=>{respond=()=>({__syyCache:1,version:'v1',data:[{id:'A1',Name:'Original',Customer_Name:'Original',Vendor_name:'Original',Area:'Original',Brand:'Original',Model:'Model'}]});loadTable();});await p.waitForFunction(()=>cache.length===1);const count=await p.evaluate(()=>apiCalls.length);
+      await p.evaluate(()=>loadTable());await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>apiCalls.length),count);
+      await p.getByRole('button',{name:/รีเฟรช/}).click();await p.waitForTimeout(30);assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.refresh),true,file);assert.equal(await p.evaluate(()=>cache.length),1);
+      await p.evaluate(()=>{apiFailure=API.list;});await p.getByRole('button',{name:/รีเฟรช/}).click();await p.waitForTimeout(30);assert.match(await p.locator('#tbodyMain').innerText(),/Original/);assert.match(await p.locator('#toastWrap').innerText(),/ข้อมูลเดิม/);assert.deepEqual(p.errors,[]);await p.close();
+    }
+    const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{apiHold='getBrands';window.refreshResults=0;callApi('getBrands',[],()=>refreshResults++,()=>{}, {authoritative:true});callApi('getBrands',[],()=>refreshResults++,()=>{}, {authoritative:true});});assert.equal(await p.evaluate(()=>apiPending.length),1);await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(done=>done());});await p.waitForFunction(()=>refreshResults===2);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('document revalidation omits unchanged sections without losing products, customers or typed drafts; manual refresh requests all sections',async()=>{
+    for(const file of ['Quotation.html','Master_Tax_Invoice.html']){
+      const p=await pageFor(file);await p.evaluate(isQuote=>{
+        const prior=respond;respond=(fn,args,meta)=>{const data=prior(fn,args);if(fn==='getQuotationPageData'||fn==='getTaxInvoicePageData'){
+          const held=args[1]&&args[1].sectionVersions||{};data.sectionVersions={products:{version:'products-v1',loadedAt:Date.now()},customers:{version:'customers-v1',loadedAt:Date.now()}};
+          if(held.products&&!meta.refresh)delete data.products;if(held.customers&&!meta.refresh)delete data.customers;
+        }return data;};
+        if(isQuote){loadPageData(currentPageYear,null,null,true);}else loadAll(currentPageYear,null,null,true);
+      },file==='Quotation.html');await p.waitForTimeout(40);
+      await p.evaluate(isQuote=>{if(isQuote){basket=[{...fixtureProduct,qty:1,unitPrice:123.45,stock:10}];renderBasket();document.querySelector('.price-input').value='123.45';loadPageData(currentPageYear,null,null,true);}else{openAddModal(true);document.querySelector('.item-price').value='123.45';loadAll(currentPageYear,null,null,true);}},file==='Quotation.html');await p.waitForTimeout(40);
+      assert.equal(await p.evaluate(isQuote=>(isQuote?products:productsCache)[0].productCode,file==='Quotation.html'),'P1');assert.equal(await p.evaluate(isQuote=>(isQuote?customers:customersCache)[0].id,file==='Quotation.html'),'C1');assert.equal(await p.locator(file==='Quotation.html'?'.price-input':'.item-price').first().inputValue(),'123.45');
+      await p.evaluate(isQuote=>{if(isQuote)switchTab('list');else closeModal('invoiceModal');},file==='Quotation.html');await p.getByRole('button',{name:/รีเฟรช/}).first().click();await p.waitForTimeout(40);
+      assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.refresh),true);assert.deepEqual(await p.evaluate(()=>apiCalls.at(-1).args[1].sectionVersions),{});assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('dashboard uses deltas between reconciliations, adopts structural catalog changes and recovers expired delta watermarks',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{apiCalls=[];DASH.lastFullLoad=Date.now()-300001;DASH.nextReconcile=0;const old=respond;respond=(fn,args)=>fn==='getDashboardDelta'?{success:true,movements:[],productStocks:[],poVendorMap:{},serverTime:new Date().toISOString(),products:[{...fixtureProduct,productName:'Catalog changed'}],catalogVersion:'v2',catalogExpiresAt:Date.now()+90000}:old(fn,args);dashRefreshDelta();});await p.waitForFunction(()=>!DASH.loading);
+    assert.equal(await p.evaluate(()=>apiCalls[0].fn),'getDashboardDelta');assert.equal(await p.evaluate(()=>DASH.products[0].productName),'Catalog changed');assert.equal(await p.evaluate(()=>DASH.catalogVersion),'v2');assert(await p.evaluate(()=>DASH.catalogExpiresAt>Date.now()));
+    await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getDashboardDelta'?{success:false,fullRefresh:true,message:'expired'}:old(fn,args);apiCalls=[];dashRefreshDelta();});await p.waitForFunction(()=>!DASH.loading&&apiCalls.some(x=>x.fn==='getDashboardBootstrap'));assert.deepEqual(await p.evaluate(()=>apiCalls.map(x=>x.fn)),['getDashboardDelta','getDashboardBootstrap']);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('PO stock freshness callbacks do not reference an absent draft and unknown drafts remain guarded',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>switchPage('orders'));const frame=p.frameLocator('#iframe-orders');await frame.locator('body').waitFor();await p.waitForTimeout(150);const child=p.frames().find(f=>f.url().includes('page=orders'));const errors=[];child.page().on('pageerror',e=>errors.push(e.message));
+    await p.evaluate(()=>syyPostFrame(document.getElementById('iframe-orders'),{action:'STOCK_DELTA',productStocks:[{productCode:'P1',currentStock:1}]}));await p.waitForTimeout(40);assert.deepEqual(errors,[]);assert.deepEqual(p.errors,[]);
+    await child.evaluate(()=>{syyDrafts.orders.adapter.restore({checked:{P1:true},qty:{P1:1},unknown:true});});assert.equal(await child.evaluate(()=>syyUnknownWrites.savePurchaseOrder),true);await p.close();
   });
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));

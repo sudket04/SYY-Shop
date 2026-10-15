@@ -122,7 +122,7 @@
   ];
   var SEARCH_KEYS = ['id','Name'];                     // 5. ฟิลด์ที่ช่องค้นหาไล่หา
 
-  var cache=[], editingId=null, deleteId=null, searchTimer=null;
+  var cache=[], editingId=null, deleteId=null, searchTimer=null,masterDataLoaded=false;
 
   window.onload = function(){
     initDensity();
@@ -149,11 +149,12 @@
     document.getElementById('tbodyMain').innerHTML = skeletonRows(4,5);
     callApi(API.list, [], function(data){
       if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
-      syyDataLoaded();
+      syyDataLoaded();masterDataLoaded=true;
       cache = data || [];
       renderRows();
     }, function(err){
       syyDataFailed();
+      if(masterDataLoaded){renderRows();toast(syyErrorMessage(err)+' · แสดงข้อมูลเดิมที่โหลดสำเร็จ','err');return;}
       document.getElementById('tbodyMain').innerHTML = emptyStateHtml(4,{
         icon:'⚠️', title:'โหลดข้อมูลไม่สำเร็จ', sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable()'}]

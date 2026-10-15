@@ -395,13 +395,15 @@ var CACHEABLE_COLLECTIONS = [
 var CACHE_CHUNK_MAX_BYTES = 80000;
 
 function cacheTtlForCollection_(collectionName) {
-  if (collectionName === "Master_Products") return 900;      // 15 นาที + invalidate ทุก write
-  if (collectionName === "Product_Images") return 1800;     // 30 นาที + invalidate ทุก write
-  if (collectionName === "Master_Customers") return 3600;   // 1 ชั่วโมง + invalidate ทุก write
+  if (collectionName === "Master_Products") return 300;
+  if (collectionName === "Product_Images" || collectionName === "Master_Customers") return 600;
+  if (collectionName !== "Master_Users") return Math.min(CACHE_TTL_SECONDS,900);
   return CACHE_TTL_SECONDS;
 }
+// Execution-local reuse never survives a request or bypasses a generation change.
+var executionReadContext_ = null;
 
-function collectionCacheBaseKey_(collectionName) {return 'docs_v3_'+collectionName;}
+function collectionCacheBaseKey_(collectionName) {return 'docs_v4_'+collectionName;}
 
 function splitCollectionCacheChunks_(docs) {
   docs = docs || [];
@@ -427,12 +429,18 @@ function readCollectionCache_(collectionName) {
   if(CACHEABLE_COLLECTIONS.indexOf(collectionName)<0)return null;
   try {
     var generation=collectionGeneration_(collectionName),cache=CacheService.getScriptCache(),base=collectionCacheBaseKey_(collectionName);
-    if(cache.get(base+'__disabled'))return null;var raw=cache.get(base+'__manifest');if(!raw)return null;
+    if(executionReadContext_&&executionReadContext_.refreshScopes.indexOf(collectionName)>=0&&!executionReadContext_.collections[collectionName])return null;
+    if(cache.get(base+'__disabled'))return null;
+    var memo=executionReadContext_&&executionReadContext_.collections[collectionName];
+    if(memo&&memo.generation===generation&&memo.expiresAt>Date.now())return memo.docs;
+    var raw=cache.get(base+'__manifest');if(!raw)return null;
     var manifest=JSON.parse(raw);if(manifest.generation!==generation || !manifest.id || manifest.count<1 || manifest.count>=500 || manifest.expiresAt&&manifest.expiresAt<=Date.now())return null;
     var keys=[];for(var i=0;i<manifest.count;i++)keys.push(base+'__'+manifest.id+'__'+i);
     var chunks=cache.getAll(keys),docs=[];
     for(var j=0;j<keys.length;j++){if(!chunks[keys[j]])return null;docs=docs.concat(JSON.parse(chunks[keys[j]]));}
-    return collectionGeneration_(collectionName)===generation?docs:null;
+    if(collectionGeneration_(collectionName)!==generation)return null;
+    if(executionReadContext_)executionReadContext_.collections[collectionName]={generation:generation,expiresAt:manifest.expiresAt||Date.now()+1000,docs:docs};
+    return docs;
   }catch(e){return null;}
 }
 
@@ -447,6 +455,7 @@ function writeCollectionCache_(collectionName,docs,expectedGeneration,expiresAt)
     cache.putAll(values,ttl);
     if(cache.get(base+'__disabled')||collectionGeneration_(collectionName)!==generation)return false;
     cache.put(base+'__manifest',JSON.stringify({generation:generation,id:id,count:chunks.length,expiresAt:expiresAt}),ttl);
+    if(executionReadContext_&&collectionGeneration_(collectionName)===generation)executionReadContext_.collections[collectionName]={generation:generation,expiresAt:expiresAt,docs:docs};
     return !cache.get(base+'__disabled')&&collectionGeneration_(collectionName)===generation;
   }catch(e){return false;}
 }
@@ -568,7 +577,7 @@ function fetchCollectionDocsUncached_(collectionName) {
 }
 
 function clearCollectionCache_(collectionName){
- try{return withCacheGuard_(function(){return invalidateCollectionCache_(collectionName,true);},function(){return invalidateCollectionCache_(collectionName,false);});}
+ try{if(collectionName==='Master_Products')PropertiesService.getScriptProperties().setProperty('cache_structure_products',Utilities.getUuid());return withCacheGuard_(function(){return invalidateCollectionCache_(collectionName,true);},function(){return invalidateCollectionCache_(collectionName,false);});}
  catch(e){try{PropertiesService.getScriptProperties().setProperty('cache_gen_'+collectionName,Utilities.getUuid());}catch(ignored){}return false;}
 }
 function invalidateCollectionCache_(collectionName,canEnable){
@@ -587,7 +596,7 @@ function withCacheGuard_(worker,fallback){
  var lock=LockService.getScriptLock();if(!lock.tryLock(250))return fallback();
  try{return worker();}finally{lock.releaseLock();}
 }
-function readCacheKey_(key){return 'read_v1_'+Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,PROJECT_ID+':'+String(key)));}
+function readCacheKey_(key){return 'read_v2_'+Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,PROJECT_ID+':'+String(key)));}
 function readCacheVersion_(scopes){
  var cache=CacheService.getScriptCache();return scopes.map(function(name){if(cache.get(collectionCacheBaseKey_(name)+'__disabled'))throw new Error('Cache bypass');return collectionGeneration_(name);}).join('|');
 }
@@ -604,10 +613,13 @@ function writeResultCache_(key,scopes,value,maxAge,version,createdAt){
  try{
   if(readCacheVersion_(scopes)!==version)return;
   var text=JSON.stringify(value),count=Math.ceil(text.length/16000);if(count>(key==='product-catalog-v1'?200:60))return;
-  var cache=CacheService.getScriptCache(),base=readCacheKey_(key),id=Utilities.getUuid(),parts={},ttl=Math.floor((createdAt+maxAge-Date.now())/1000);if(ttl<1)return;
+  var cache=CacheService.getScriptCache(),base=readCacheKey_(key),id=Utilities.getUuid(),parts={},expiresAt=createdAt+maxAge;
+  var sourceKeys=scopes.filter(function(s){return CACHEABLE_COLLECTIONS.indexOf(s)>=0;}).map(function(s){return collectionCacheBaseKey_(s)+'__manifest';}),sources=cache.getAll(sourceKeys);
+  sourceKeys.forEach(function(k){if(sources[k]){var source=JSON.parse(sources[k]);if(Number.isFinite(source.expiresAt))expiresAt=Math.min(expiresAt,source.expiresAt);}});
+  var ttl=Math.floor((expiresAt-Date.now())/1000);if(ttl<1)return;
   for(var i=0;i<count;i++)parts[base+'_'+id+'_'+i]=text.slice(i*16000,(i+1)*16000);
   cache.putAll(parts,ttl);if(readCacheVersion_(scopes)!==version)return;
-  cache.put(base,JSON.stringify({version:version,id:id,count:count,createdAt:createdAt,expiresAt:createdAt+maxAge}),ttl);
+  cache.put(base,JSON.stringify({version:version,id:id,count:count,createdAt:createdAt,expiresAt:expiresAt}),ttl);
  }catch(e){} // An unavailable/evicted cache must not fail a successful read.
 }
 function withReadLease_(key,read,worker){
@@ -630,7 +642,7 @@ function withReadLease_(key,read,worker){
 }
 function cachedReadResult_(key,scopes,maxAge,worker,force){
  function fresh(){var version=null,started=Date.now();try{version=readCacheVersion_(scopes);}catch(e){}var value=worker();if(version!==null)writeResultCache_(key,scopes,value,maxAge,version,started);return value;}
- if(force)return fresh();
+ if(force||executionReadContext_&&scopes.some(function(s){return executionReadContext_.refreshScopes.indexOf(s)>=0;}))return fresh();
  return withReadLease_('result:'+key,function(){return readResultCache_(key,scopes,maxAge);},fresh);
 }
 
@@ -1150,8 +1162,10 @@ function unpackProductCatalog_(data){
   return data.rows.map(function(values){var row={imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:''};data.fields.forEach(function(key,i){row[key]=values[i];});row.id=row.productCode;return row;});
 }
 function getProductCatalogRows_(){
+  var version=null,memo=executionReadContext_&&executionReadContext_.catalog;try{version=readCacheVersion_(PRODUCT_CATALOG_SCOPES);}catch(ignored){}
+  if(version!==null&&memo&&memo.version===version)return memo.rows;
   var data=cachedReadResult_('product-catalog-v1',PRODUCT_CATALOG_SCOPES,120000,function(){var packed=packProductCatalog_(getAllProducts_({omitImages:true}));packed.snapshot=readCacheKey_(JSON.stringify(packed.rows));return packed;});
-  var rows=unpackProductCatalog_(data);rows.catalogSnapshot=data.snapshot;return rows;
+  var rows=unpackProductCatalog_(data);rows.catalogSnapshot=data.snapshot;if(executionReadContext_&&version!==null)executionReadContext_.catalog={version:version,rows:rows};return rows;
 }
 function productCatalogSpec_(options){
   options=options||{};
@@ -1190,11 +1204,13 @@ function getProductCatalogPage_(options){
     if(cursor.query!==query||cursor.version!==version||!Number.isInteger(cursor.offset)||cursor.offset<1||!Number.isFinite(cursor.at)||Date.now()-cursor.at>300000||cursor.at>Date.now()+60000)throw Error('invalid');
     offset=cursor.offset;issuedAt=cursor.at;
   }catch(e){throw new Error('รายการสินค้าเปลี่ยนแปลงหรือหมดอายุ กรุณาโหลดใหม่ก่อน Export');}}
-  var all=getProductCatalogRows_(),rows=filterProductCatalog_(all,spec),total=rows.length;
+  var all=getProductCatalogRows_();
+  var codes=cachedReadResult_('product-order:'+query+':'+all.catalogSnapshot,PRODUCT_CATALOG_SCOPES,60000,function(){return filterProductCatalog_(all,spec).map(function(row){return row.productCode;});});
+  var total=codes.length,byCode=Object.create(null);all.forEach(function(row){byCode[row.productCode]=row;});
   if(options.cursor&&cursor.snapshot!==all.catalogSnapshot)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาเริ่ม Export ใหม่');
   if(options.cursor&&offset>=total)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
   if(!options.cursor)offset=Math.min(offset,Math.max(0,(Math.ceil(total/size)-1)*size));
-  var selected=rows.slice(offset,offset+size),images=getProductImageBatch_(selected.map(function(p){return p.productCode;}));
+  var selected=codes.slice(offset,offset+size).map(function(code){return Object.assign({},byCode[code]);}),images=getProductImageBatch_(codes.slice(offset,offset+size));
   selected.forEach(function(row){Object.assign(row,images[row.productCode]);});
   if(PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|')!==version)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
   var more=offset+selected.length<total;
@@ -2037,9 +2053,10 @@ function saveTaxInvoice_(d) {
 var META_COLLECTION      = "Meta_Counters";
 var TAX_INVOICE_YEARS_ID = "tax_invoice_years";
 
-function updateTaxInvoiceYearsMeta_(yearBE) { appendYearMeta_(TAX_INVOICE_YEARS_ID,yearBE); }
+function updateTaxInvoiceYearsMeta_(yearBE) { appendYearMeta_(TAX_INVOICE_YEARS_ID,yearBE);clearCollectionCache_('Master_Tax_Invoice'); }
 
-function getTaxInvoiceAvailableYears_() {
+function getTaxInvoiceAvailableYears_() {return cachedReadResult_('document-years:invoice',['Master_Tax_Invoice'],120000,getTaxInvoiceAvailableYearsUncached_);}
+function getTaxInvoiceAvailableYearsUncached_() {
   try {
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
             + "/databases/(default)/documents/" + META_COLLECTION + "/" + TAX_INVOICE_YEARS_ID;
@@ -2087,7 +2104,24 @@ function getTaxInvoiceList_(){var out=[],cursor='';do{var p=getTaxInvoiceListDat
 
 function getTaxInvoiceListData_(yearFilter,options){var page=queryDocumentPage_('Master_Tax_Invoice','Invoice_Date',yearFilter,options);return {invoices:page.docs.map(function(doc){return mapTaxInvoiceQueryDoc_(doc);}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getTaxInvoiceAvailableYears_()};}
 
-function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=options&&options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();result.seller=TAX_INVOICE_SELLER;return result;}
+function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;return result;}
+
+// Reuse only sections actually held by this caller, with a hard age that validation cannot extend.
+function documentPageSections_(result,options){
+  options=options||{};var known=options.sectionVersions||{},versions={};
+  if(typeof known!=='object'||Array.isArray(known))throw new Error('เวอร์ชันข้อมูลหน้าเอกสารไม่ถูกต้อง');
+  [{key:'products',source:'Master_Products',scopes:PRODUCT_CATALOG_SCOPES,age:300000,load:function(){return options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();}},
+   {key:'customers',source:'Master_Customers',scopes:['Master_Customers'],age:600000,load:getCustomersFull_}].forEach(function(section){
+    var version=null;try{version=readCacheVersion_(section.scopes);}catch(ignored){}
+    var prior=known[section.key],canReuse=options.compactCatalog&&version!==null&&prior&&prior.version===version&&Number.isFinite(prior.loadedAt)&&prior.loadedAt<=Date.now()&&Date.now()-prior.loadedAt<section.age&&clientReadExpiry_(section.scopes,section.age)>Date.now()&&!(executionReadContext_&&executionReadContext_.refreshScopes.some(function(s){return section.scopes.indexOf(s)>=0;}));
+    if(canReuse){versions[section.key]=prior;return;}
+    result[section.key]=section.load();
+    if(version!==null){if(readCacheVersion_(section.scopes)!==version)throw new Error('ข้อมูลเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
+      try{var source=JSON.parse(CacheService.getScriptCache().get(collectionCacheBaseKey_(section.source)+'__manifest')||'null');if(source&&Number.isFinite(source.expiresAt))versions[section.key]={version:version,loadedAt:Math.min(Date.now(),source.expiresAt-cacheTtlForCollection_(section.source)*1000)};}catch(ignored){}
+    }
+  });
+  result.sectionVersions=versions;
+}
 
 function deleteTaxInvoice_(docId) { return deleteFirestoreDocument_("Master_Tax_Invoice", docId); }
 
@@ -2354,9 +2388,10 @@ var QUOTATION_YEARS_ID = "quotation_years";
 
 // ★ เก็บรายชื่อปี (พ.ศ.) ที่มีใบเสนอราคาอยู่จริง ไว้ใช้สร้างตัวเลือกปีในหน้าเว็บ (pattern เดียวกับ
 //   updateTaxInvoiceYearsMeta_ ของใบกำกับภาษี) — เรียกครั้งเดียวตอนบันทึกสำเร็จ ไม่ใช่ทุกครั้งที่โหลดหน้า
-function updateQuotationYearsMeta_(yearBE) { appendYearMeta_(QUOTATION_YEARS_ID,yearBE); }
+function updateQuotationYearsMeta_(yearBE) { appendYearMeta_(QUOTATION_YEARS_ID,yearBE);clearCollectionCache_('Quotations'); }
 
-function getQuotationAvailableYears_() {
+function getQuotationAvailableYears_() {return cachedReadResult_('document-years:quotation',['Quotations'],120000,getQuotationAvailableYearsUncached_);}
+function getQuotationAvailableYearsUncached_() {
   try {
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
             + "/databases/(default)/documents/" + META_COLLECTION + "/" + QUOTATION_YEARS_ID;
@@ -2385,14 +2420,14 @@ function seedQuotationYearsMeta_() {
   fetched.docs.forEach(function(doc){var date=parseFirestoreValue_((doc.fields||{}).Quote_Date);if(validDateOnly_(date)) seen[new Date(date+"T00:00:00Z").getUTCFullYear()+543]=true;});
   var years=Object.keys(seen).map(Number);if(!years.length)years=[new Date().getFullYear()+543];
   years.forEach(updateQuotationYearsMeta_);
-  return getQuotationAvailableYears_();
+  return getQuotationAvailableYearsUncached_();
 }
 
 // ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
 //   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
 function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(function(doc){return mapQuotationDoc_({id:doc.name.split('/').pop(),fields:doc.fields||{}});}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getQuotationAvailableYears_()};}
 
-function getQuotationPageData_(yearFilter,options){var result=getQuotationListData_(yearFilter,options);result.customers=getCustomersFull_();result.products=options&&options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
+function getQuotationPageData_(yearFilter,options){var result=getQuotationListData_(yearFilter,options);documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
 
 function updateQuotationStatus_(docId, status) {
   if (QUOTATION_STATUSES.indexOf(status) === -1) {
@@ -4031,6 +4066,12 @@ function clientReadVersion_(scopes){
   var props=PropertiesService.getScriptProperties().getProperties();
   return scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
 }
+function clientReadExpiry_(scopes,maxAge){
+  var expiry=Date.now()+maxAge;
+  try{var keys=scopes.filter(function(s){return CACHEABLE_COLLECTIONS.indexOf(s)>=0;}).map(function(s){return collectionCacheBaseKey_(s)+'__manifest';}),values=CacheService.getScriptCache().getAll(keys);
+    keys.forEach(function(k){if(values[k]){var m=JSON.parse(values[k]);if(Number.isFinite(m.expiresAt))expiry=Math.min(expiry,m.expiresAt);}});return expiry;
+  }catch(ignored){return Date.now();}
+}
 function apiGateway(token, fnName, args, userAgent, clientCache) {
   try {
     var session = getSession_(token, userAgent);
@@ -4079,13 +4120,21 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
       return { success: false, message: "เกิดข้อผิดพลาดภายในระบบ กรุณาแจ้งผู้ดูแลระบบ" };
     }
     var cacheScopes=clientCache&&clientCache.protocol===1?clientReadScopes_(fnName):null,cacheVersion=null;
+    var authoritative=!!(cacheScopes&&clientCache.refresh===true);
+    if(authoritative){
+      if(a.some(function(x){return x&&typeof x==='object'&&x.cursor;}))return {success:false,message:'กรุณาเริ่มรีเฟรชจากหน้าแรก เพื่อไม่เปลี่ยน snapshot ระหว่างแบ่งหน้า'};
+      if(!allowReadRequest_('authoritativeRefresh',session.username))return {success:false,readLimited:true,retryAfterMs:60000,message:'รีเฟรชจากฐานข้อมูลได้ไม่เกิน 3 ครั้งต่อนาที กรุณารอแล้วลองใหม่ ข้อมูลเดิมยังอยู่'};
+      if(cacheScopes.map(function(scope){return clearCollectionCache_(scope);}).some(function(ok){return !ok;}))return {success:false,message:'ยังรีเฟรช Cache จากฐานข้อมูลไม่ได้ กรุณาลองใหม่ ข้อมูลเดิมยังอยู่'};
+    }
+    executionReadContext_={collections:Object.create(null),catalog:null,refreshScopes:authoritative?cacheScopes:[]};
     if(cacheScopes)try{cacheVersion=clientReadVersion_(cacheScopes);}catch(ignored){}
     // Authorization always runs before conditional responses. Force requests,
     // cursors and old snapshots must execute the ordinary read operation.
-    var force=a.some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor);});
+    var force=authoritative||a.some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor);});
     var maxClientAge=cacheScopes&&cacheScopes.every(function(x){return ['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers'].indexOf(x)>=0;})?300000:120000;
-    if(cacheVersion!==null&&!force&&clientCache.version===cacheVersion&&Number.isFinite(clientCache.loadedAt)&&clientCache.loadedAt<=Date.now()&&Date.now()-clientCache.loadedAt<maxClientAge){
-      return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes};
+    var dataExpiry=cacheScopes?clientReadExpiry_(cacheScopes,maxClientAge):0;
+    if(cacheVersion!==null&&!force&&dataExpiry>Date.now()&&clientCache.version===cacheVersion&&Number.isFinite(clientCache.loadedAt)&&clientCache.loadedAt<=Date.now()&&Date.now()-clientCache.loadedAt<maxClientAge){
+      return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes,expiresAt:dataExpiry};
     }
     var referenceOperations=['saveProduct','saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveMasterData','savePurchaseOrder','saveQuotation',
       'deleteProduct','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone','deleteCar','deletePurchaseOrder'];
@@ -4094,20 +4143,20 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     logActivity_(session.username, fnName, a, result);
 
     if(cacheVersion!==null&&!(result&&result.success===false))try{
-      if(clientReadVersion_(cacheScopes)===cacheVersion)return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes};
+      if(clientReadVersion_(cacheScopes)===cacheVersion)return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:clientReadExpiry_(cacheScopes,maxClientAge)};
     }catch(ignored){}
     return result;
 
   } catch (e) {
     console.error("apiGateway error [" + fnName + "]:", e);
     return { success: false, message: friendlyErrorMessage_(e) };
-  } finally { validatedGatewaySession_ = null; }
+  } finally { validatedGatewaySession_ = null; executionReadContext_ = null; }
 }
 
 // Server-side cost protection for authenticated read routes. It adds no DB writes
 // and never rate-limits stock commits, permissions checks, or document saves.
 function allowReadRequest_(name,username){
- var limits={getProductById:120,getProductCatalogPage:120,getProductCatalogFacets:120,getProductImageBatch:120,getDashboardBootstrap:30,getDashboardDelta:120,getStockMovementPage:120,getStockMovements:60,getStockMovementDetail:120,getPurchaseOrderPageData:120,getAllProducts:60};
+ var limits={authoritativeRefresh:3,getProductById:120,getProductCatalogPage:120,getProductCatalogFacets:120,getProductImageBatch:120,getDashboardBootstrap:30,getDashboardDelta:120,getStockMovementPage:120,getStockMovements:60,getStockMovementDetail:120,getPurchaseOrderPageData:120,getAllProducts:60};
  if(!limits[name])return true;
  var key='read_rate_'+readCacheKey_(name+':'+username),lock=LockService.getScriptLock();if(!lock.tryLock(250))return false;
  try{var props=PropertiesService.getScriptProperties(),raw=props.getProperty(key),state=raw?JSON.parse(raw):null,now=Date.now();
@@ -5251,6 +5300,11 @@ function buildPoVendorMapForMovements_(movements) {
   return out;
 }
 
+function dashboardCatalogVersion_(){
+  try{if(CacheService.getScriptCache().get(collectionCacheBaseKey_('Master_Products')+'__disabled'))return null;
+    return readCacheVersion_(PRODUCT_CATALOG_SCOPES.slice(1))+'|'+(PropertiesService.getScriptProperties().getProperty('cache_structure_products')||'0');
+  }catch(ignored){return null;}
+}
 function getDashboardBootstrap_(options){
   options=options||{};var now=new Date(),current=Number(businessDate_().slice(0,4)),year=Number(options.year)||current;
   if(!Number.isInteger(year)||year<current-4||year>current)throw new Error('ปีไม่ถูกต้อง');
@@ -5261,18 +5315,30 @@ function getDashboardBootstrap_(options){
     var movements=[],readTime='';ranges.forEach(function(range){var rows=queryDashboardMovementsRange_(range.start,range.end,false,readTime);readTime=readTime||rows.readTime;movements=movements.concat(rows);});
     return {movements:movements,serverTime:readTime,snapshotLoadedAt:Date.parse(readTime)||Date.now()};
   },options.force===true);
-  return {products:options&&options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_(),movements:snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
+  var catalogVersion=dashboardCatalogVersion_(),products=options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();
+  if(catalogVersion!==null&&catalogVersion!==dashboardCatalogVersion_())throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
+  return {products:products,catalogVersion:catalogVersion,catalogExpiresAt:clientReadExpiry_(PRODUCT_CATALOG_SCOPES,300000),movements:snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
 }
 
 function getDashboardDelta_(sinceIso,options) {
   var since=String(sinceIso||'').trim(),time=Date.parse(since);
   if(!since||since.length>64||isNaN(time)||time>Date.now()+60000||Date.now()-time>900000)return {success:false,fullRefresh:true,message:'กรุณาโหลดข้อมูลล่าสุดเพื่อเริ่มซิงก์ใหม่'};
+  options=options||{};
+  return cachedReadResult_('dashboard-delta:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
+}
+function getDashboardDeltaUncached_(since,time,options){
   options=options||{};var page=queryMovementPage_('Committed_At',new Date(time-60000).toISOString(),{pageSize:200,cursor:options.cursor},null);
   var movements=page.docs.map(function(doc){return mapDashboardMovementRow_({document:doc});}).filter(Boolean),codes=[],seen={};
   movements.forEach(function(m){if(m.productCode&&!seen[m.productCode]){seen[m.productCode]=true;codes.push(m.productCode);}});
   var stocks=getProductStockMap_(codes),productStocks=[];
   Object.keys(stocks).forEach(function(code){var x=stocks[code];productStocks.push({productCode:code,currentStock:x.stock,minStock:x.minStock,costPrice:x.costPrice,sellingPrice:x.sellingPrice});});
-  return {success:true,movements:movements,productStocks:productStocks,poVendorMap:buildPoVendorMapForMovements_(movements),serverTime:page.pageInfo.readTime,nextCursor:page.pageInfo.nextCursor,hasMore:page.pageInfo.hasMore};
+  var result={success:true,movements:movements,productStocks:productStocks,poVendorMap:buildPoVendorMapForMovements_(movements),serverTime:page.pageInfo.readTime,nextCursor:page.pageInfo.nextCursor,hasMore:page.pageInfo.hasMore};
+  var catalogVersion=dashboardCatalogVersion_();
+  if(!page.pageInfo.hasMore&&catalogVersion!==null&&Object.prototype.hasOwnProperty.call(options,'catalogVersion')&&(options.catalogVersion!==catalogVersion||Number.isFinite(options.catalogExpiresAt)&&options.catalogExpiresAt<=Date.now())){
+    result.products=options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();
+    if(catalogVersion!==dashboardCatalogVersion_())throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างซิงก์ กรุณาลองใหม่');result.catalogVersion=catalogVersion;result.catalogExpiresAt=clientReadExpiry_(PRODUCT_CATALOG_SCOPES,300000);
+  }
+  return result;
 }
 
 /**
@@ -5511,7 +5577,7 @@ function addCalendarDays_(value,days) {
 }
 function backupScriptProperties_() {
   var props=PropertiesService.getScriptProperties().getProperties();
-  Object.keys(props).forEach(function(key){if(/^(cache_gen_|auth_rate_|read_rate_|SYY_BACKUP_)/.test(key))delete props[key];});return props;
+  Object.keys(props).forEach(function(key){if(/^(cache_gen_|cache_structure_|auth_rate_|read_rate_|SYY_BACKUP_)/.test(key))delete props[key];});return props;
 }
 function documentReferenceExists_(collection,field,id,operator) {return queryByEqualityField_(collection,field,id,1,operator).length>0;}
 function assertDeleteAllowed_(collection,id,document) {

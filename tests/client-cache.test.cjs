@@ -87,3 +87,99 @@ test('memory entry count and serialized payload remain bounded; malformed stored
  b.read('getBrands');b.complete([]);const key=Object.keys(b.storage)[0],bad=JSON.parse(b.storage[key]);bad.raw='malformed';b.storage[key]=JSON.stringify(bad);b.c.syyReadCache.clear();const before=b.calls.length;b.read('getBrands');assert.equal(b.calls.length,before+1);
 });
 
+test('authoritative browser refresh evicts related snapshots once, coalesces refreshes and rejects older responses',()=>{
+ const b=browser();b.read('getBrands');b.complete([{id:'OLD'}]);b.read('getCustomersFull');b.complete([{id:'C1'}]);
+ b.c.syyFreshState={revision:3,dirty:false};const one=b.read('getBrands',[],{authoritative:true}),two=b.read('getBrands',[],{authoritative:true});assert.equal(b.calls.length,3);assert.equal(b.calls.at(-1).transport.refresh,true);assert.equal(b.c.syyFreshState.revision,3);b.complete([{id:'NEW'}],'v2');assert.deepEqual(plain(one.value),[{id:'NEW'}]);assert.deepEqual(one.value,two.value);
+ b.read('getCustomersFull');b.flush();assert.equal(b.calls.length,3);assert.equal(b.c.syyCacheStats.authoritative,1);
+ const pending=b.read('getBrands',[],{fresh:true});b.read('getBrands',[],{authoritative:true});b.calls.at(-2).ok({__syyCache:1,version:'old',data:[]});assert.match(pending.error.message,/เปลี่ยนแปลง/);
+ // Export's fresh flag bypasses browser reuse without invalidating its server snapshot.
+ b.read('getProductCatalogPage',[{cursor:'same-snapshot'}],{fresh:true});assert.equal(b.calls.at(-1).transport.refresh,false);
+});
+
+test('authoritative refresh reads past warm raw/result caches, is throttled, and cannot bypass role/session/cursor checks',()=>{
+ const s=setup();s.seed();s.put('Master_Brands/B1',{Brand_Name:'Original'});s.c.getSession_=()=>({username:'viewer',role:'viewer'});
+ const read=(name,args=[],meta={protocol:1})=>s.c.apiGateway('token',name,args,'fixture',meta);
+ assert.equal(read('getBrands').data[0].Name,'Original');s.put('Master_Brands/B1',{Brand_Name:'External'});assert.equal(read('getBrands').data[0].Name,'Original');
+ const refresh={protocol:1,refresh:true};assert.equal(read('getBrands',[],refresh).data[0].Name,'External');assert.equal(s.c.executionReadContext_,null);
+ const version=s.c.collectionGeneration_('Master_Products'),before=s.calls.length;assert.equal(read('getStockMovementDetail',['SI1'],refresh).success,false);assert.equal(s.calls.length,before);assert.equal(s.c.collectionGeneration_('Master_Products'),version);
+ assert.equal(read('getProductCatalogPage',[{cursor:'bad'}],refresh).success,false);assert.equal(s.c.collectionGeneration_('Master_Products'),version);
+ read('getBrands',[],refresh);read('getBrands',[],refresh);const count=s.calls.length;assert.equal(read('getBrands',[],refresh).readLimited,true);assert.equal(s.calls.length,count);
+ s.c.getSession_=()=>null;assert.equal(read('getBrands',[],refresh).__authError,true);assert.equal(s.commits.length,0);
+});
+
+test('gateway memo reuses raw documents and catalog inside one request, but never across invalidation or another request',()=>{
+ const s=setup();s.seed();s.c.getSession_=()=>({username:'staff',role:'staff'});let same=false;
+ s.c.API_FUNCTIONS.getAllProducts=()=>{const first=s.c.getProductCatalogRows_(),second=s.c.getProductCatalogRows_();same=first===second;const masters=s.c.getAllMasterDropdowns_();return {products:s.c.packProductCatalog_(second),masters};};
+ const r=s.c.apiGateway('token','getAllProducts',[],'fixture',{protocol:1,refresh:true});assert(r.data);assert(same);assert.equal(s.calls.filter(x=>/\/Master_Products\?/.test(x.url)).length,1);assert.equal(s.calls.filter(x=>/\/Master_Vendors\?/.test(x.url)).length,1);assert.equal(s.c.executionReadContext_,null);
+ s.c.executionReadContext_={collections:Object.create(null),refreshScopes:[],catalog:null};const first=s.c.getProductCatalogRows_();s.put('Master_Products/P1',{Product_Name:'Changed',Current_Stock:9});s.c.clearCollectionCache_('Master_Products');const second=s.c.getProductCatalogRows_();assert.notEqual(first,second);assert.equal(second[0].productName,'Changed');s.c.executionReadContext_=null;assert.equal(s.commits.length,0);
+});
+
+test('external writes age out of server collection caches within bounded TTL without changing DB',()=>{
+ const s=setup();let now=Date.now();s.c.Date=class extends Date{constructor(...args){super(args.length?args[0]:now);}static now(){return now;}};
+ for(const [collection,ttl] of [['Master_Products',300],['Master_Customers',600],['Product_Images',600],['Master_Brands',900]]){
+  s.put(collection+'/A',{Name:'Original'});assert.equal(s.c.cacheTtlForCollection_(collection),ttl);s.c.fetchCollectionDocsCached_(collection);s.put(collection+'/A',{Name:'External'});
+  assert.equal(s.c.parseFirestoreValue_(s.c.fetchCollectionDocsCached_(collection)[0].fields.Name),'Original');now+=ttl*1000+1;assert.equal(s.c.parseFirestoreValue_(s.c.fetchCollectionDocsCached_(collection)[0].fields.Name),'External');
+ }
+ assert.equal(s.commits.length,0);
+});
+
+test('document sections omit unchanged catalog/customers, retain original age and refresh only changed or expired sections',()=>{
+ const s=setup();s.seed();s.put('Master_Customers/C1',{Customer_Name:'Original'});let now=Date.now();s.c.Date=class extends Date{static now(){return now;}};
+ for(const [page,collection] of [['getQuotationPageData_','Quotations'],['getTaxInvoicePageData_','Master_Tax_Invoice']]){
+  const list=page==='getQuotationPageData_'?'getQuotationListData_':'getTaxInvoiceListData_';s.c[list]=()=>({[collection==='Quotations'?'quotations':'invoices']:[]});
+  const first=s.c[page](2569,{compactCatalog:true}),n=s.calls.length;const repeat=s.c[page](2569,{compactCatalog:true,sectionVersions:first.sectionVersions});assert.equal(repeat.products,undefined);assert.equal(repeat.customers,undefined);assert.deepEqual(plain(repeat.sectionVersions),plain(first.sectionVersions));assert.equal(s.calls.length,n);
+  s.put('Master_Customers/C1',{Customer_Name:'Updated'});s.c.clearCollectionCache_('Master_Customers');const changed=s.c[page](2569,{compactCatalog:true,sectionVersions:first.sectionVersions});assert.equal(changed.products,undefined);assert.equal(changed.customers[0].Customer_Name,'Updated');
+  now+=300001;const expired=s.c[page](2569,{compactCatalog:true,sectionVersions:changed.sectionVersions});assert(expired.products);assert.equal(expired.customers,undefined);assert(expired.sectionVersions.products.loadedAt>changed.sectionVersions.products.loadedAt);
+  const legacy=s.c[page](2569,{});assert(Array.isArray(legacy.products));assert(Array.isArray(legacy.customers));
+ }
+ assert.equal(s.commits.length,0);
+});
+
+test('document-year metadata reuses one read, invalidates after year updates and never caches a failed response',()=>{
+ const s=setup();for(const [getter,updater,id] of [['getQuotationAvailableYears_','updateQuotationYearsMeta_','quotation_years'],['getTaxInvoiceAvailableYears_','updateTaxInvoiceYearsMeta_','tax_invoice_years']]){
+  s.put('Meta_Counters/'+id,{Years:[2569]});const before=s.calls.length;for(let i=0;i<5;i++)assert.deepEqual(plain(s.c[getter]()),[2569]);assert.equal(s.calls.length-before,1);
+  s.c[updater](2570);assert.deepEqual(plain(s.c[getter]()),[2570,2569]);s.c.clearCollectionCache_(id==='quotation_years'?'Quotations':'Master_Tax_Invoice');s.c.failRequest=url=>url.includes(id)?503:0;assert.throws(()=>s.c[getter](),/ปีเอกสาร/);s.c.failRequest=null;assert.deepEqual(plain(s.c[getter]()),[2570,2569]);
+ }
+ assert.equal(s.docs.size,2);
+});
+
+test('catalog page/filter/sort cache is shared across pages, and invalidation recomputes the global result',()=>{
+ const s=setup();for(let i=0;i<100;i++)s.put('Master_Products/P'+i,{Product_Name:'Part '+i,Current_Stock:i});let sorts=0;const filter=s.c.filterProductCatalog_;s.c.filterProductCatalog_=(...args)=>{sorts++;return filter(...args);};
+ const first=s.c.getProductCatalogPage_({pageSize:25,sortCol:'currentStock',sortAsc:false});const second=s.c.getProductCatalogPage_({page:2,pageSize:25,sortCol:'currentStock',sortAsc:false});assert.equal(sorts,1);assert.equal(first.products[0].currentStock,99);assert.equal(second.products[0].currentStock,74);
+ s.put('Master_Products/P0',{Product_Name:'Newest',Current_Stock:200});s.c.clearCollectionCache_('Master_Products');assert.equal(s.c.getProductCatalogPage_({pageSize:25,sortCol:'currentStock',sortAsc:false}).products[0].productCode,'P0');assert.equal(sorts,2);assert.equal(s.commits.length,0);
+});
+
+test('dashboard delta sends catalog only for structural changes and transient metadata stays out of Backup',()=>{
+ const s=setup();s.seed();s.c.readTime=new Date().toISOString();s.c.getAllProducts_=()=>[{productCode:'P1',productName:'Original'}];const version=s.c.dashboardCatalogVersion_();s.c.invalidateCollectionCache_('Master_Products',true);
+ let delta=s.c.getDashboardDelta_(new Date(Date.now()-60000).toISOString(),{catalogVersion:version});assert.equal(delta.products,undefined);assert.equal(s.c.dashboardCatalogVersion_(),version);
+ const aged=s.c.getDashboardDelta_(new Date(Date.now()-60000).toISOString(),{catalogVersion:version,catalogExpiresAt:Date.now()-1});assert.equal(aged.products[0].productCode,'P1');assert(aged.catalogExpiresAt>Date.now());
+ s.c.clearCollectionCache_('Master_Products');delta=s.c.getDashboardDelta_(new Date(Date.now()-60000).toISOString(),{catalogVersion:version});assert.equal(delta.products[0].productCode,'P1');assert.notEqual(delta.catalogVersion,version);assert.equal(s.c.backupScriptProperties_().cache_structure_products,undefined);assert.equal(s.commits.length,0);
+});
+
+test('identical Dashboard deltas share a five-second result and committed changes invalidate it',()=>{
+ const s=setup();s.c.readTime=new Date().toISOString();const since=new Date(Date.now()-60000).toISOString();for(let i=0;i<10;i++)s.c.getDashboardDelta_(since);
+ assert.equal(s.calls.filter(x=>x.url.endsWith(':runQuery')).length,1);s.c.clearCollectionCache_('Stock_Movements');s.c.getDashboardDelta_(since);assert.equal(s.calls.filter(x=>x.url.endsWith(':runQuery')).length,2);assert.equal(s.commits.length,0);
+});
+
+test('a derived catalog cannot extend an almost-expired raw snapshot after an external write',()=>{
+ const s=setup();let now=Date.now();s.c.Date=class extends Date{constructor(...args){super(args.length?args[0]:now);}static now(){return now;}};s.seed();s.c.fetchCollectionDocsCached_('Master_Products');now+=299000;
+ assert.equal(s.c.getProductCatalogRows_()[0].productName,'Part');s.put('Master_Products/P1',{Product_Name:'External update',Current_Stock:7});now+=2000;
+ assert.equal(s.c.getProductCatalogRows_()[0].productName,'External update');assert.equal(s.commits.length,0);
+});
+
+test('browser page cache expires with its retained document section instead of extending old section data',()=>{
+ const b=browser();b.read('getQuotationPageData');b.complete({quotations:[],sectionVersions:{products:{version:'p1',loadedAt:b.c.Date.now()-299000}}});b.tick(2000);b.read('getQuotationPageData');assert.equal(b.calls.length,2);assert.equal(b.calls.at(-1).transport.version,null);
+});
+
+test('server and browser conditional caches cannot extend source expiry even when external writes leave generations unchanged',()=>{
+ const s=setup();let now=Date.now();s.c.Date=class extends Date{constructor(...args){super(args.length?args[0]:now);}static now(){return now;}};s.c.getSession_=()=>({username:'staff',role:'staff'});s.put('Master_Brands/B1',{Brand_Name:'Original'});
+ s.c.getBrands_();now+=899000;const response=s.c.apiGateway('token','getBrands',[],'fixture',{protocol:1});assert.equal(response.expiresAt,now+1000);s.put('Master_Brands/B1',{Brand_Name:'External'});now+=2000;
+ const fresh=s.c.apiGateway('token','getBrands',[],'fixture',{protocol:1,version:response.version,loadedAt:now-2000});assert.equal(fresh.notModified,undefined);assert.equal(fresh.data[0].Name,'External');assert.equal(s.commits.length,0);
+ const b=browser();b.read('getBrands');b.calls.at(-1).ok({__syyCache:1,version:'same',data:[],expiresAt:b.c.Date.now()+1000});b.tick(2000);b.read('getBrands');assert.equal(b.calls.length,2);assert.equal(b.calls.at(-1).transport.version,null);
+});
+
+test('read metrics count actual coalesced RPCs and elapsed time without recording arguments or cached hits as requests',()=>{
+ const b=browser();b.read('getBrands');b.read('getBrands');b.tick(25);b.complete([]);b.read('getBrands');b.flush();assert.deepEqual(plain(b.c.syyCacheStats.byApi.getBrands),{rpcCount:1,errorCount:0,totalMs:25,maxMs:25,lastMs:25});
+ b.read('getBrands',[],{fresh:true});b.tick(10);b.calls.at(-1).fail({message:'network'});assert.equal(b.c.syyCacheStats.byApi.getBrands.rpcCount,2);assert.equal(b.c.syyCacheStats.byApi.getBrands.errorCount,1);assert.equal(b.c.syyCacheStats.byApi.getBrands.totalMs,35);assert.equal(b.c.syyCacheStats.hits,1);
+});
+
