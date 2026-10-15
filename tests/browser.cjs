@@ -873,6 +873,58 @@ async function main(){
       var repeated=apiCalls.length-start;await read({fresh:true});return {repeated:repeated,total:apiCalls.length-start};
     });assert.deepEqual(result,{repeated:1,total:2});assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('product image viewer closes repeatedly for every role and viewport, restores modal focus/scroll, traps keys and cancels drag',async()=>{
+    for(const role of ['viewer','staff','admin'])for(const width of [1365,640,390,320]){
+      const touch=width<=640?await browser.newContext({hasTouch:true,viewport:{width,height:900}}):null;if(touch)await touch.route('https://**/*',r=>r.abort());
+      const p=await pageFor('Master_Products.html',role,touch||context);await p.setViewportSize({width,height:900});
+      await p.evaluate(()=>{var image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="skyblue"/></svg>');productsCache[0].imageUrl=image;productsCache[0].imageUrls=[image,image];document.body.style.overflow='auto';openTableProductImageLightbox('P1');});
+      const viewer=p.locator('#productImageViewer'),close=viewer.locator('[aria-label="ปิด"]');
+      await close.click();assert.equal(await viewer.isVisible(),false);assert.equal(await p.evaluate(()=>document.body.style.overflow),'auto');
+      await p.evaluate(()=>openViewModal('P1'));const opener=p.locator('#viewImgBox .view-product-gallery-main');
+      for(let attempt=0;attempt<3;attempt++){
+        const before=await p.evaluate(()=>apiCalls.length);if(touch)await opener.tap();else await opener.click();await close.waitFor();
+        assert.equal(await viewer.evaluate(el=>el.inert),false,role+'/'+width);
+        assert.equal(await p.evaluate(()=>syyModalStack.at(-1).element.id),'productImageViewer');
+        assert.equal(await close.evaluate(el=>{var r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true,'close must receive the pointer');
+        await p.waitForTimeout(20);await p.keyboard.press('Shift+Tab');assert.equal(await p.evaluate(()=>!!document.activeElement.closest('#productImageViewer')),true);
+        await viewer.locator('[aria-label="ซูมเข้า"]').click();await p.locator('#productImageViewerNext').click();assert.equal(await p.evaluate(()=>PRODUCT_VIEWER.index),1);
+        if(attempt===1){await p.keyboard.press('+');await p.mouse.move(width/2,400);await p.mouse.down();await p.mouse.move(width/2+30,420);assert.equal(await p.evaluate(()=>PRODUCT_VIEWER.drag),true);await p.keyboard.press('Escape');await p.mouse.up();}
+        else if(touch)await close.tap();else await close.click();
+        assert.equal(await viewer.isVisible(),false);assert.equal(await p.evaluate(()=>PRODUCT_VIEWER.drag),false);
+        assert.equal(await p.evaluate(()=>document.body.style.overflow),'hidden');assert.equal(await p.locator('#viewProductModal').isVisible(),true);
+        assert.equal(await p.evaluate(()=>document.activeElement===document.querySelector('#viewImgBox .view-product-gallery-main')),true,'return focus to the image opener');
+        assert.equal(await p.evaluate(()=>apiCalls.length),before,'view/zoom/close makes no RPC');
+      }
+      await p.evaluate(()=>closeModal('viewProductModal'));assert.equal(await p.evaluate(()=>document.body.style.overflow),'auto');assert.deepEqual(p.errors,[]);await p.close();if(touch)await touch.close();
+    }
+  });
+  await check('all six master tables render populated long Thai values, keep page scroll contained and filter without RPC',async()=>{
+    for(const file of ['Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html'])for(const width of [1365,390,320]){
+      const p=await pageFor(file,'admin');await p.setViewportSize({width,height:900});
+      await p.evaluate(()=>{
+        ['brands','categories','vendors','customers','zones','cars'].forEach(key=>XLF.clearAll(key));document.getElementById('searchInput').value='';
+        var label='ชื่อข้อมูลภาษาไทยสำหรับตรวจสอบหน้าจอและการตัดบรรทัดที่มีความยาวมาก';
+        respond=()=>Array.from({length:30},(_,i)=>({id:'AUDIT'+i,Name:label+i,Brand_Name:label+i,Category_Name:label+i,Vendor_name:label+i,Customer_Name:label+i,Customer_Type:'ลูกค้าทั่วไป',Address:label,Branch:'สำนักงานใหญ่',Tax_ID:'1234567890123',Phone:'0812345678',Area:label,Build:'อาคาร',Floor:'ชั้น 1',Rack_no:'R1',Rack_Level:'1',Brand:label,Model:label,Model_Code:'M'+i,Year:'2026',Type_Car:'รถบรรทุก',Note:label}));
+        loadTable();
+      });
+      await p.waitForFunction(()=>document.getElementById('tbodyMain').querySelectorAll('tr').length===30);await p.waitForTimeout(35);
+      assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),true,file+'/'+width+' page overflow');
+      const calls=await p.evaluate(()=>apiCalls.length);await p.locator('#searchInput').fill('AUDIT29');await p.locator('#searchInput').dispatchEvent('input');await p.waitForTimeout(200);
+      assert.equal(await p.locator('#tbodyMain tr').count(),1,file+'/'+width+' local search');assert.equal(await p.evaluate(()=>apiCalls.length),calls,'typing does not read');
+      assert.deepEqual(p.errors,[],file+'/'+width);await p.close();
+    }
+  });
+  await check('profile empty activity log is reused for one minute, concurrent reads coalesce, refresh retries and failures retain prior rows',async()=>{
+    const p=await pageFor('Profile.html','admin');
+    await p.evaluate(()=>{apiHold='getActivityLog';switchTab('log');for(var i=0;i<10;i++)switchTab('log');});
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getActivityLog').length),1);
+    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(done=>done());});await p.waitForFunction(()=>activityLogLoadedAt>0);
+    await p.evaluate(()=>{for(var i=0;i<10;i++){switchTab('profile');switchTab('log');}});assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getActivityLog').length),1);
+    await p.evaluate(()=>{activityLogLoadedAt=Date.now()-60001;switchTab('log');});await p.waitForFunction(()=>!activityLogLoading);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getActivityLog').length),2);
+    await p.evaluate(()=>{respond=(fn,args)=>fn==='getActivityLog'?[{timestamp:new Date().toISOString(),username:'admin',action:'save',label:'Saved record',docId:'P1',success:true}]:[];loadActivityLog();});await p.waitForFunction(()=>!activityLogLoading);assert.match(await p.locator('#logTableBody').innerText(),/Saved record/);
+    await p.evaluate(()=>{apiFailure='getActivityLog';loadActivityLog();});await p.waitForFunction(()=>!activityLogLoading);assert.match(await p.locator('#logTableBody').innerText(),/Saved record/);
+    await p.evaluate(()=>{apiFailure='';respond=()=>({success:false,message:'permission denied'});loadActivityLog();});await p.waitForFunction(()=>!activityLogLoading);assert.match(await p.locator('#logTableBody').innerText(),/Saved record/);assert.deepEqual(p.errors,[]);await p.close();
+  });
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));
 }

@@ -120,9 +120,9 @@
 .view-product-gallery-thumb img{display:block;width:100%;height:100%;object-fit:contain}
 .view-product-gallery-thumb.active{border:2px solid var(--primary);padding:2px;box-shadow:0 0 0 2px rgba(0,80,136,.10)}
 @media(max-width:640px){.product-image-slots-ui{grid-template-columns:1fr}.product-image-preview-btn,.product-image-add-ui{height:180px}.view-product-gallery,.view-product-gallery-stage{width:100%}.view-product-gallery-stage{height:min(62vw,280px)}}
-.product-image-viewer-overlay{position:fixed;inset:0;z-index:6000;background:rgba(2,8,23,.94);display:none;flex-direction:column;align-items:stretch;justify-content:stretch;overscroll-behavior:contain;touch-action:none}
+.product-image-viewer-overlay{position:fixed;inset:0;z-index:6000;background:rgba(2,8,23,.94);display:none;flex-direction:column;align-items:stretch;justify-content:stretch;padding:0;overflow:hidden;overscroll-behavior:contain;touch-action:none;backdrop-filter:none}
 .product-image-viewer-overlay.open{display:flex}
-.product-image-viewer-toolbar{height:58px;flex:0 0 58px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;color:#fff;background:rgba(2,8,23,.82);border-bottom:1px solid rgba(255,255,255,.12)}
+.product-image-viewer-toolbar{min-height:58px;flex:0 0 auto;position:relative;z-index:4;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;color:#fff;background:rgba(2,8,23,.82);border-bottom:1px solid rgba(255,255,255,.12)}
 .product-image-viewer-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .product-image-viewer-controls{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .product-image-viewer-btn{height:36px;min-width:36px;padding:0 10px;border:1px solid rgba(255,255,255,.25);border-radius:8px;background:rgba(255,255,255,.10);color:#fff;font:inherit;font-weight:600;cursor:pointer}
@@ -134,7 +134,7 @@
 .product-image-viewer-arrow.prev{left:12px}.product-image-viewer-arrow.next{right:12px}
 .product-image-viewer-arrow:hover{background:rgba(0,80,136,.92)}
 .product-image-viewer-footer{height:42px;flex:0 0 42px;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:12px;background:rgba(2,8,23,.82);border-top:1px solid rgba(255,255,255,.08)}
-@media(max-width:640px){.product-image-viewer-toolbar{height:auto;min-height:58px;flex-wrap:wrap}.product-image-viewer-title{width:100%}.product-image-viewer-controls{width:100%;justify-content:center}}
+@media(max-width:640px){.product-image-viewer-toolbar{height:auto;min-height:58px;flex-wrap:wrap}.product-image-viewer-title{width:100%}.product-image-viewer-controls{width:100%;justify-content:center}.product-image-viewer-btn{height:44px;min-width:44px}}
 
 </style>
 </head>
@@ -1174,10 +1174,10 @@
     productImageUrls=Array.isArray(res.imageUrls)?res.imageUrls.slice(0,3):[];productImageDraftBase64=productImageUrls.map(function(){return null;});productPrimaryImageIndex=Math.max(0,Math.min(parseInt(res.primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));productImageDraftDirty=false;
     if(product){product.imageUrls=productImageUrls.slice();product.primaryImageIndex=productPrimaryImageIndex;product.imageUrl=res.imageUrl||productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';}renderProductImageSlots(editingDocId);
   }
-  var PRODUCT_VIEWER={urls:[],index:0,title:'รูปสินค้า',scale:1,x:0,y:0,drag:false,startX:0,startY:0,baseX:0,baseY:0};
+  var PRODUCT_VIEWER={urls:[],index:0,title:'รูปสินค้า',scale:1,x:0,y:0,drag:false,pointerId:null,startX:0,startY:0,baseX:0,baseY:0};
   function ensureProductImageViewer(){
     var overlay=document.getElementById('productImageViewer');if(overlay)return overlay;
-    overlay=document.createElement('div');overlay.id='productImageViewer';overlay.className='product-image-viewer-overlay';overlay.innerHTML=
+    overlay=document.createElement('div');overlay.id='productImageViewer';overlay.className='modal-overlay product-image-viewer-overlay';overlay.setAttribute('aria-labelledby','productImageViewerTitle');overlay.innerHTML=
       '<div class="product-image-viewer-toolbar"><div class="product-image-viewer-title" id="productImageViewerTitle">รูปสินค้า</div><div class="product-image-viewer-controls">'+
       '<button type="button" class="product-image-viewer-btn" onclick="zoomProductImageViewer(-0.25)" aria-label="ซูมออก">−</button>'+
       '<button type="button" class="product-image-viewer-btn" id="productImageViewerScale" onclick="resetProductImageViewer()" title="รีเซ็ตการซูม">100%</button>'+
@@ -1189,18 +1189,16 @@
     document.body.appendChild(overlay);
     var stage=document.getElementById('productImageViewerStage');
     stage.addEventListener('wheel',function(e){e.preventDefault();zoomProductImageViewer(e.deltaY<0?0.15:-0.15);},{passive:false});
-    stage.addEventListener('pointerdown',function(e){if(PRODUCT_VIEWER.scale<=1||e.target.tagName==='BUTTON')return;PRODUCT_VIEWER.drag=true;PRODUCT_VIEWER.startX=e.clientX;PRODUCT_VIEWER.startY=e.clientY;PRODUCT_VIEWER.baseX=PRODUCT_VIEWER.x;PRODUCT_VIEWER.baseY=PRODUCT_VIEWER.y;stage.classList.add('dragging');stage.setPointerCapture(e.pointerId);});
+    stage.addEventListener('pointerdown',function(e){if(PRODUCT_VIEWER.scale<=1||e.button!==0||e.isPrimary===false||e.target.closest('button'))return;PRODUCT_VIEWER.drag=true;PRODUCT_VIEWER.pointerId=e.pointerId;PRODUCT_VIEWER.startX=e.clientX;PRODUCT_VIEWER.startY=e.clientY;PRODUCT_VIEWER.baseX=PRODUCT_VIEWER.x;PRODUCT_VIEWER.baseY=PRODUCT_VIEWER.y;stage.classList.add('dragging');stage.setPointerCapture(e.pointerId);});
     stage.addEventListener('pointermove',function(e){if(!PRODUCT_VIEWER.drag)return;PRODUCT_VIEWER.x=PRODUCT_VIEWER.baseX+(e.clientX-PRODUCT_VIEWER.startX);PRODUCT_VIEWER.y=PRODUCT_VIEWER.baseY+(e.clientY-PRODUCT_VIEWER.startY);applyProductImageViewerTransform();});
-    function endDrag(e){if(!PRODUCT_VIEWER.drag)return;PRODUCT_VIEWER.drag=false;stage.classList.remove('dragging');try{stage.releasePointerCapture(e.pointerId);}catch(_){}}
-    stage.addEventListener('pointerup',endDrag);stage.addEventListener('pointercancel',endDrag);
+    stage.addEventListener('pointerup',endProductImageDrag);stage.addEventListener('pointercancel',endProductImageDrag);stage.addEventListener('lostpointercapture',endProductImageDrag);
     return overlay;
   }
   function showProductImageLightbox(urls,index,title){
     urls=(Array.isArray(urls)?urls:[]).filter(Boolean).slice(0,3);if(!urls.length)return;
     if(window.SYYSelect)SYYSelect.closeActive();
-    var active=document.activeElement;if(active&&active.blur)active.blur();
     PRODUCT_VIEWER.urls=urls;PRODUCT_VIEWER.index=Math.max(0,Math.min(parseInt(index,10)||0,urls.length-1));PRODUCT_VIEWER.title=title||'รูปสินค้า';
-    ensureProductImageViewer().classList.add('open');document.body.style.overflow='hidden';renderProductImageViewer();
+    ensureProductImageViewer().classList.add('open');renderProductImageViewer();openModal('productImageViewer');
   }
   function renderProductImageViewer(){
     var img=document.getElementById('productImageViewerImg');if(!img)return;
@@ -1219,10 +1217,11 @@
     var next=Math.max(0.5,Math.min(5,Math.round((PRODUCT_VIEWER.scale+delta)*100)/100));PRODUCT_VIEWER.scale=next;
     if(next<=1){PRODUCT_VIEWER.x=0;PRODUCT_VIEWER.y=0;}applyProductImageViewerTransform();
   }
-  function resetProductImageViewer(apply){PRODUCT_VIEWER.scale=1;PRODUCT_VIEWER.x=0;PRODUCT_VIEWER.y=0;PRODUCT_VIEWER.drag=false;if(apply!==false)applyProductImageViewerTransform();else setTimeout(applyProductImageViewerTransform,0);}
+  function endProductImageDrag(){var stage=document.getElementById('productImageViewerStage'),pointer=PRODUCT_VIEWER.pointerId;PRODUCT_VIEWER.drag=false;PRODUCT_VIEWER.pointerId=null;if(stage){stage.classList.remove('dragging');try{if(pointer!==null&&stage.hasPointerCapture(pointer))stage.releasePointerCapture(pointer);}catch(_){}}}
+  function resetProductImageViewer(apply){endProductImageDrag();PRODUCT_VIEWER.scale=1;PRODUCT_VIEWER.x=0;PRODUCT_VIEWER.y=0;if(apply!==false)applyProductImageViewerTransform();else setTimeout(applyProductImageViewerTransform,0);}
   function stepProductImageViewer(delta){if(PRODUCT_VIEWER.urls.length<=1)return;PRODUCT_VIEWER.index=(PRODUCT_VIEWER.index+delta+PRODUCT_VIEWER.urls.length)%PRODUCT_VIEWER.urls.length;renderProductImageViewer();}
-  function closeProductImageViewer(){var o=document.getElementById('productImageViewer');if(o)o.classList.remove('open');PRODUCT_VIEWER.drag=false;document.body.style.overflow='';}
-  document.addEventListener('keydown',function(e){var o=document.getElementById('productImageViewer');if(!o||!o.classList.contains('open'))return;if(e.key==='Escape')closeProductImageViewer();else if(e.key==='+'||e.key==='=')zoomProductImageViewer(0.25);else if(e.key==='-')zoomProductImageViewer(-0.25);else if(e.key==='ArrowLeft')stepProductImageViewer(-1);else if(e.key==='ArrowRight')stepProductImageViewer(1);});
+  function closeProductImageViewer(){var o=document.getElementById('productImageViewer');if(o)o.classList.remove('open');endProductImageDrag();closeModal('productImageViewer');}
+  document.addEventListener('keydown',function(e){var o=document.getElementById('productImageViewer');if(!o||!o.classList.contains('open')||syyModalStack.at(-1)?.element!==o||document.querySelector('.swal2-container'))return;if(e.key==='Escape'){e.preventDefault();closeProductImageViewer();}else if(e.key==='+'||e.key==='=')zoomProductImageViewer(0.25);else if(e.key==='-')zoomProductImageViewer(-0.25);else if(e.key==='ArrowLeft')stepProductImageViewer(-1);else if(e.key==='ArrowRight')stepProductImageViewer(1);});
   function openProductImageLightbox(index){showProductImageLightbox(productImageUrls,index,'รูปสินค้า');}
   function openTableProductImageLightbox(docId){var item=productsCache.find(function(p){return (p.id||p.productCode)===docId;});if(!item)return;var urls=Array.isArray(item.imageUrls)&&item.imageUrls.length?item.imageUrls:(item.imageUrl?[item.imageUrl]:[]);showProductImageLightbox(urls,Math.max(0,urls.indexOf(item.imageUrl)),item.productName||'รูปสินค้า');}
 

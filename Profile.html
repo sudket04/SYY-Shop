@@ -279,6 +279,7 @@ function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 
 var myProfile = null;
 var activityLogCache = [];
+var activityLogLoadedAt = 0, activityLogLoading = false;
 
 window.onload = function () {
   if (!AUTH_TOKEN) {
@@ -297,7 +298,7 @@ function switchTab(name) {
     document.getElementById('panel' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
     document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
   });
-  if (name === 'log' && !activityLogCache.length) loadActivityLog();
+  if (name === 'log' && Date.now()-activityLogLoadedAt>=60000) loadActivityLog();
 }
 
 /* ═══ โหลดโปรไฟล์ ═══ */
@@ -578,18 +579,25 @@ function doDisableTotp() {
 var ACTION_LABEL = { save: 'บันทึก', update: 'อัปเดต', delete: 'ลบ' };
 
 function loadActivityLog() {
+  if(activityLogLoading)return;
+  activityLogLoading=true;
   var tbody = document.getElementById('logTableBody');
   tbody.innerHTML = '<tr class="empty-row"><td colspan="6">⏳ กำลังโหลด...</td></tr>';
 
   callApi('getActivityLog', 200)
     .withSuccessHandler(function (data) {
-      activityLogCache = data || [];
+      activityLogLoading=false;
+      if(!Array.isArray(data)){failed({message:data&&data.message||'ข้อมูลประวัติไม่ถูกต้อง'});return;}
+      activityLogCache = data;activityLogLoadedAt=Date.now();
       renderLogTable();
     })
-    .withFailureHandler(function (err) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="6">โหลดไม่สำเร็จ: ' + esc(JSON.stringify(err)) + '</td></tr>';
-    })
+    .withFailureHandler(failed)
     .run();
+  function failed(err){
+    activityLogLoading=false;
+    if(activityLogLoadedAt){renderLogTable();toast('โหลดประวัติล่าสุดไม่สำเร็จ · แสดงข้อมูลเดิม: '+syyErrorMessage(err),'err');}
+    else tbody.innerHTML='<tr class="empty-row"><td colspan="6">โหลดไม่สำเร็จ: '+esc(syyErrorMessage(err))+'</td></tr>';
+  }
 }
 
 function fmtLogTime(iso) {
