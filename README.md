@@ -38,6 +38,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [ยกเลิก polling ตามเวลา คง Manual refresh และอัปเดตหลังข้อมูลเปลี่ยน](docs/MANUAL-REFRESH-2026-10-16.md)
 - [แก้ Pagination เด้งหน้าแรก ลดโหลดซ้อนและคงแถวตารางระหว่างรีเฟรช — รอ Deploy](docs/PAGINATION-PERFORMANCE-2026-10-16.md)
 - [Production รุ่น 96: Deploy main 3860e9d, checksum 24 ไฟล์ และ Login smoke](docs/DEPLOYMENT-2026-10-16.md)
 - [Hybrid Cache: IndexedDB, product cursor, ผลจำลองลด product reads 99.49% และ Delta Sync ที่ยังเหลือ](docs/HYBRID-CACHE-2026-10-16.md)

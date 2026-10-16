@@ -1088,6 +1088,15 @@ async function main(){
       await p.evaluate(api=>{apiFailure=api;apiHold='';apiPending.splice(0).forEach(fn=>fn());},api);await p.waitForFunction(()=>!documentPager.busy());assert.equal(await p.locator('#listBody,#taxBody,#historyTableBody').innerHTML(),before,file);assert.deepEqual(p.errors,[]);await p.close();
     }
   });
+  await check('idle time, focus and returning to a cached page never poll business data; manual refresh and known changes still work',async()=>{
+    for(const file of ['Master_Products.html','Master_Brands.html','Master_Zones.html','Purchase_Orders.html','Quotation.html','Master_Tax_Invoice.html','StockIssue.html','index.html']){
+      const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));await p.clock.install({time:new Date()});await p.goto('http://127.0.0.1:'+port+'/?file='+file+'&role=staff');await p.waitForTimeout(450);const before=await p.evaluate(()=>apiCalls.length);
+      await p.clock.fastForward(5*60*1000);await p.evaluate(()=>{window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'));if(syyFreshState)syyFreshState.refresh();});
+      if(file==='index.html')await p.evaluate(()=>switchPage('home'));
+      assert.equal(await p.evaluate(()=>apiCalls.length),before,file);assert.deepEqual(p.errors,[]);await p.close();
+    }
+    const p=await pageFor('Master_Brands.html');const before=await p.evaluate(()=>apiCalls.length);await p.locator('button').filter({hasText:'รีเฟรช'}).click();await p.waitForFunction(n=>apiCalls.length>n,before);assert.deepEqual(p.errors,[]);await p.close();
+  });
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));

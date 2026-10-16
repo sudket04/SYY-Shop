@@ -74,7 +74,9 @@ function syyRegisterFreshness(options){
    var state=syyFreshState={revision:0,startRevision:0,lastLoaded:Date.now(),lastChecked:Date.now(),lastAttempt:0,busy:false,dirty:false,active:window.parent===window};
   function refresh(){
     if(!state.active||document.hidden||state.busy||Date.now()-state.lastAttempt<10000||options.canRefresh&& !options.canRefresh())return;
-    if(!state.dirty&&Date.now()-state.lastChecked<120000)return;
+    // Reload only for a known data change. Elapsed time, focus and tab
+    // visibility never start a business-data read; the user can refresh.
+    if(!state.dirty)return;
     state.busy=true;state.startRevision=state.revision;state.lastAttempt=Date.now();syyReadRevalidate=true;try{options.reload();}finally{syyReadRevalidate=false;}
   }
   state.refresh=refresh;
@@ -91,8 +93,6 @@ function syyRegisterFreshness(options){
     if(data.action==='MASTER_DELTA' && state.active)setTimeout(refresh,500);
   });
   window.addEventListener('load',function(){syyPostParent({action:'PAGE_READY'});});
-  window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',refresh);
-  setInterval(refresh,60000);
   return {refresh:refresh};
 }
 function syyApplyProductRows(rows,product,deleted){

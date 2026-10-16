@@ -540,7 +540,6 @@
     hydrateIcons();
     document.querySelectorAll('iframe[data-src]').forEach(function(frame){frame.dataset.channel=crypto.randomUUID();frame.dataset.src+='&channel='+encodeURIComponent(frame.dataset.channel);});
     syyInitNavigation();
-    setInterval(function(){if(!document.hidden && document.getElementById('homeScreen').style.display!=='none' && DASH.loaded && Date.now()-DASH.lastLoad>=60000) dashRefreshDelta();},60000);
   });
 
   // ★ ส่งต่อรายการจากใบเสนอราคา (ปิดงาน-ขายสำเร็จ) ไปเติมตะกร้าในหน้าตัดสต๊อกให้อัตโนมัติ
@@ -760,7 +759,7 @@
     document.querySelectorAll('.form-wrapper').forEach(function(f){ f.classList.remove('active'); });
 
     if(isHome){
-      if(!DASH.loaded)dashLoad();else if(Date.now()-DASH.lastLoad>60000)dashRefreshDelta();
+      if(!DASH.loaded)dashLoad();
       return;
     }
     var frame=document.getElementById('iframe-'+id);

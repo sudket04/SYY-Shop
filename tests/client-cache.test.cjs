@@ -18,10 +18,12 @@ test('ordinary page reads block overlapping freshness refreshes and acknowledge 
  b.tick(10001);s.refresh();assert.equal(b.reloads,1);assert.equal(s.busy,true);
 });
 
-test('successful conditional validation schedules freshness from check time without extending displayed source age',()=>{
+test('elapsed time and clean page activation never reload data; known changes still reconcile without extending source age',()=>{
  const b=freshness(),s=b.c.syyFreshState;b.c.syyDataStarted();b.c.syyDataLoaded(1);assert.equal(s.lastLoaded,1);
- b.tick(60000);s.refresh();assert.equal(b.reloads,0);b.tick(60001);s.refresh();assert.equal(b.reloads,1);
- b.c.syyDataLoaded(1);b.tick(60000);s.refresh();assert.equal(b.reloads,1);assert.equal(s.lastLoaded,1);
+ b.tick(3600000);s.refresh();b.events.message({data:{action:'PAGE_ACTIVATED'}});assert.equal(b.reloads,0);
+ assert.equal(b.events.focus,undefined);assert.equal(s.lastLoaded,1);
+ s.dirty=true;b.events.message({data:{action:'PAGE_ACTIVATED'}});assert.equal(b.reloads,1);
+ b.c.syyDataLoaded(1);b.tick(3600000);s.refresh();assert.equal(b.reloads,1);assert.equal(s.lastLoaded,1);
 });
 function browser(){
  let now=Date.now(),id={owner:'alice',role:'staff'};const calls=[],timers=[],events={},storage={};
