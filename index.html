@@ -643,9 +643,9 @@
     else if(d.action==='PRODUCT_DELTA'){syyInvalidateReadScopes(['Master_Products','Product_Images'],false);applyDashboardProductDelta(d.product,d.deleted);broadcastDataDelta(d,d.channel); }
     else if(d.action==='STOCK_DELTA'){syyInvalidateReadScopes(['Master_Products','Stock_Movements'],false);forwardStockDeltaToProducts(d.productStocks,d.channel); }
     else if(d.action==='MASTER_DELTA'){var cacheMasterScope={brands:'Master_Brands',categories:'Master_Categories',vendors:'Master_Vendors',zones:'Master_Zones',cars:'Master_Cars',customers:'Master_Customers'};syyInvalidateReadScopes([cacheMasterScope[d.kind]],false);applyMasterDelta(d.kind,d.item,d.deleted);broadcastDataDelta(d,d.channel); }
-    else if(d.action==='REFRESH_DROPDOWNS'){ loadMasters(); }
-    else if(d.action==='REFRESH_PRODUCTS'){ refreshDashboardProductsOnly(); }
-    else if(d.action==='REFRESH_STOCK_FULL'){ dashRefreshDelta(); }
+    else if(d.action==='REFRESH_DROPDOWNS'){ syyInvalidateReadScopes(['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'],false);broadcastDataDelta(d,d.channel); }
+    else if(d.action==='REFRESH_PRODUCTS'){ syyInvalidateReadScopes(['Master_Products','Product_Images'],false);broadcastDataDelta(d,d.channel); }
+    else if(d.action==='REFRESH_STOCK_FULL'){ syyInvalidateReadScopes(['Master_Products','Stock_Movements','Purchase_Orders'],false);broadcastDataDelta(d,d.channel); }
     else if(d.action==='SESSION_EXPIRED'){syyDraftFlush();document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});}
     else if(d.action==='OPEN_STOCK_ISSUE'){
       switchPage('stockissue');
@@ -844,13 +844,14 @@
     btnBusy(btn,'กำลังโหลด...');
     if(!DASH.loaded) document.getElementById('dashHealthBody').innerHTML = skeletonRows(9,6);
     var requestedYear=DASH.year;
-    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true}], function(data){
+    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true,catalogSection:DASH.loaded?DASH.catalogSection:undefined}], function(data, readInfo){
       btnDone(btn);
       DASH.loading=false;
       data = data||{};
       if(requestedYear!==DASH.year){DASH.reloadRequested=false;dashLoad();return;}
       DASH.loadedYear=requestedYear;DASH.rangeStart=data.rangeStart;DASH.healthRangeStart=data.healthRangeStart;
-      DASH.products = data.products||[];
+      if(data.products)DASH.products=data.products;
+      if(data.catalogSection)DASH.catalogSection=data.catalogSection;
       DASH.catalogVersion=data.catalogVersion;
       DASH.catalogExpiresAt=data.catalogExpiresAt;
       DASH.movements = (data.movements||[]).map(function(m){ m.ts=new Date(m.timestamp); return m; });
@@ -859,9 +860,7 @@
       allProducts = DASH.products; // ใช้ร่วมกับ openView/openEdit/editModal เดิม
       DASH.loaded = true; DASH.lastLoad = Date.now(); DASH.lastFullLoad = Number(data.snapshotLoadedAt)||Date.now();DASH.nextReconcile=DASH.lastFullLoad+DASH_RECONCILE_MS;
       document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
-      dashBuildAggregates();
-      dashUpdateSidebarBadges();
-      dashRenderAll();
+      if(!readInfo||!readInfo.notModified){dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();}
       if(DASH.reloadRequested){DASH.reloadRequested=false;var queuedForce=!!DASH.forceReload;DASH.forceReload=false;setTimeout(function(){dashLoad(queuedForce);},0);}else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
     }, function(err){
       btnDone(btn);

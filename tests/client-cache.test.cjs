@@ -15,15 +15,15 @@ test('ordinary page reads block overlapping freshness refreshes and acknowledge 
  const b=freshness(),s=b.c.syyFreshState;s.revision=3;s.dirty=true;b.c.syyDataStarted();b.tick(20000);s.refresh();assert.equal(b.reloads,0);
  b.c.syyDataLoaded();assert.equal(s.busy,false);assert.equal(s.dirty,false);
  b.c.syyDataStarted();s.revision++;b.c.syyDataLoaded();assert.equal(s.dirty,true);
- b.tick(10001);s.refresh();assert.equal(b.reloads,1);assert.equal(s.busy,true);
+ b.tick(10001);s.refresh();assert.equal(b.reloads,0);assert.equal(s.busy,false);assert.equal(s.dirty,true);
 });
 
-test('elapsed time and clean page activation never reload data; known changes still reconcile without extending source age',()=>{
+test('elapsed time and dirty page activation never reload data; explicit loaders alone acknowledge changes',()=>{
  const b=freshness(),s=b.c.syyFreshState;b.c.syyDataStarted();b.c.syyDataLoaded(1);assert.equal(s.lastLoaded,1);
  b.tick(3600000);s.refresh();b.events.message({data:{action:'PAGE_ACTIVATED'}});assert.equal(b.reloads,0);
  assert.equal(b.events.focus,undefined);assert.equal(s.lastLoaded,1);
- s.dirty=true;b.events.message({data:{action:'PAGE_ACTIVATED'}});assert.equal(b.reloads,1);
- b.c.syyDataLoaded(1);b.tick(3600000);s.refresh();assert.equal(b.reloads,1);assert.equal(s.lastLoaded,1);
+ s.dirty=true;b.events.message({data:{action:'PAGE_ACTIVATED'}});assert.equal(b.reloads,0);assert.equal(s.dirty,true);
+ b.c.syyDataStarted();b.c.syyDataLoaded(1);b.tick(3600000);s.refresh();assert.equal(b.reloads,0);assert.equal(s.lastLoaded,1);
 });
 function browser(){
  let now=Date.now(),id={owner:'alice',role:'staff'};const calls=[],timers=[],events={},storage={};
@@ -209,5 +209,69 @@ test('read metrics count actual coalesced RPCs and elapsed time without recordin
 test('changing token or role without starting another read still rejects pending and scheduled cached responses',()=>{
  const b=browser(),pending=b.read('getBrands');b.c.AUTH_TOKEN='new-session';b.complete([{id:'OLD'}]);assert.match(pending.error.message,/เปลี่ยนแปลง/);assert.equal(b.c.syyReadCache.size,0);
  b.read('getBrands');b.complete([{id:'NEW'}]);const scheduled=b.read('getBrands');b.identity({owner:'alice',role:'viewer'});b.flush();assert.match(scheduled.error.message,/เปลี่ยนแปลง/);assert.equal(b.c.syyReadCache.size,0);
+});
+
+test('manual refresh validates a held version without invalidation, coalesces clicks and keeps unrelated snapshots',()=>{
+ const b=browser();b.read('getBrands');b.complete([{id:'B1',Name:'Original'}]);b.read('getCustomersFull');b.complete([{id:'C1'}]);
+ const one=b.read('getBrands',[],{manual:true}),two=b.read('getBrands',[],{manual:true});assert.equal(b.calls.length,3);assert.equal(b.calls.at(-1).transport.version,'v1');assert.equal(b.calls.at(-1).transport.refresh,false);assert.equal(b.calls.at(-1).transport.manual,true);assert.equal(b.c.syyCacheStats.invalidations,0);
+ b.calls.at(-1).ok({__syyCache:1,notModified:true,version:'v1'});assert.equal(one.value[0].Name,'Original');assert.deepEqual(one.value,two.value);assert.equal(b.c.syyLastReadSource,'validated-cache');
+ b.read('getCustomersFull');b.flush();assert.equal(b.calls.length,3);
+ b.read('getBrands',[],{manual:true});b.complete([{id:'B1',Name:'Updated'}],'v2');assert.equal(b.c.syyCacheStats.invalidations,1);b.read('getCustomersFull');b.flush();assert.equal(b.calls.length,4);assert.equal(b.c.syyReadDirty,false);
+});
+
+test('failed manual refresh preserves previous cache and late ordinary replies cannot replace a newer manual result',()=>{
+ const b=browser();b.read('getBrands');b.complete([{id:'B1',Name:'Saved'}]);
+ const failed=b.read('getBrands',[],{manual:true});b.calls.at(-1).fail({message:'offline'});assert.equal(failed.error.message,'offline');const cached=b.read('getBrands');b.flush();assert.equal(cached.value[0].Name,'Saved');
+ const old=b.read('getBrands',[],{validate:true}),oldCall=b.calls.at(-1),fresh=b.read('getBrands',[],{manual:true});b.complete([{id:'B1',Name:'Latest'}],'v2');oldCall.ok({__syyCache:1,data:[{id:'B1',Name:'Old'}],version:'v1'});assert.match(old.error.message,/เปลี่ยนแปลง/);assert.equal(fresh.value[0].Name,'Latest');
+ const last=b.read('getBrands');b.flush();assert.equal(last.value[0].Name,'Latest');
+});
+
+test('manual refresh sanitizes only freshness controls, reuses product snapshot keys and never stores unbounded catalogs on disk',()=>{
+ const b=browser(),args=[{paged:true,cursorMode:true,page:1,pageSize:50,search:'',filters:{},includeMasters:false}];b.read('getAllProducts',args);b.complete({catalogPage:true,products:[],page:1});
+ b.read('getAllProducts',[{...args[0],refreshSnapshot:true}],{manual:true,fresh:true});assert.equal(b.calls.at(-1).transport.version,'v1');assert.equal(b.calls.at(-1).transport.refresh,false);
+ assert.equal(b.c.syyDiskCache.eligible('getAllProducts[{"compact":true}]'),false);assert.equal(b.c.syyDiskCache.eligible('getProductCatalogPage[{"cursorMode":true,"search":"Part"}]'),false);assert.equal(b.c.syyDiskCache.eligible('getProductById["P1"]'),false);
+ const key='getProductCatalogPage'+JSON.stringify([{cursorMode:true,page:1,pageSize:50}]),page={catalogPage:true,cursorMode:true,products:[{id:'P1',productCode:'P1',productName:'Part',costPrice:10,currentStock:3}],page:1,pageSize:50,total:null,readTime:new Date().toISOString(),hasMore:false,nextCursor:''};
+ assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify(page)),true);assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify({...page,products:[{...page.products[0],password:'secret'}]})),false);assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify({...page,customers:[]})),false);
+ assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify({...page,masters:{vendors:[{id:'V1',Name:'Vendor (0800000000)'}]}})),false);
+});
+
+test('legacy notification scopes invalidate only their actual dependencies and never request data',()=>{
+ const b=browser();b.read('getBrands');b.complete([]);b.read('getCustomersFull');b.complete([]);b.read('getProductCatalogPage');b.complete({products:[]});const count=b.calls.length;
+ b.events.message({trusted:true,data:{action:'REFRESH_PRODUCTS'}});b.flush();assert.equal(b.calls.length,count);assert.equal(b.c.syyReadCache.size,2);b.read('getBrands');b.read('getCustomersFull');b.flush();assert.equal(b.calls.length,count);
+});
+
+test('manual unchanged refresh avoids record queries for five users, but expiry, generation changes and revocation remain authoritative',()=>{
+ function scenario(legacy){const s=setup();s.put('Master_Brands/B1',{Brand_Name:'Original'});s.c.getSession_=token=>({username:token,role:'viewer'});s.c.allowReadRequest_=()=>true;
+  const first=s.c.apiGateway('u0','getBrands',[],'fixture',{protocol:1}),before=s.calls.length;
+  for(let i=0;i<5;i++){const r=s.c.apiGateway('u'+i,'getBrands',[],'fixture',legacy?{protocol:1,refresh:true}:{protocol:1,manual:true,version:first.version,loadedAt:Date.now(),expiresAt:first.expiresAt});if(!legacy)assert.equal(r.notModified,true);}
+  return {s,first,reads:s.calls.length-before};
+ }
+ const before=scenario(true),after=scenario(false);assert.equal(before.reads,5);assert.equal(after.reads,0);assert.equal(after.s.commits.length,0);
+ const {s,first}=after;s.put('Master_Brands/B1',{Brand_Name:'Changed'});s.c.clearCollectionCache_('Master_Brands');const changed=s.c.apiGateway('u0','getBrands',[],'fixture',{protocol:1,manual:true,version:first.version,loadedAt:Date.now(),expiresAt:first.expiresAt});assert.equal(changed.data[0].Name,'Changed');
+ const count=s.calls.length;const expired=s.c.apiGateway('u0','getBrands',[],'fixture',{protocol:1,manual:true,version:changed.version,loadedAt:Date.now(),expiresAt:Date.now()-1});assert.equal(expired.notModified,undefined);
+ s.c.getSession_=()=>null;assert.equal(s.c.apiGateway('u0','getBrands',[],'fixture',{protocol:1,manual:true,version:changed.version,loadedAt:Date.now(),expiresAt:Date.now()+10000}).__authError,true);assert(s.calls.length>=count);
+ fs.writeFileSync('test-results/manual-version-read-model.json',JSON.stringify({fixtureOnly:true,users:5,scenario:'unchanged manual master refresh',beforeRecordRequests:before.reads,afterRecordRequests:after.reads,reductionPercent:100,authReadsNotMeasured:true,productionMeasurements:false,writes:0},null,2));
+});
+
+test('dashboard reuses a current catalog section across movement refreshes without extending its source age or trusting stale stock',()=>{
+ const s=setup();s.seed();s.c.readTime=new Date().toISOString();const first=s.c.getDashboardBootstrap_({compactCatalog:true});assert(first.products);assert(first.catalogSection);
+ const repeat=s.c.getDashboardBootstrap_({compactCatalog:true,catalogSection:first.catalogSection});assert.equal(repeat.products,undefined);assert.deepEqual(plain(repeat.catalogSection),plain(first.catalogSection));
+ s.c.invalidateCollectionCache_('Master_Products',true);const stockChanged=s.c.getDashboardBootstrap_({compactCatalog:true,catalogSection:first.catalogSection});assert(stockChanged.products);assert.notEqual(stockChanged.catalogSection.version,first.catalogSection.version);
+ const expired=s.c.getDashboardBootstrap_({compactCatalog:true,catalogSection:{...stockChanged.catalogSection,loadedAt:Date.now()-300001}});assert(expired.products);assert.equal(s.commits.length,0);
+});
+
+test('deferred cached callbacks cannot race a newer manual validation and original load time remains truthful',()=>{
+ const b=browser();b.read('getBrands');b.complete([{id:'B1'}]);const loaded=b.c.syyUxLoaded,cached=b.read('getBrands');b.tick(10000);const checked=b.read('getBrands',[],{manual:true});
+ b.calls.at(-1).ok({__syyCache:1,notModified:true,version:'v1'});b.flush();assert.match(cached.error.message,/เปลี่ยนแปลง/);assert.equal(checked.value[0].id,'B1');assert.equal(b.c.syyUxLoaded,loaded);assert.equal(b.c.syyLastCheckedAt,loaded+10000);
+});
+
+test('reading an unrelated dataset cannot clear another dataset dirty indicator',()=>{
+ const b=browser();b.read('getBrands');b.complete([]);b.read('getCustomersFull');b.complete([]);b.c.syyInvalidateReadScopes(['Master_Brands'],false);assert.equal(b.c.syyReadDirty,true);
+ b.read('getCustomersFull',[],{fresh:true});b.complete([]);assert.equal(b.c.syyReadDirty,true);b.read('getBrands',[],{manual:true});b.complete([],'v2');assert.equal(b.c.syyReadDirty,false);
+});
+
+test('bootstrap page reuse never overwrites a newer ordinary page and section hints do not change query identity',()=>{
+ const b=browser(),a={paged:true,cursorMode:true,page:1,pageSize:50,includeMasters:true},p={...a,includeMasters:false};b.read('getAllProducts',[a]);const old=b.calls.at(-1);b.read('getProductCatalogPage',[p]);b.complete({catalogPage:true,page:1,products:[{id:'NEW'}]},'v2');old.ok({__syyCache:1,version:'v1',data:{catalogPage:true,page:1,products:[{id:'OLD'}],masters:{}}});const newer=b.read('getProductCatalogPage',[p]);b.flush();assert.equal(newer.value.products[0].id,'NEW');
+ const first=b.c.syyReadArgs('getQuotationPageData',[2569,{compactCatalog:true,sectionVersions:{},search:{number:'QT1'}}]),same=b.c.syyReadArgs('getQuotationPageData',[2569,{compactCatalog:true,sectionVersions:{products:{version:'v1'}},search:{number:'QT1'}}]),different=b.c.syyReadArgs('getQuotationPageData',[2569,{compactCatalog:true,sectionVersions:{},search:{number:'QT2'}}]);assert.deepEqual(plain(first),plain(same));assert.notDeepEqual(plain(first),plain(different));
 });
 

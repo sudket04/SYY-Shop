@@ -66,31 +66,32 @@ function addCalendarDays(value,days){
   date.setUTCDate(date.getUTCDate()+Number(days));return date.toISOString().slice(0,10);
 }
 var syyFreshState=null;
+var syyApplyingNotification=false;
 function syyDataRevision(){return syyFreshState?syyFreshState.revision:0;}
 function syyDataStarted(){if(syyFreshState){syyFreshState.busy=true;syyFreshState.startRevision=syyFreshState.revision;syyFreshState.lastAttempt=Date.now();}return syyDataRevision();}
-function syyDataLoaded(asOf){if(syyFreshState){syyFreshState.busy=false;syyFreshState.lastChecked=Date.now();syyFreshState.lastLoaded=Math.min(Date.now(),Number(asOf)||syyLastReadAt||Date.now());syyFreshState.dirty=syyFreshState.startRevision!==syyFreshState.revision;}setTimeout(function(){syyViewStart();syyDraftStart();},0);}
+function syyDataLoaded(asOf){if(syyFreshState){syyFreshState.busy=false;syyFreshState.lastChecked=Date.now();syyFreshState.lastLoaded=Math.min(Date.now(),Number(asOf)||syyLastReadAt||Date.now());syyFreshState.dirty=syyFreshState.startRevision!==syyFreshState.revision;}if(typeof syyUxStatus==='function')syyUxStatus();setTimeout(function(){syyViewStart();syyDraftStart();},0);}
 function syyDataFailed(){if(syyFreshState)syyFreshState.busy=false;}
 function syyRegisterFreshness(options){
    var state=syyFreshState={revision:0,startRevision:0,lastLoaded:Date.now(),lastChecked:Date.now(),lastAttempt:0,busy:false,dirty:false,active:window.parent===window};
   function refresh(){
-    if(!state.active||document.hidden||state.busy||Date.now()-state.lastAttempt<10000||options.canRefresh&& !options.canRefresh())return;
-    // Reload only for a known data change. Elapsed time, focus and tab
-    // visibility never start a business-data read; the user can refresh.
-    if(!state.dirty)return;
-    state.busy=true;state.startRevision=state.revision;state.lastAttempt=Date.now();syyReadRevalidate=true;try{options.reload();}finally{syyReadRevalidate=false;}
+    // Notifications only mark/patch local state. Never turn activation,
+    // cross-tab invalidation or a timer into a business-data request.
+    if(typeof syyUxStatus==='function')syyUxStatus();
   }
   state.refresh=refresh;
   window.addEventListener('message',function(event){
     if(!syyTrustedParentMessage(event))return;var data=event.data;
     if(data.action==='PAGE_HIDDEN'){state.active=false;return;}
     if(data.action==='PAGE_ACTIVATED'){state.active=true;refresh();return;}
-    if(data.action==='CACHE_INVALIDATED'){if(state.dirty&&state.active)setTimeout(refresh,500);return;}
+    if(data.action==='CACHE_INVALIDATED'){refresh();return;}
     if(['STOCK_DELTA','PRODUCT_DELTA','MASTER_DELTA'].indexOf(data.action)<0)return;
     state.revision++;state.dirty=true;
-    if(data.action==='STOCK_DELTA'&&options.stock)options.stock(data.productStocks);
-    if(data.action==='PRODUCT_DELTA'&&options.product)options.product(data.product,!!data.deleted);
-    if(data.action==='MASTER_DELTA'&&options.master)options.master(data);
-    if(data.action==='MASTER_DELTA' && state.active)setTimeout(refresh,500);
+    var priorPatch=syyApplyingNotification;syyApplyingNotification=true;
+    try{if(data.action==='STOCK_DELTA'&&options.stock)options.stock(data.productStocks);
+      if(data.action==='PRODUCT_DELTA'&&options.product)options.product(data.product,!!data.deleted);
+      if(data.action==='MASTER_DELTA'&&options.master)options.master(data);
+    }finally{syyApplyingNotification=priorPatch;}
+    refresh();
   });
   window.addEventListener('load',function(){syyPostParent({action:'PAGE_READY'});});
   return {refresh:refresh};
@@ -416,18 +417,36 @@ function syyDocumentPager(options){
 // cannot mutate the stored snapshot. Credentials, users and backup APIs bypass it.
 var syyCacheScopes=['Master_Products','Product_Images','Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers','Stock_Movements','Purchase_Orders','Quotations','Master_Tax_Invoice'];
 var syyReadCache=new Map(),syyCacheEpochs={},syyReadRevalidate=false,syyCacheIdentity='',syyCacheUsedScopes=new Set(),syyLastReadAt=0;
-var syyCacheStats={hits:0,misses:0,revalidations:0,notModified:0,invalidations:0,authoritative:0,byApi:{}};
+var syyCacheStats={hits:0,misses:0,revalidations:0,notModified:0,invalidations:0,authoritative:0,manual:0,byApi:{}};
+var syyReadLatest=new Map(),syyDirtyReadScopes=new Set(),syyReadSequence=0,syyLastCheckedAt=0,syyLastReadSource='',syyReadDirty=false;
 // Persistent cache is an optional acceleration only. Its contents never grant
 // access: every restored response is conditionally validated by apiGateway.
-// Keep personal/contact/transaction/cost data out of durable browser storage.
+// Persist only allowlisted references and bounded ordinary product pages.
+// Session/permission fingerprints isolate commercial values; never persist
+// credentials, contacts, documents, transaction lists or complete catalogs.
 var syyDiskCache=(function(){
- var opening=null,scopePromise=null,scopeIdentity='',scopeRun=0,activeScope='',channel=null,enabled=typeof indexedDB!=='undefined'&&typeof crypto!=='undefined'&&crypto.subtle&&typeof TextEncoder!=='undefined'&&window.SYY_HYBRID_CACHE!==false;
+ var opening=null,scopePromise=null,scopeIdentity='',scopeRun=0,activeScope='',channel=null,lookups=new Map(),enabled=typeof indexedDB!=='undefined'&&typeof crypto!=='undefined'&&crypto.subtle&&typeof TextEncoder!=='undefined'&&window.SYY_HYBRID_CACHE!==false;
  var stats={hits:0,misses:0,errors:0,writes:0,evictions:0,bytes:0,entries:0};
  function eligible(key,raw){
    var fields=key==='getBrands[]'||key==='getCategories[]'?['id','Name','name','updateTime']:null;
-   if(!fields)return false;
-   if(raw===undefined)return true;
-   try{var rows=JSON.parse(raw);return raw.length<=250000&&Array.isArray(rows)&&rows.length<=10000&&rows.every(function(row){return row&&typeof row.id==='string'&&Object.keys(row).every(function(k){return fields.includes(k)&&typeof row[k]==='string'&&row[k].length<=4000;});});}catch(e){return false;}
+   function refs(rows){return Array.isArray(rows)&&rows.length<=10000&&rows.every(function(row){return row&&typeof row.id==='string'&&Object.keys(row).every(function(k){return ['id','Name','name','updateTime'].includes(k)&&typeof row[k]==='string'&&row[k].length<=4000;});});}
+   if(fields){if(raw===undefined)return true;try{return raw.length<=250000&&refs(JSON.parse(raw));}catch(e){return false;}}
+   try{
+     var match=/^(getAllProducts|getProductCatalogPage)(\[.*\])$/.exec(key);if(!match)return false;
+     var args=JSON.parse(match[2]),o=args[0];
+     if(args.length!==1||!o||typeof o!=='object'||o.cursorMode!==true||match[1]==='getAllProducts'&&o.paged!==true||o.search||Object.keys(o.filters||{}).length||o.sortCol&&o.sortCol!=='productCode')return false;
+     if(Object.keys(o).some(function(k){return !['cursorMode','paged','includeMasters','search','filters','sortCol','sortAsc','page','pageSize','cursor'].includes(k);}))return false;
+     if(raw===undefined)return true;
+     var page=JSON.parse(raw),allowed=['catalogPage','cursorMode','products','page','pageSize','total','unfilteredTotal','readTime','hasMore','snapshotRebased','nextCursor','cacheExpiresAt','masters'];
+     if(raw.length>1000000||!page||page.catalogPage!==true||page.cursorMode!==true||!Array.isArray(page.products)||page.products.length>200||Object.keys(page).some(function(k){return !allowed.includes(k);}))return false;
+     var strings=['id','productCode','productName','partType','partNumber','barcode','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carModel','status','imageUrl','imageUpdateTime'];
+     var numbers=['costPrice','sellingPrice','currentStock','minStock','primaryImageIndex'];
+     if(!page.products.every(function(row){return row&&typeof row.productCode==='string'&&Object.keys(row).every(function(k){var value=row[k];return strings.includes(k)?typeof value==='string'&&value.length<=12000:numbers.includes(k)?Number.isFinite(value):k==='barcodeGenerated'?typeof value==='boolean':['carIds','imageUrls'].includes(k)&&Array.isArray(value)&&value.length<=100&&value.every(function(x){return typeof x==='string'&&x.length<=12000;});});}))return false;
+     // Vendor dropdown labels contain phone numbers. Keep these bootstraps in
+     // memory only; Viewer/ordinary pages without contact dropdowns can persist.
+     if(page.masters&&((page.masters.vendors||[]).length||!Object.keys(page.masters).every(function(k){return ['brands','categories','vendors','zones','cars'].includes(k)&&refs(page.masters[k]);})))return false;
+     return ['page','pageSize'].every(function(k){return Number.isInteger(page[k])&&page[k]>0;})&&page.pageSize<=200&&typeof page.nextCursor==='string'&&page.nextCursor.length<=4096&&typeof page.hasMore==='boolean'&&typeof page.readTime==='string';
+   }catch(e){return false;}
  }
  function open(){
    if(!enabled)return Promise.resolve(null);if(opening)return opening;
@@ -443,7 +462,7 @@ var syyDiskCache=(function(){
      if(identity!==syyCacheIdentity||run!==scopeRun)return '';var value=Array.from(new Uint8Array(bytes)).map(function(x){return x.toString(16).padStart(2,'0');}).join('');
      if(activeScope&&activeScope!==value)purge(activeScope);activeScope=value;
      if(channel)channel.close();channel=null;
-     if(typeof BroadcastChannel!=='undefined')try{channel=new BroadcastChannel('syy-cache:'+value);channel.onmessage=function(e){var d=e.data;if(d&&d.type==='invalidate'&&Array.isArray(d.scopes)&&d.scopes.length<=12&&d.scopes.every(function(s){return syyCacheScopes.includes(s);})){syyInvalidateReadScopes(d.scopes,false);if(syyFreshState&&syyFreshState.refresh)setTimeout(syyFreshState.refresh,500);}if(d&&d.type==='logout'){syyClearReadCache();}};}catch(e){}
+     if(typeof BroadcastChannel!=='undefined')try{channel=new BroadcastChannel('syy-cache:'+value);channel.onmessage=function(e){var d=e.data;if(d&&d.type==='invalidate'&&Array.isArray(d.scopes)&&d.scopes.length<=12&&d.scopes.every(function(s){return syyCacheScopes.includes(s);})){syyInvalidateReadScopes(d.scopes,false);}if(d&&d.type==='logout'){syyClearReadCache();}};}catch(e){}
      return value;
    }).catch(function(){stats.errors++;return '';});return scopePromise;
  }
@@ -452,11 +471,16 @@ var syyDiskCache=(function(){
    try{tx=db.transaction(['records','meta'],mode);tx.oncomplete=function(){finish(result);};tx.onerror=tx.onabort=function(){stats.errors++;finish(null);};worker(tx,function(value){result=value;});}catch(e){stats.errors++;finish(null);}
  });});}
  function protect(tx,fn){return function(){try{return fn.apply(this,arguments);}catch(e){stats.errors++;try{tx.abort();}catch(ignored){}}};}
- function lookup(key){return scope().then(function(owner){if(!owner)return null;return transact('readonly',function(tx,set){var record,revision;var a=tx.objectStore('records').get(owner+':'+key),b=tx.objectStore('meta').get(owner);a.onsuccess=function(){record=a.result;combine();};b.onsuccess=function(){revision=b.result?b.result.revision:0;combine();};function combine(){if(revision===undefined||a.readyState!=='done')return;var valid=record&&record.schema===1&&record.revision===revision&&record.scope===owner&&record.key===key&&eligible(key,record.raw);set({scope:owner,revision:revision,record:valid?record:null});}});}).then(function(found){if(found&&found.record)stats.hits++;else stats.misses++;return found;}).catch(function(){stats.errors++;return null;});}
+ function dependencies(key){var match=/^(\w+)\[/.exec(key),policy=match&&syyReadPolicy(match[1]);return policy?policy.scopes:[];}
+ function revisions(tx,owner,scopes,done){var pending=scopes.length+1,values={};[owner].concat(scopes.map(function(s){return owner+':'+s;})).forEach(function(id){var r=tx.objectStore('meta').get(id);r.onsuccess=protect(tx,function(){values[id]=r.result?r.result.revision:0;if(!--pending)done(values);});});}
+ function lookup(key){
+   var lookupKey=syyCacheIdentity+':'+key;if(lookups.has(lookupKey))return lookups.get(lookupKey);
+   var pending=scope().then(function(owner){if(!owner)return null;return transact('readonly',function(tx,set){var record,epochs,scopes=dependencies(key),a=tx.objectStore('records').get(owner+':'+key);a.onsuccess=protect(tx,function(){record=a.result;combine();});revisions(tx,owner,scopes,function(values){epochs=values;combine();});function combine(){if(!epochs||a.readyState!=='done')return;var valid=record&&record.schema===2&&record.scope===owner&&record.key===key&&record.epochs&&Object.keys(epochs).every(function(k){return record.epochs[k]===epochs[k];})&&eligible(key,record.raw);set({scope:owner,revision:epochs[owner],epochs:epochs,record:valid?record:null});}});}).then(function(found){if(found&&found.record)stats.hits++;else stats.misses++;return found;}).catch(function(){stats.errors++;return null;}).finally(function(){lookups.delete(lookupKey);});lookups.set(lookupKey,pending);return pending;
+ }
  function put(key,record,stamp){
-   if(!stamp||!stamp.scope||!eligible(key,record.raw)||stamp.scope!==activeScope)return Promise.resolve(null);
-   return transact('readwrite',function(tx,set){var records=tx.objectStore('records'),meta=tx.objectStore('meta').get(stamp.scope);meta.onsuccess=protect(tx,function(){if((meta.result?meta.result.revision:0)!==stamp.revision)return;
-     records.put(Object.assign({},record,{schema:1,id:stamp.scope+':'+key,scope:stamp.scope,revision:stamp.revision,syncedAt:Date.now()}));
+   if(!record||!stamp||!stamp.scope||!stamp.epochs||!eligible(key,record.raw)||stamp.scope!==activeScope)return Promise.resolve(null);
+   return transact('readwrite',function(tx,set){var records=tx.objectStore('records');revisions(tx,stamp.scope,dependencies(key),function(epochs){if(stamp.scope!==activeScope||Object.keys(epochs).some(function(k){return epochs[k]!==stamp.epochs[k];}))return;
+     records.put(Object.assign({},record,{schema:2,id:stamp.scope+':'+key,scope:stamp.scope,revision:stamp.revision,epochs:epochs,syncedAt:Date.now()}));
      var scan=records.openCursor(),items=[];scan.onsuccess=protect(tx,function(){var cursor=scan.result;if(cursor){var value=cursor.value;if(typeof value.raw!=='string'||!eligible(value.key,value.raw)||!Number.isFinite(value.expiresAt)||value.expiresAt<=Date.now()||!Number.isFinite(value.checkedAt)){cursor.delete();stats.evictions++;}else items.push({id:value.id,scope:value.scope,at:value.checkedAt,bytes:value.raw.length*2});cursor.continue();return;}
        items.sort(function(a,b){return a.at-b.at;});var local=items.filter(function(x){return x.scope===stamp.scope;}),localBytes=local.reduce(function(n,x){return n+x.bytes;},0),removed=new Set();
        while(local.length>40||localBytes>2000000){var first=local.shift();records.delete(first.id);removed.add(first.id);localBytes-=first.bytes;stats.evictions++;}
@@ -464,8 +488,8 @@ var syyDiskCache=(function(){
      });
    });});
  }
- function purge(owner){if(!owner)return Promise.resolve(null);return transact('readwrite',function(tx,set){var store=tx.objectStore('meta'),request=store.get(owner);request.onsuccess=protect(tx,function(){store.put({id:owner,revision:(request.result?request.result.revision:0)+1});});var scan=tx.objectStore('records').openCursor();scan.onsuccess=protect(tx,function(){var cursor=scan.result;if(cursor){if(cursor.value.scope===owner)cursor.delete();cursor.continue();}});set(true);});}
- function invalidate(scopes,notify){var owner=activeScope;if(owner)purge(owner);else if(scopePromise)scopePromise.then(function(value){if(value)purge(value);});if(notify&&channel)try{channel.postMessage({type:'invalidate',scopes:scopes});}catch(e){}}
+ function purge(owner,scopes){if(!owner)return Promise.resolve(null);return transact('readwrite',function(tx,set){var store=tx.objectStore('meta');(scopes?scopes.map(function(s){return owner+':'+s;}):[owner]).forEach(function(id){var request=store.get(id);request.onsuccess=protect(tx,function(){store.put({id:id,revision:(request.result?request.result.revision:0)+1});});});var scan=tx.objectStore('records').openCursor();scan.onsuccess=protect(tx,function(){var cursor=scan.result;if(cursor){if(cursor.value.scope===owner&&(!scopes||dependencies(cursor.value.key).some(function(s){return scopes.includes(s);})))cursor.delete();cursor.continue();}});set(true);});}
+ function invalidate(scopes,notify){var owner=activeScope;if(owner)purge(owner,scopes);else if(scopePromise)scopePromise.then(function(value){if(value)purge(value,scopes);});if(notify&&channel)try{channel.postMessage({type:'invalidate',scopes:scopes});}catch(e){}}
  function clear(){var owner=activeScope;++scopeRun;if(channel)try{channel.postMessage({type:'logout'});channel.close();}catch(e){}channel=null;activeScope='';scopePromise=null;scopeIdentity='';return purge(owner);}
  return {enabled:!!enabled,eligible:eligible,lookup:lookup,put:put,invalidate:invalidate,clear:clear,connect:scope,stats:stats};
 })();
@@ -483,6 +507,8 @@ function syyReadPolicy(name){
 function syyCanonical(value){if(Array.isArray(value))return value.map(syyCanonical);if(value&&typeof value==='object'){var result={};Object.keys(value).sort().forEach(function(k){if(!['__proto__','constructor','prototype'].includes(k))result[k]=syyCanonical(value[k]);});return result;}return value;}
 function syyReadArgs(name,args){
  args=JSON.parse(JSON.stringify(args||[]));
+ // Snapshot renewal controls freshness, never the identity of the visible query.
+ args.forEach(function(arg){if(arg&&typeof arg==='object'&&!Array.isArray(arg)){delete arg.refreshSnapshot;if(name==='getDashboardBootstrap')delete arg.catalogSection;if(['getQuotationPageData','getTaxInvoicePageData'].includes(name))delete arg.sectionVersions;}});
  if(name==='getProductCatalogFacets'){
   var filters={},column=args[1];Object.keys(args[0]&&args[0].filters||{}).sort().forEach(function(k){var values=args[0].filters[k];if(k!==column&&Array.isArray(values)&&values.length)filters[k]=Array.from(new Set(values)).sort();});args=[{filters:filters},column];
  }
@@ -490,7 +516,7 @@ function syyReadArgs(name,args){
 }
 function syyCachePrefix(){var id=syyIdentity();return id&&id.owner?'syy_data_v1:'+encodeURIComponent(id.owner)+':'+id.role+':'+encodeURIComponent(typeof WEB_APP_URL==='string'?WEB_APP_URL:location.origin+location.pathname)+':':null;}
 function syyCacheStorageKey(key){var hash=2166136261;for(var i=0;i<key.length;i++)hash=Math.imul(hash^key.charCodeAt(i),16777619);return syyCachePrefix()+String(hash>>>0);}
-function syyClearReadCache(){syyDiskCache.clear();syyReadCache.clear();syyCacheScopes.forEach(function(scope){syyCacheEpochs[scope]=(syyCacheEpochs[scope]||0)+1;});try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(k.startsWith(prefix))sessionStorage.removeItem(k);});}catch(e){}}
+function syyClearReadCache(){syyDiskCache.clear();syyReadCache.clear();syyReadLatest.clear();syyDirtyReadScopes.clear();syyLastCheckedAt=0;syyLastReadSource='';syyReadDirty=false;syyCacheScopes.forEach(function(scope){syyCacheEpochs[scope]=(syyCacheEpochs[scope]||0)+1;});try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(k.startsWith(prefix))sessionStorage.removeItem(k);});}catch(e){}}
 function syyEnsureCacheIdentity(){var id=syyIdentity(),identity=JSON.stringify([id,typeof AUTH_TOKEN==='string'?AUTH_TOKEN:'']);if(identity!==syyCacheIdentity){syyDiskCache.clear();syyReadCache.clear();syyCacheScopes.forEach(function(s){syyCacheEpochs[s]=(syyCacheEpochs[s]||0)+1;});syyCacheIdentity=identity;syyDiskCache.connect();}return !!(id&&id.owner&&typeof AUTH_TOKEN==='string'&&AUTH_TOKEN&&!window.syyExpiryStarted);}
 function syyCacheEpoch(scopes){return scopes.map(function(s){return syyCacheEpochs[s]||0;}).join('|');}
 function syyInvalidateReadScopes(scopes,notify,preserveRevision){
@@ -500,6 +526,8 @@ function syyInvalidateReadScopes(scopes,notify,preserveRevision){
  syyReadCache.forEach(function(record,key){if(record.scopes.some(function(s){return scopes.includes(s);}))syyReadCache.delete(key);});
  try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(!k.startsWith(prefix))return;try{var record=JSON.parse(sessionStorage.getItem(k));if(record.scopes.some(function(s){return scopes.includes(s);}))sessionStorage.removeItem(k);}catch(e){sessionStorage.removeItem(k);}});}catch(e){}
  if(!preserveRevision&&syyFreshState&&scopes.some(function(s){return syyCacheUsedScopes.has(s);})){syyFreshState.revision++;syyFreshState.dirty=true;}
+ scopes.forEach(function(s){if(syyCacheUsedScopes.has(s))syyDirtyReadScopes.add(s);});syyReadDirty=syyDirtyReadScopes.size>0;
+ syyUxStatus();
  if(notify){var message={action:'CACHE_INVALIDATED',scopes:scopes};syyPostParent(message);document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,message);});}
 }
 function syyWriteScopes(name,args){
@@ -532,11 +560,13 @@ window.addEventListener('message',function(event){
  if(d.action==='PRODUCT_DELTA')scopes=['Master_Products','Product_Images'];
  if(d.action==='STOCK_DELTA')scopes=['Master_Products','Stock_Movements'];
  if(d.action==='MASTER_DELTA'){var map={brands:'Master_Brands',categories:'Master_Categories',vendors:'Master_Vendors',zones:'Master_Zones',cars:'Master_Cars',customers:'Master_Customers'};scopes=[map[d.kind]];}
- if(['REFRESH_PRODUCTS','REFRESH_STOCK_FULL','REFRESH_DROPDOWNS'].includes(d.action))scopes=syyCacheScopes;
+ if(d.action==='REFRESH_PRODUCTS')scopes=['Master_Products','Product_Images'];
+ if(d.action==='REFRESH_STOCK_FULL')scopes=['Master_Products','Stock_Movements','Purchase_Orders'];
+ if(d.action==='REFRESH_DROPDOWNS')scopes=['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'];
  if(['SESSION_EXPIRED','CLEAR_LOCAL_STATE'].includes(d.action))syyClearReadCache();else syyInvalidateReadScopes(scopes,false);
 });
-// Explicit refresh buttons bypass browser reuse; automatic freshness reloads
-// validate known versions without resending unchanged payloads.
+// Explicit refresh validates versions first. Hard expiry and critical/security
+// checks still require the ordinary authoritative server read when necessary.
 document.addEventListener('click',function(event){var button=event.target.closest&&event.target.closest('button');if(button&&/รีเฟรช/.test(button.textContent)){syyReadFresh=true;setTimeout(function(){syyReadFresh=false;},0);}},true);
 var syyReadFresh=false,syyPendingReads=new Map();
 function syyUnpackCatalog(data){
@@ -547,7 +577,9 @@ function syyUnpackCatalog(data){
 function syyDecodeRead(data){data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);return data;}
 function callApi(fnName,args,onSuccess,onFailure,options){
  if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,function(data){if(data&&data.success!==false)syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onSuccess)onSuccess(data);},function(error){syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onFailure)onFailure(error);else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));});
- options=options||{};var policy=syyReadPolicy(fnName),canCache=syyEnsureCacheIdentity(),authoritative=options.authoritative===true||syyReadFresh,force=authoritative||options.fresh||(args||[]).some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor&&x.cursorMode!==true);});
+ options=options||{};var policy=syyReadPolicy(fnName),canCache=syyEnsureCacheIdentity(),manual=options.manual===true||syyReadFresh,authoritative=options.authoritative===true;
+ if(manual&&!authoritative)args=(args||[]).map(function(x){if(x&&typeof x==='object'&&!Array.isArray(x)&&Object.prototype.hasOwnProperty.call(x,'force'))return Object.assign({},x,{force:false});return x;});
+ var force=authoritative||!manual&&(options.fresh||(args||[]).some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor&&x.cursorMode!==true);}));
  var canonical=syyReadArgs(fnName,args),key=fnName+JSON.stringify(canonical);
  if(authoritative&&policy){var refreshing=syyPendingReads.get(key+':'+syyCacheIdentity+':'+syyCacheEpoch(policy.scopes)+':true:true');if(refreshing){refreshing.push({ok:onSuccess,fail:onFailure});return;}syyInvalidateReadScopes(policy.scopes,true,true);}
  var record=policy&&canCache&& !force?syyCacheRecord(key,policy):null;
@@ -558,28 +590,34 @@ function callApi(fnName,args,onSuccess,onFailure,options){
      syyEnsureCacheIdentity();
      if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
      if(stamp&&stamp.record){var saved=stamp.record;if(Array.isArray(saved.scopes)&&saved.scopes.join('|')===policy.scopes.join('|')&&typeof saved.version==='string'){saved.checkedAt=0;syyReadCache.set(key,saved);}}
-     callApi(fnName,args,onSuccess,onFailure,Object.assign({},options,{diskReady:true,diskStamp:stamp,validate:true}));
+     callApi(fnName,args,onSuccess,onFailure,Object.assign({},options,{manual:manual,diskReady:true,diskStamp:stamp,validate:true}));
    });return;
  }
- if(record&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){syyCacheStats.hits++;setTimeout(function(){syyEnsureCacheIdentity();if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)));},0);return;}
- var pendingKey=key+':'+identity+':'+epoch+':'+!!force+':'+!!authoritative,listeners=syyPendingReads.get(pendingKey);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
+ if(record&&!manual&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){var hitSequence=syyReadLatest.get(key+':'+identity);syyCacheStats.hits++;setTimeout(function(){syyEnsureCacheIdentity();if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||hitSequence!==syyReadLatest.get(key+':'+identity)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyLastReadSource='memory';syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)));},0);return;}
+ var pendingKey=key+':'+identity+':'+epoch+':'+!!force+':'+!!authoritative+(manual?':manual':''),listeners=syyPendingReads.get(pendingKey);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
  if(authoritative)syyCacheStats.authoritative++;
+ if(manual)syyCacheStats.manual++;
  syyCacheStats.misses++;if(record)syyCacheStats.revalidations++;
- listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);var rpcStarted=Date.now(),measured=false;
+ listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);var rpcStarted=Date.now(),measured=false,fenceKey=key+':'+identity,requestSequence=++syyReadSequence;
+ syyReadLatest.delete(fenceKey);syyReadLatest.set(fenceKey,requestSequence);while(syyReadLatest.size>200)syyReadLatest.delete(syyReadLatest.keys().next().value);
  function measure(failed){if(!policy||measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);}
  function failed(error){measure(true);syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
  syyCallApiRaw(fnName,args,function(data){
    syyEnsureCacheIdentity();
-   if(policy&&(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes))){failed({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
+   if(policy&&(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||syyReadLatest.get(fenceKey)!==requestSequence)){failed({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
    var version=null,previous=null,expiresAt=null;if(data&&data.__syyCache===1){version=data.version;expiresAt=data.expiresAt;if(data.notModified){if(!record){failed({message:'แคชหมดอายุ กรุณาโหลดใหม่'});return;}previous=record;data=JSON.parse(record.raw);syyCacheStats.notModified++;}else data=data.data;}
    var wireRaw;try{if(policy&&canCache&&version!==null)wireRaw=JSON.stringify(data);data=syyDecodeRead(data);}catch(error){failed(error);return;}
-   syyLastReadAt=previous?previous.loadedAt:Date.now();
+   if(policy&&manual&&!previous)syyInvalidateReadScopes(policy.scopes,true,true);
+   syyLastReadAt=previous?previous.loadedAt:Date.now();syyUxLoaded=syyLastReadAt;syyLastCheckedAt=Date.now();syyLastReadSource=previous?'validated-cache':'server';if(policy)policy.scopes.forEach(function(s){syyDirtyReadScopes.delete(s);});syyReadDirty=syyDirtyReadScopes.size>0;
    // Only protocol-aware servers produce cacheable results. Old deployments
    // retain their existing behavior until source is synchronized as one release.
-   if(policy&&canCache&&version!==null){syyStoreRead(key,policy,data,version,previous,wireRaw,expiresAt);var stored=syyReadCache.get(key);if(stored)syyDiskCache.put(key,stored,options.diskStamp);}
+   if(policy&&canCache&&version!==null){syyStoreRead(key,policy,data,version,previous,wireRaw,expiresAt);var stored=syyReadCache.get(key);if(stored&&syyDiskCache.eligible(key,stored.raw)){if(manual&&!previous)syyDiskCache.lookup(key).then(function(stamp){return syyDiskCache.put(key,stored,stamp);});else syyDiskCache.put(key,stored,options.diskStamp);}}
+   // A bootstrap includes edit dropdowns; ordinary navigation needs the same
+   // rows without them. Reuse that visited page without another request.
+   if(canCache&&version!==null&&fnName==='getAllProducts'&&args[0]&&args[0].paged&&data&&data.catalogPage){var pageArgs=JSON.parse(JSON.stringify(args));pageArgs[0].includeMasters=false;var pageData=Object.assign({},data),pageKey='getProductCatalogPage'+JSON.stringify(syyReadArgs('getProductCatalogPage',pageArgs));delete pageData.masters;if((syyReadLatest.get(pageKey+':'+identity)||0)<=requestSequence)syyStoreRead(pageKey,syyReadPolicy('getProductCatalogPage'),pageData,version,syyReadCache.get(key),undefined,expiresAt);}
    if(canCache&&data&&data.facets&&typeof data.facetVersion==='string')Object.keys(data.facets).forEach(function(column){var facet=data.facets[column];if(facet&&Array.isArray(facet.values))syyStoreRead('getProductCatalogFacets'+JSON.stringify(syyReadArgs('getProductCatalogFacets',[{},column])),syyReadPolicy('getProductCatalogFacets'),facet,data.facetVersion,previous,undefined,expiresAt);});
-   measure(false);syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data);}catch(e){setTimeout(function(){throw e;},0);}});
- },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt,refresh:!!authoritative}:undefined);
+   measure(false);syyPendingReads.delete(pendingKey);syyUxStatus();listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data,{notModified:!!previous,manual:manual});}catch(e){setTimeout(function(){throw e;},0);}});
+ },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt,expiresAt:record&&record.expiresAt,manual:!!manual,refresh:!!authoritative}:undefined);
 }
 /* UI state is local to this browser session and the server-verified account. Never store credentials. */
 var syyFieldSequence=0,syyDrafts={},syyModalBaselines={},syyUxBusy=0,syyUxLoaded=0,syyUxFailed=false;
@@ -652,7 +690,7 @@ function syyGuardDraft(change,name){
 }
 function syyUxStatus(){
   var el=document.getElementById('syyDataStatus');if(!el)return;
-  el.textContent=syyUxBusy?'กำลังดำเนินการ…':syyUxFailed?'โหลดไม่สำเร็จ · ข้อมูลเดิมอาจไม่ล่าสุด':syyUxLoaded?'อัปเดต '+new Date(syyUxLoaded).toLocaleTimeString('th-TH')+(syyFreshState&&syyFreshState.dirty||Date.now()-syyUxLoaded>120000?' · ควรรีเฟรช':''):'ยังไม่ยืนยันข้อมูลล่าสุด';
+  el.textContent=syyUxBusy?'กำลังดำเนินการ…':syyUxFailed?'โหลดไม่สำเร็จ · แสดงข้อมูลเดิมที่โหลดสำเร็จ':syyUxLoaded?'โหลดเมื่อ '+new Date(syyUxLoaded).toLocaleTimeString('th-TH')+(syyLastReadSource==='memory'||syyLastReadSource==='validated-cache'?' · Cache':'')+(syyLastCheckedAt?' · ตรวจล่าสุด '+new Date(syyLastCheckedAt).toLocaleTimeString('th-TH'):'')+(syyReadDirty||syyFreshState&&syyFreshState.dirty||Date.now()-syyUxLoaded>120000?' · ควรรีเฟรช':''):'ยังไม่ยืนยันข้อมูลล่าสุด';
   el.dataset.state=syyUxFailed?'error':syyUxBusy?'busy':'ready';
 }
 function syyTableCards(body){

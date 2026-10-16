@@ -540,7 +540,7 @@ async function main(){
   });
   await check('Trusted cross-page deltas update stock without changing negotiated draft and inactive frames do not poll',async()=>{
     const p=await pageFor('index.html');await p.evaluate(()=>switchPage('quotation'));await p.frameLocator('#iframe-quotation').locator('#inpNote').waitFor({state:'attached'});const quote=p.frames().find(f=>f.url().includes('page=quotation'));await quote.waitForFunction(()=>typeof products!=='undefined'&&products.some(product=>product.productCode==='P1'));await quote.evaluate(()=>{addToBasket('P1');basket[0].unitPrice=125;document.getElementById('inpNote').value='Draft';});await p.evaluate(()=>switchPage('stockissue'));await p.frameLocator('#iframe-stockissue').locator('#searchInput').waitFor({state:'attached'});const stock=p.frames().find(f=>f.url().includes('page=stockissue'));await stock.waitForFunction(()=>typeof syyPostParent==='function');await stock.evaluate(()=>syyPostParent({action:'STOCK_DELTA',productStocks:[{productCode:'P1',currentStock:7}]}));await quote.waitForFunction(()=>products[0].currentStock===7&&basket[0].stock===7);assert.deepEqual(await quote.evaluate(()=>[products[0].currentStock,basket[0].stock,basket[0].unitPrice,document.getElementById('inpNote').value]),[7,7,125,'Draft']);assert.equal(await quote.evaluate(()=>syyFreshState.active),false);
-    await quote.evaluate(()=>{syyFreshState.lastLoaded=Date.now()-200000;syyFreshState.lastAttempt=0;apiCalls=[];window.dispatchEvent(new Event('focus'));});assert.equal(await quote.evaluate(()=>apiCalls.length),0);await p.evaluate(()=>switchPage('quotation'));await quote.waitForFunction(()=>apiCalls.some(x=>x.fn==='getQuotationPageData'));assert.equal(await quote.evaluate(()=>apiCalls.filter(x=>x.fn==='getQuotationPageData').length),1);assert.equal(await quote.locator('#inpNote').inputValue(),'Draft');assert.equal(await quote.evaluate(()=>basket[0].unitPrice),125);assert.deepEqual(p.errors,[]);await p.close();
+    await quote.evaluate(()=>{syyFreshState.lastLoaded=Date.now()-200000;syyFreshState.lastAttempt=0;apiCalls=[];window.dispatchEvent(new Event('focus'));});assert.equal(await quote.evaluate(()=>apiCalls.length),0);await p.evaluate(()=>switchPage('quotation'));await quote.waitForTimeout(40);assert.equal(await quote.evaluate(()=>apiCalls.length),0);await quote.evaluate(()=>{syyReadFresh=true;loadPageData(currentPageYear,null,null,true);syyReadFresh=false;});await quote.waitForFunction(()=>apiCalls.some(x=>x.fn==='getQuotationPageData'));assert.equal(await quote.evaluate(()=>apiCalls.filter(x=>x.fn==='getQuotationPageData').length),1);assert.equal(await quote.locator('#inpNote').inputValue(),'Draft');assert.equal(await quote.evaluate(()=>basket[0].unitPrice),125);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Identical read calls share one RPC and return to both callbacks; saves remain separate',async()=>{
     const p=await pageFor('Quotation.html');await p.evaluate(()=>{apiCalls=[];apiHold='getAllMasterDropdowns';window.received=0;callApi('getAllMasterDropdowns',[],()=>received++);callApi('getAllMasterDropdowns',[],()=>received++);});assert.equal(await p.evaluate(()=>apiCalls.length),1);await p.evaluate(()=>{apiHold='';apiPending.shift()();});assert.equal(await p.evaluate(()=>received),2);await p.evaluate(()=>{callApi('saveCustomer',[{customerName:'A'}],()=>{});callApi('saveCustomer',[{customerName:'A'}],()=>{});});assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveCustomer').length),2);assert.deepEqual(p.errors,[]);await p.close();
@@ -943,16 +943,16 @@ async function main(){
     const count=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getBackupOverview').length);await p.evaluate(()=>{closeModal('backupModal');backupPolls.forEach(fn=>fn());});await p.waitForTimeout(30);
     assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getBackupOverview').length),count);assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('manual refresh explicitly bypasses all cache layers, coalesces simultaneous refreshes and retains master rows after failure',async()=>{
+  await check('manual refresh checks versions first, coalesces simultaneous refreshes and retains master rows after failure',async()=>{
     for(const file of ['Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html']){
       const p=await pageFor(file,'admin');await p.evaluate(()=>{respond=()=>({__syyCache:1,version:'v1',data:[{id:'A1',Name:'Original',Customer_Name:'Original',Vendor_name:'Original',Area:'Original',Brand:'Original',Model:'Model'}]});loadTable();});await p.waitForFunction(()=>cache.length===1);const count=await p.evaluate(()=>apiCalls.length);
       await p.evaluate(()=>loadTable());await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>apiCalls.length),count);
-      await p.getByRole('button',{name:/รีเฟรช/}).click();await p.waitForTimeout(30);assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.refresh),true,file);assert.equal(await p.evaluate(()=>cache.length),1);
+      await p.getByRole('button',{name:/รีเฟรช/}).click();await p.waitForTimeout(30);assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.refresh),false,file);assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.manual),true,file);assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.version),'v1');assert.equal(await p.evaluate(()=>cache.length),1);
       await p.evaluate(()=>{apiFailure=API.list;});await p.getByRole('button',{name:/รีเฟรช/}).click();await p.waitForTimeout(30);assert.match(await p.locator('#tbodyMain').innerText(),/Original/);assert.match(await p.locator('#toastWrap').innerText(),/ข้อมูลเดิม/);assert.deepEqual(p.errors,[]);await p.close();
     }
     const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{apiHold='getBrands';window.refreshResults=0;callApi('getBrands',[],()=>refreshResults++,()=>{}, {authoritative:true});callApi('getBrands',[],()=>refreshResults++,()=>{}, {authoritative:true});});assert.equal(await p.evaluate(()=>apiPending.length),1);await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(done=>done());});await p.waitForFunction(()=>refreshResults===2);assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('document revalidation omits unchanged sections without losing products, customers or typed drafts; manual refresh requests all sections',async()=>{
+  await check('document manual refresh keeps section versions and omits unchanged products/customers without losing typed drafts',async()=>{
     for(const file of ['Quotation.html','Master_Tax_Invoice.html']){
       const p=await pageFor(file);await p.evaluate(isQuote=>{
         const prior=respond;respond=(fn,args,meta)=>{const data=prior(fn,args);if(fn==='getQuotationPageData'||fn==='getTaxInvoicePageData'){
@@ -964,7 +964,7 @@ async function main(){
       await p.evaluate(isQuote=>{if(isQuote){basket=[{...fixtureProduct,qty:1,unitPrice:123.45,stock:10}];renderBasket();document.querySelector('.price-input').value='123.45';loadPageData(currentPageYear,null,null,true);}else{openAddModal(true);document.querySelector('.item-price').value='123.45';loadAll(currentPageYear,null,null,true);}},file==='Quotation.html');await p.waitForTimeout(40);
       assert.equal(await p.evaluate(isQuote=>(isQuote?products:productsCache)[0].productCode,file==='Quotation.html'),'P1');assert.equal(await p.evaluate(isQuote=>(isQuote?customers:customersCache)[0].id,file==='Quotation.html'),'C1');assert.equal(await p.locator(file==='Quotation.html'?'.price-input':'.item-price').first().inputValue(),'123.45');
       await p.evaluate(isQuote=>{if(isQuote)switchTab('list');else closeModal('invoiceModal');},file==='Quotation.html');await p.getByRole('button',{name:/รีเฟรช/}).first().click();await p.waitForTimeout(40);
-      assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.refresh),true);assert.deepEqual(await p.evaluate(()=>apiCalls.at(-1).args[1].sectionVersions),{});assert.deepEqual(p.errors,[]);await p.close();
+      assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.refresh),false);assert.equal(await p.evaluate(()=>apiRequests.at(-1).metadata.manual),true);assert.equal(await p.evaluate(()=>apiCalls.at(-1).args[1].sectionVersions.products.version),'products-v1');assert.deepEqual(p.errors,[]);await p.close();
     }
   });
   await check('dashboard uses deltas between reconciliations, adopts structural catalog changes and recovers expired delta watermarks',async()=>{
@@ -988,7 +988,7 @@ async function main(){
   }
   await check('IndexedDB persists only safe references, restores after reload only after server validation, and L1 avoids repeated disk/RPC work',async()=>{
     const p=await hybridPage();await p.waitForFunction(()=>syyDiskCache.stats.writes>0);const saved=await p.evaluate(()=>syyDiskCache.lookup('getBrands[]'));
-    assert.equal(JSON.parse(saved.record.raw)[0].Name,'Honda');assert.equal(saved.record.schema,1);assert.equal(saved.record.scope.length,64);assert(!JSON.stringify(saved).includes('test-token'));assert(!JSON.stringify(saved).includes('authToken'));
+    assert.equal(JSON.parse(saved.record.raw)[0].Name,'Honda');assert.equal(saved.record.schema,2);assert.equal(saved.record.scope.length,64);assert(!JSON.stringify(saved).includes('test-token'));assert(!JSON.stringify(saved).includes('authToken'));
     await p.goto('http://127.0.0.1:'+port+'/?file=Master_Brands.html&role=staff&hold=1');await p.waitForFunction(()=>apiPending.length===1);
     assert.equal(await p.evaluate(()=>cache.length),0);assert.equal(await p.evaluate(()=>apiRequests[0].metadata.version),'disk-v1');
     await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>cache.length===1);
@@ -1045,12 +1045,12 @@ async function main(){
     const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>apiCalls.length),before);
     await p.evaluate(()=>{fixtureBrowseFailure='network';nextPage();});await p.waitForFunction(()=>document.getElementById('toastWrap')?.innerText.includes('ข้อมูลเดิม'));assert.equal(await p.evaluate(()=>currentPage),2);
     const expiredBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>{fixtureBrowseFailure='expired';nextPage();});await p.waitForTimeout(50);assert.equal(await p.evaluate(()=>productRemote.page),2);assert.equal(await p.evaluate(()=>apiCalls.length),expiredBefore+1);
-    await p.evaluate(()=>{fixtureBrowseFailure='';apiHold='getAllProducts';syyFreshState.active=true;syyFreshState.dirty=true;syyFreshState.lastAttempt=0;syyFreshState.refresh();});
+    await p.evaluate(()=>{fixtureBrowseFailure='';apiHold='getProductCatalogPage';syyFreshState.active=true;syyFreshState.dirty=true;syyReadFresh=true;loadTable();syyReadFresh=false;});
     assert.equal(await p.locator('#productBody tr').count(),50);assert.equal(await p.locator('#productBody').getAttribute('aria-busy'),'true');assert.equal(await p.evaluate(()=>currentPage),2);assert.equal(await p.locator('#btnNextPage').isDisabled(),true);
     const during=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>syyFreshState.refresh());assert.equal(await p.evaluate(()=>apiCalls.length),during);
     await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>productRemote.page),2);assert.match(await p.locator('#pageIndicator').innerText(),/หน้า 2/);
     const deltaBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>applyStockDeltaToProductPage([{productCode:productsCache[0].productCode,currentStock:44}]));await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>apiCalls.length),deltaBefore);assert.equal(await p.evaluate(()=>productsCache[0].currentStock),44);
-    const editBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>{upsertProductLocal({...productsCache[0],productName:'Changed A'});upsertProductLocal({...productsCache[1],productName:'Changed B'});});await p.waitForTimeout(300);assert.equal(await p.evaluate(()=>apiCalls.length),editBefore+1);assert.equal(await p.evaluate(()=>currentPage),2);
+    const editBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>{upsertProductLocal({...productsCache[0],productName:'Changed A'});upsertProductLocal({...productsCache[1],productName:'Changed B'});});await p.waitForTimeout(300);assert.equal(await p.evaluate(()=>apiCalls.length),editBefore);assert.equal(await p.evaluate(()=>currentPage),2);assert.equal(await p.evaluate(()=>syyFreshState.dirty),true);
     await p.screenshot({path:path.join(output,'pagination-stable-page-2.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('IndexedDB evicts corrupt/expired records and bounds storage across sessions without blocking business reads',async()=>{
@@ -1096,6 +1096,56 @@ async function main(){
       assert.equal(await p.evaluate(()=>apiCalls.length),before,file);assert.deepEqual(p.errors,[]);await p.close();
     }
     const p=await pageFor('Master_Brands.html');const before=await p.evaluate(()=>apiCalls.length);await p.locator('button').filter({hasText:'รีเฟรช'}).click();await p.waitForFunction(n=>apiCalls.length>n,before);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('ordinary product pages persist within the permission scope, restore only after validation and invalidate independently of brands',async()=>{
+    const scoped=await browser.newContext({viewport:{width:1365,height:950}});await scoped.route('https://**/*',r=>r.abort());
+    await scoped.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{
+      const before=respond;window.productWorkers=0;respond=(fn,args,meta)=>{
+        if((fn==='getAllProducts'&&args[0]?.paged)||fn==='getProductCatalogPage'){
+          if(meta?.version==='product-disk-v1')return {__syyCache:1,notModified:true,version:'product-disk-v1',expiresAt:Date.now()+30000};
+          productWorkers++;const o=args[0];return {__syyCache:1,version:'product-disk-v1',expiresAt:Date.now()+30000,data:{catalogPage:true,cursorMode:true,products:Array.from({length:50},(_,i)=>({...fixtureProduct,id:'P'+(o.page*100+i),productCode:'P'+(o.page*100+i)})),page:o.page,pageSize:50,total:null,unfilteredTotal:null,readTime:new Date().toISOString(),hasMore:o.page<3,nextCursor:'next-'+(o.page+1),...(o.includeMasters?{masters:{brands:[],categories:[],vendors:[],zones:[],cars:[]}}:{})}};
+        }
+        if(fn==='getBrands')return {__syyCache:1,version:'brand-v1',data:[{id:'B1',Name:'Retained'}]};return before(fn,args,meta);
+      };if(location.search.includes('hold=1'))apiHold='getAllProducts';
+    }));
+    const p=await pageFor('Master_Products.html','staff',scoped);await p.waitForFunction(()=>syyDiskCache.stats.writes>0);
+    const firstKey=await p.evaluate(()=>Array.from(syyReadCache.keys()).find(k=>k.startsWith('getAllProducts')));assert((await p.evaluate(k=>syyDiskCache.lookup(k),firstKey)).record);
+    await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2&&syyDiskCache.stats.writes>=2);
+    await p.goto('http://127.0.0.1:'+port+'/?file=Master_Products.html&role=staff&hold=1');await p.waitForFunction(()=>apiPending.length===1);assert.equal(await p.evaluate(()=>productsCache.length),0);assert.equal(await p.evaluate(()=>apiRequests[0].metadata.version),'product-disk-v1');
+    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>productRemote?.page===1);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>productWorkers),0);assert((await p.evaluate(()=>syyCacheStats.notModified))>=2);
+    const kept=await p.evaluate(async()=>{
+      await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));await new Promise(resolve=>setTimeout(resolve,30));const brand=await syyDiskCache.lookup('getBrands[]');
+      const key=Array.from(syyReadCache.keys()).find(k=>k.startsWith('getProductCatalogPage')&&JSON.parse(syyReadCache.get(k).raw).page===2),old=await syyDiskCache.lookup(key);if(!old.record)throw Error('Expected persisted page two');syyInvalidateReadScopes(['Master_Products'],false);await syyDiskCache.put(key,old.record,old);
+      const a=await syyDiskCache.lookup('getBrands[]'),b=await syyDiskCache.lookup(key);return {brandKept:!!a.record,productRemoved:!b.record,credentialsAbsent:!JSON.stringify(brand).includes('test-token')};
+    });assert.deepEqual(kept,{brandKept:true,productRemoved:true,credentialsAbsent:true});assert.deepEqual(p.errors,[]);await scoped.close();
+  });
+  await check('notifications, dirty activation and cross-module changes never start data requests on any loaded business page',async()=>{
+    for(const file of ['Master_Products.html','Master_Brands.html','StockIssue.html','Purchase_Orders.html','Quotation.html','Master_Tax_Invoice.html','index.html']){
+      const p=await pageFor(file);if(file==='StockIssue.html')await p.evaluate(()=>{const prior=respond;respond=(fn,args,meta)=>fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'',imageUrls:[],primaryImageIndex:0}])):prior(fn,args,meta);});await p.waitForTimeout(450);const count=await p.evaluate(()=>apiCalls.length);
+      await p.evaluate(()=>{
+        syyTrustedParentMessage=()=>true;syyTrustedChildMessage=()=>true;
+        [{action:'CACHE_INVALIDATED',scopes:['Master_Products']},{action:'MASTER_DELTA',kind:'brands',item:{id:'B1',Brand_Name:'Changed'}},{action:'PRODUCT_DELTA',product:{...fixtureProduct,productName:'Changed'}},{action:'PRODUCT_DELTA',product:{...fixtureProduct,id:'NEW',productCode:'NEW',productName:'New item'}},{action:'STOCK_DELTA',productStocks:[{productCode:'P1',currentStock:8}]},{action:'REFRESH_PRODUCTS'},{action:'REFRESH_DROPDOWNS'},{action:'REFRESH_STOCK_FULL'},{action:'PAGE_ACTIVATED'}].forEach(data=>window.dispatchEvent(new MessageEvent('message',{data,source:window,origin:location.origin})));
+        window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'));
+      });await p.waitForTimeout(650);assert.equal(await p.evaluate(()=>apiCalls.length),count,file);assert.deepEqual(p.errors,[],file);await p.close();
+    }
+  });
+  await check('unchanged manual document refresh retains page two and loaded rows while reporting cached validation',async()=>{
+    for(const [file,api] of [['Quotation.html','getQuotationPageData'],['Master_Tax_Invoice.html','getTaxInvoicePageData'],['Purchase_Orders.html','getPurchaseOrderPageData']]){
+      const p=await pageFor(file);await p.evaluate(api=>{
+        const prior=respond;respond=(fn,args,meta)=>{
+          if(fn!==api)return prior(fn,args,meta);if(meta?.version==='document-v1')return {__syyCache:1,version:'document-v1',notModified:true};
+          const data=prior(fn,args),rows=Array.from({length:150},(_,i)=>api==='getTaxInvoicePageData'?{...fixtureInvoice,id:'TX'+i}:api==='getQuotationPageData'?{id:'QT'+i,quotationNo:'QT'+i,quotationDate:'2026-10-11',status:'ร่าง',customerName:'Buyer',items:[],grandTotal:100}:{id:'PO'+i,poNumber:'PO'+i,orderDate:'2026-10-11',vendorName:'Vendor',status:'Pending',items:[],totalAmount:100});
+          data[api==='getTaxInvoicePageData'?'invoices':api==='getQuotationPageData'?'quotations':'purchaseOrders']=rows;data.pageInfo={hasMore:false,nextCursor:''};return {__syyCache:1,version:'document-v1',data};
+        };if(api==='getQuotationPageData')loadPageData(currentPageYear,null,null,true);else if(api==='getTaxInvoicePageData')loadAll(currentPageYear,null,null,true);else loadAll();
+      },api);await p.waitForFunction(()=>!syyFreshState.busy);await p.evaluate(api=>switchTab(api==='getPurchaseOrderPageData'?'history':'list'),api);await p.locator('.syy-display-pages button').last().click();assert.equal(await p.evaluate(()=>documentPager.offset()),50,file);
+      await p.getByRole('button',{name:/รีเฟรช/}).first().click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>documentPager.offset()),50,file);assert.equal(await p.evaluate(()=>syyLastReadSource),'validated-cache');assert.match(await p.locator('#syyDataStatus').innerText(),/Cache/);assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('POS has explicit version-first product refresh, keeps basket prices and retains displayed products after failure',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{
+      const before=respond;respond=(fn,args,meta)=>fn==='getAllProducts'?{__syyCache:1,version:'pos-v1',...(meta?.version==='pos-v1'?{notModified:true}:{data:[fixtureProduct]})}:fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'',imageUrls:[]}])):before(fn,args,meta);loadProducts();
+    });await p.waitForFunction(()=>!syyFreshState.busy);await p.evaluate(()=>{addToBasket('P1');basket[0].unitPrice=123;renderBasket();});await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>syyLastReadSource),'validated-cache');assert.equal(await p.evaluate(()=>basket[0].unitPrice),123);
+    await p.evaluate(()=>apiFailure='getAllProducts');await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.match(await p.locator('#resultList').innerText(),/Test Part/);assert.equal(await p.evaluate(()=>basket[0].unitPrice),123);assert.equal(await p.locator('#btnRefreshProducts').isDisabled(),false);assert.match(await p.locator('#toastWrap').innerText(),/ข้อมูลเดิม/);assert.deepEqual(p.errors,[]);await p.close();
   });
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');

@@ -130,6 +130,7 @@
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span style="font-size:12px;color:var(--faint)">F2 ค้นหา · Enter เพิ่มสินค้า · F4 ยืนยัน</span>
       <span class="badge badge-info" id="userChip">👤 —</span>
+      <button class="btn btn-ghost" id="btnRefreshProducts" onclick="loadProducts()">🔄 รีเฟรชสินค้า</button>
       <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()">≡</button>
     </div>
   </div>
@@ -424,9 +425,11 @@
 
   /* ═══ โหลดสินค้า ═══ */
   function loadProducts() {
+    if(syyFreshState&&syyFreshState.busy||issueBusy||issueUncertain()||prefillBusy)return;
+    var refreshButton=document.getElementById('btnRefreshProducts');btnBusy(refreshButton,'กำลังตรวจข้อมูล...');
     var revision=syyDataStarted();
     callApi('getAllProducts', [{compact:true}], function (data) {
-      if(revision!==syyDataRevision()){syyDataFailed();return;}
+      btnDone(refreshButton);if(revision!==syyDataRevision()){syyDataFailed();return;}
       syyDataLoaded();
       products = (data || []).filter(function (p) { return (p.status || 'Active') === 'Active'; });
       basket.forEach(function(item){var fresh=products.find(function(p){return p.productCode===item.productCode;});item.stock=fresh?num(fresh.currentStock):0;if(fresh){item.productName=fresh.productName;item.costPrice=num(fresh.costPrice);item.minStock=num(fresh.minStock);}});renderBasket();
@@ -436,7 +439,8 @@
       // ★ แจ้งเชลล์ (index.html) ว่าโหลดสินค้าเสร็จแล้ว พร้อมรับรายการจากใบเสนอราคามาเติมตะกร้า
       try { syyPostParent({ action: 'STOCKISSUE_READY' }); } catch (e) {}
     }, function (err) {
-      syyDataFailed();
+      btnDone(refreshButton);syyDataFailed();
+      if(products.length){toast('โหลดไม่สำเร็จ · แสดงข้อมูลเดิม: '+syyErrorMessage(err),'err');return;}
       document.getElementById('resultCount').innerText = 'โหลดข้อมูลสินค้าไม่สำเร็จ';
       document.getElementById('resultList').innerHTML = '<div class="empty-box">' + esc(syyErrorMessage(err)) + '</div>';
     });
@@ -584,7 +588,7 @@
         '<button class="btn-add' + (st <= 0 ? ' is-disabled' : '') + '" type="button" onclick="event.stopPropagation(); addToBasket(\'' + escJs(p.productCode) + '\')">' + (st <= 0 ? 'หมด' : '+ เพิ่มสินค้า') + '</button>' +
       '</div>';
     }).join('');
-    clearTimeout(resultImageTimer);resultImageTimer=setTimeout(loadVisibleProductImages,200);
+    clearTimeout(resultImageTimer);if(!syyApplyingNotification)resultImageTimer=setTimeout(loadVisibleProductImages,200);
   }
   function changeResultWindow(direction){
     resultWindowStart=Math.max(0,Math.min(Math.floor((results.length-1)/RESULT_WINDOW_SIZE)*RESULT_WINDOW_SIZE,resultWindowStart+direction*RESULT_WINDOW_SIZE));

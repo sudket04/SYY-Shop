@@ -1173,7 +1173,10 @@ function getProductCatalogPage_(options){
   }catch(ignored){delete response.facets;}
   return response;
 }
-function getProductBrowsePage_(options,spec,size,page){
+// Validate signed continuation independently of running a query. Conditional
+// manual reads must apply the same owner/spec/age checks as ordinary browsing.
+function productBrowseContext_(options,spec,size,page){
+  if(!Number.isInteger(size)||size<1||size>200||!Number.isInteger(page)||page<1||page>100000)throw new Error('ขนาดหน้าสินค้าไม่ถูกต้อง');
   var version=PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|'),scope=validatedGatewaySession_&&validatedGatewaySession_.session;
   var owner=scope?scope.username+':'+scope.role:'internal',query=readCacheKey_(JSON.stringify([spec,size,owner])),cursor=null;
   if(options.cursor){try{
@@ -1183,6 +1186,10 @@ function getProductBrowsePage_(options,spec,size,page){
     if(cursor.mode!=='browse-v1'||cursor.query!==query||cursor.page!==page||!validDocumentId_(cursor.last)||!Number.isFinite(cursor.at)||Date.now()-cursor.at>=86400000||cursor.at>Date.now()+60000||!validIsoTimestamp_(cursor.readTime))throw Error('stale');
   }catch(e){productBrowseRestart_();}}
   else if(page!==1)throw new Error('กรุณาเปิดหน้าก่อนหน้าก่อนเปลี่ยนหน้า');
+  return {version:version,query:query,cursor:cursor};
+}
+function getProductBrowsePage_(options,spec,size,page){
+  var context=productBrowseContext_(options,spec,size,page),version=context.version,query=context.query,cursor=context.cursor;
   // Keep the signed document anchor when stock changes or the short snapshot
   // expires. Resume with a new bounded snapshot instead of forcing page one.
   var rebased=!!(cursor&&(options.refreshSnapshot===true||cursor.version!==version||Date.now()-cursor.at>=120000));
@@ -2109,13 +2116,16 @@ function getTaxInvoiceListData_(yearFilter,options){var page=queryDocumentPage_(
 function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;return result;}
 
 // Reuse only sections actually held by this caller, with a hard age that validation cannot extend.
+function clientSectionReusable_(prior,version,scopes,age){
+  return version!==null&&prior&&prior.version===version&&Number.isFinite(prior.loadedAt)&&prior.loadedAt<=Date.now()&&Date.now()-prior.loadedAt<age&&clientReadExpiry_(scopes,age)>Date.now()&&!(executionReadContext_&&executionReadContext_.refreshScopes.some(function(s){return scopes.indexOf(s)>=0;}));
+}
 function documentPageSections_(result,options){
   options=options||{};var known=options.sectionVersions||{},versions={};
   if(typeof known!=='object'||Array.isArray(known))throw new Error('เวอร์ชันข้อมูลหน้าเอกสารไม่ถูกต้อง');
   [{key:'products',source:'Master_Products',scopes:PRODUCT_CATALOG_SCOPES,age:300000,load:function(){return options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();}},
    {key:'customers',source:'Master_Customers',scopes:['Master_Customers'],age:600000,load:getCustomersFull_}].forEach(function(section){
     var version=null;try{version=readCacheVersion_(section.scopes);}catch(ignored){}
-    var prior=known[section.key],canReuse=options.compactCatalog&&version!==null&&prior&&prior.version===version&&Number.isFinite(prior.loadedAt)&&prior.loadedAt<=Date.now()&&Date.now()-prior.loadedAt<section.age&&clientReadExpiry_(section.scopes,section.age)>Date.now()&&!(executionReadContext_&&executionReadContext_.refreshScopes.some(function(s){return section.scopes.indexOf(s)>=0;}));
+    var prior=known[section.key],canReuse=options.compactCatalog&&clientSectionReusable_(prior,version,section.scopes,section.age);
     if(canReuse){versions[section.key]=prior;return;}
     result[section.key]=section.load();
     if(version!==null){if(readCacheVersion_(section.scopes)!==version)throw new Error('ข้อมูลเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
@@ -4074,6 +4084,12 @@ function clientReadExpiry_(scopes,maxAge){
     keys.forEach(function(k){if(values[k]){var m=JSON.parse(values[k]);if(Number.isFinite(m.expiresAt))expiry=Math.min(expiry,m.expiresAt);}});return expiry;
   }catch(ignored){return Date.now();}
 }
+function clientConditionalCursorAllowed_(name,args){
+  var o=args[0];if(!o||!o.cursor)return !args.some(function(x){return x&&typeof x==='object'&&x.cursor;});
+  if(args.length!==1||['getAllProducts','getProductCatalogPage'].indexOf(name)<0||name==='getAllProducts'&&!o.paged||o.cursorMode!==true)return false;
+  var spec=productCatalogSpec_(o);if(spec.search||Object.keys(spec.filters).length||spec.sortCol&&spec.sortCol!=='productCode')return false;
+  productBrowseContext_(o,spec,o.pageSize==null?50:Number(o.pageSize),o.page==null?1:Number(o.page));return true;
+}
 function apiGateway(token, fnName, args, userAgent, clientCache) {
   try {
     var session = getSession_(token, userAgent);
@@ -4122,7 +4138,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
       return { success: false, message: "เกิดข้อผิดพลาดภายในระบบ กรุณาแจ้งผู้ดูแลระบบ" };
     }
     var cacheScopes=clientCache&&clientCache.protocol===1?clientReadScopes_(fnName):null,cacheVersion=null;
-    var authoritative=!!(cacheScopes&&clientCache.refresh===true);
+    var authoritative=!!(cacheScopes&&clientCache.refresh===true),manual=!!(cacheScopes&&clientCache.manual===true&&!authoritative);
     if(authoritative){
       if(a.some(function(x){return x&&typeof x==='object'&&x.cursor;}))return {success:false,message:'กรุณาเริ่มรีเฟรชจากหน้าแรก เพื่อไม่เปลี่ยน snapshot ระหว่างแบ่งหน้า'};
       if(!allowReadRequest_('authoritativeRefresh',session.username))return {success:false,readLimited:true,retryAfterMs:60000,message:'รีเฟรชจากฐานข้อมูลได้ไม่เกิน 3 ครั้งต่อนาที กรุณารอแล้วลองใหม่ ข้อมูลเดิมยังอยู่'};
@@ -4130,12 +4146,12 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     }
     executionReadContext_={collections:Object.create(null),catalog:null,refreshScopes:authoritative?cacheScopes:[]};
     if(cacheScopes)try{cacheVersion=clientReadVersion_(cacheScopes);}catch(ignored){}
-    // Authorization always runs before conditional responses. Force requests,
-    // cursors and old snapshots must execute the ordinary read operation.
-    var force=authoritative||a.some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor);});
+    // Authorization and signed browse-cursor validation precede conditional
+    // reuse. Export/document cursors and forced reads keep their ordinary path.
+    var force=authoritative||a.some(function(x){return x&&typeof x==='object'&&x.force;})||a.some(function(x){return x&&typeof x==='object'&&x.cursor;})&&!clientConditionalCursorAllowed_(fnName,a);
     var maxClientAge=cacheScopes&&cacheScopes.every(function(x){return ['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers'].indexOf(x)>=0;})?300000:120000;
     var dataExpiry=cacheScopes?clientReadExpiry_(cacheScopes,maxClientAge):0;
-    if(cacheVersion!==null&&!force&&dataExpiry>Date.now()&&clientCache.version===cacheVersion&&Number.isFinite(clientCache.loadedAt)&&clientCache.loadedAt<=Date.now()&&Date.now()-clientCache.loadedAt<maxClientAge){
+    if(cacheVersion!==null&&!force&&dataExpiry>Date.now()&&(!manual||Number.isFinite(clientCache.expiresAt)&&clientCache.expiresAt>Date.now())&&clientCache.version===cacheVersion&&Number.isFinite(clientCache.loadedAt)&&clientCache.loadedAt<=Date.now()&&Date.now()-clientCache.loadedAt<maxClientAge){
       return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes,expiresAt:dataExpiry};
     }
     var referenceOperations=['saveProduct','saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveMasterData','savePurchaseOrder','saveQuotation',
@@ -5317,9 +5333,13 @@ function getDashboardBootstrap_(options){
     var movements=[],readTime='';ranges.forEach(function(range){var rows=queryDashboardMovementsRange_(range.start,range.end,false,readTime);readTime=readTime||rows.readTime;movements=movements.concat(rows);});
     return {movements:movements,serverTime:readTime,snapshotLoadedAt:Date.parse(readTime)||Date.now()};
   },options.force===true);
-  var catalogVersion=dashboardCatalogVersion_(),products=options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();
+  var catalogVersion=dashboardCatalogVersion_(),dataVersion=null;try{dataVersion=readCacheVersion_(PRODUCT_CATALOG_SCOPES);}catch(ignored){}
+  var reuse=options.compactCatalog&&clientSectionReusable_(options.catalogSection,dataVersion,PRODUCT_CATALOG_SCOPES,300000);
+  var products=reuse?undefined:options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();
   if(catalogVersion!==null&&catalogVersion!==dashboardCatalogVersion_())throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
-  return {products:products,catalogVersion:catalogVersion,catalogExpiresAt:clientReadExpiry_(PRODUCT_CATALOG_SCOPES,300000),movements:snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
+  if(dataVersion!==null&&dataVersion!==readCacheVersion_(PRODUCT_CATALOG_SCOPES))throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
+  var catalogExpiry=clientReadExpiry_(PRODUCT_CATALOG_SCOPES,300000),section=reuse?options.catalogSection:dataVersion===null?undefined:{version:dataVersion,loadedAt:Math.min(Date.now(),catalogExpiry-300000)};
+  return {products:products,catalogSection:section,catalogVersion:catalogVersion,catalogExpiresAt:catalogExpiry,movements:snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
 }
 
 function getDashboardDelta_(sinceIso,options) {

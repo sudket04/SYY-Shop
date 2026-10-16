@@ -356,9 +356,10 @@
     // ★ ใช้ endpoint รวม getPurchaseOrderPageData() แทนการเรียก getLowStockProductsForOrder()
     //   + getPurchaseOrders() แยกกัน 2 รอบ (ซึ่งแต่ละรอบดึงข้อมูลผู้จัดจำหน่ายซ้ำกันเอง)
     //   ฝั่ง server ดึงข้อมูลผู้จัดจำหน่ายแค่ครั้งเดียว ใช้ร่วมกันทั้ง 2 ส่วน
-    callApi('getPurchaseOrderPageData', [{force:force===true}], function(data) {
+    callApi('getPurchaseOrderPageData', [{force:force===true}], function(data, readInfo) {
         if(request!==purchaseLoadSequence)return;
         if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();btn.classList.remove('is-loading');return;}
+        if(purchasePageLoaded&&readInfo&&readInfo.manual&&readInfo.notModified){if(documentPager)documentPager.cancel();syyDataLoaded(data&&data.snapshotLoadedAt);btn.classList.remove('is-loading');return;}
         syyDataLoaded(data&&data.snapshotLoadedAt);purchasePageLoaded=true;
         lowStockItems  = (data && data.lowStockItems)  || [];
         purchaseOrders = (data && data.purchaseOrders) || [];

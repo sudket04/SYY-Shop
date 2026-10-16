@@ -392,9 +392,10 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
   if (badge) badge.style.display = 'inline';
   var apiName = quotationBootstrapped && !forceFull ? 'getQuotationListData' : 'getQuotationPageData';
   if(!quotationBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','quotation-year');if(savedYear)yearParam=savedYear;}
-  callApi(apiName, [yearParam || '',{compactCatalog:true,sectionVersions:syyReadFresh?{}:quotationSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function (data) {
+  callApi(apiName, [yearParam || '',{compactCatalog:true,sectionVersions:quotationSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function (data, readInfo) {
     if(requestGeneration!==quotationLoadGeneration)return;
     if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();if(btn)btnDone(btn);if(badge)badge.style.display='none';return;}
+    if(quotationBootstrapped&&readInfo&&readInfo.manual&&readInfo.notModified){if(documentPager)documentPager.cancel();if(btn)btnDone(btn);if(badge)badge.style.display='none';syyDataLoaded();if(typeof afterLoad==='function')afterLoad();return;}
     if (!data || data.success === false || !Array.isArray(data.quotations)) {
       failedLoad({message:data && data.message || 'ข้อมูลใบเสนอราคาไม่ถูกต้อง'}); return;
     }

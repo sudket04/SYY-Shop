@@ -6,6 +6,8 @@ Source ผ่านการแก้ audit 1–40 และทดสอบใ�
 
 งานรองรับสินค้า 10,000 รายการเผยแพร่แล้ว: ตารางสินค้าปกติใช้ bounded cursor จาก server, metadata รูปเฉพาะรายการที่แสดง, compact catalog และ POS ครั้งละ 60 แถว ดู [ผลทดสอบและข้อจำกัด](docs/HYBRID-CACHE-2026-10-16.md) — การค้นหา substring/XLFilter และการเรียงซับซ้อนยังใช้ complete-catalog fallback เพื่อรักษาผลค้นหาเดิม
 
+งานใหม่บน `main` **ยังไม่ Sync/Deploy**: รีเฟรชตรวจ Version ก่อนอ่านรายการ, ปิดการโหลดจาก notifications/dirty activation, Cache เฉพาะหน้าสินค้าที่เหมาะสมใน IndexedDB และรักษาหน้าเอกสารเมื่อข้อมูลไม่เปลี่ยน ดู [ขอบเขต ผลทดสอบ และข้อจำกัด](docs/VERSION-FIRST-CACHE-2026-10-16.md) โดยการค้นหา/กรองยังใช้ชุดเดิม
+
 ## โครงสร้าง
 
 - `Code.gs`: routing, authenticated API gateway, Firestore, stock/documents, accounts, backup/restore และ maintenance workers

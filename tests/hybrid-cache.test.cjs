@@ -88,3 +88,14 @@ test('background/manual browse refresh retains page and anchor while explicitly 
  second=page(s,{page:2,cursor:first.nextCursor,refreshSnapshot:true});
  assert.equal(second.page,2);assert.equal(second.snapshotRebased,true);assert.equal(second.products[0].id,'P00050');assert.equal(second.products[0].currentStock,123);assert.equal(s.commits.length,0);
 });
+
+test('manual version validation of a cached later product page verifies signed cursor ownership without any query',()=>{
+ const s=fixture(200);s.c.getSession_=token=>({username:token,role:'viewer'});s.c.allowReadRequest_=()=>true;
+ const first=s.c.apiGateway('alice','getProductCatalogPage',[{cursorMode:true,pageSize:50}],'fixture',{protocol:1});
+ const args=[{cursorMode:true,page:2,pageSize:50,cursor:first.data.nextCursor}],second=s.c.apiGateway('alice','getProductCatalogPage',args,'fixture',{protocol:1});
+ const metadata={protocol:1,manual:true,version:second.version,loadedAt:Date.now(),expiresAt:second.expiresAt},count=s.calls.length;
+ assert.equal(s.c.apiGateway('alice','getProductCatalogPage',args,'fixture',metadata).notModified,true);assert.equal(s.calls.length,count);
+ for(const token of ['bob','alice']){const bad=[{...args[0],...(token==='alice'?{cursor:args[0].cursor+'x'}:{})}];assert.equal(s.c.apiGateway(token,'getProductCatalogPage',bad,'fixture',metadata).success,false);}
+ s.c.getSession_=()=>({username:'alice',role:'staff'});assert.equal(s.c.apiGateway('alice','getProductCatalogPage',args,'fixture',metadata).success,false);
+ assert.equal(s.calls.length,count);assert.equal(s.commits.length,0);
+});

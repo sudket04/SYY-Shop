@@ -656,14 +656,11 @@
     else if(kind==='cars'){carOptionsCache=list.slice();renderCarDropdownList('');renderCarChips();}
     if(window.SYYSelect)SYYSelect.refresh(document);
   }
-  var productDeltaRefreshTimer=null;
   function queueProductDeltaRefresh(){
     if(!productRemote)return;
-    clearTimeout(productDeltaRefreshTimer);
-    productDeltaRefreshTimer=setTimeout(function(){
-      // Coalesce edits/deletions; hidden pages reconcile on activation.
-      if(syyFreshState&&syyFreshState.active&&!syyFreshState.busy)loadProductPage(false,false,true);
-    },200);
+    // A change may move rows across filter/page boundaries. Keep the current
+    // position and ask for manual reconciliation instead of silently requerying.
+    if(syyFreshState){syyFreshState.revision++;syyFreshState.dirty=true;}syyReadDirty=true;syyUxStatus();
   }
   function upsertProductLocal(item){
     if(!item)return;item.id=item.id||item.productCode;item.productCode=item.productCode||item.id;
@@ -750,7 +747,7 @@
   }
 
   function productPageOptions(){return Object.assign({},XLF.snapshot('products'),{search:document.getElementById('tableSearchInput').value,page:currentPage,pageSize:pageSize});}
-  function loadTable(withMasters) { loadProductPage(!!withMasters&&PRODUCT_CAN_EDIT,true,!!productRemote); }
+  function loadTable(withMasters) { loadProductPage(!!(withMasters||syyReadFresh)&&PRODUCT_CAN_EDIT&&currentPage===1,currentPage===1,!!productRemote); }
   function loadProductPage(withMasters,bootstrap,refreshSnapshot){
     var revision=syyDataStarted(),sequence=++productLoadSequence,tbody=document.getElementById('productBody');
     if(!productRemote&&!productsCache.length)tbody.innerHTML=skeletonRows(visibleProductColumns.length,6);
@@ -762,7 +759,7 @@
     if(refreshSnapshot)options.refreshSnapshot=true;
     callApi(bootstrap?'getAllProducts':'getProductCatalogPage',[options],function(data){
       if(sequence!==productLoadSequence)return;
-      if(revision!==syyDataRevision()){syyDataFailed();loadProductPage(withMasters,bootstrap,refreshSnapshot);return;}
+    if(revision!==syyDataRevision()){failed({message:'ข้อมูลเปลี่ยนระหว่างโหลด กรุณากดรีเฟรช'});return;}
       try{
         if(withMasters){masterData=data.masters||{};applyProductDropdowns();}
         if(bootstrap)syyPostParent({action:'PRODUCTS_READY'});
