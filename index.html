@@ -858,8 +858,11 @@
       DASH.poVendorMap = data.poVendorMap||{};
       DASH.lastSync = data.serverTime || (DASH.movements.length ? DASH.movements[0].timestamp : new Date().toISOString());
       allProducts = DASH.products; // ใช้ร่วมกับ openView/openEdit/editModal เดิม
-      DASH.loaded = true; DASH.lastLoad = Date.now(); DASH.lastFullLoad = Number(data.snapshotLoadedAt)||Date.now();DASH.nextReconcile=DASH.lastFullLoad+DASH_RECONCILE_MS;
-      document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
+      DASH.loaded = true; DASH.lastLoad = Date.now(); DASH.lastFullLoad = Number(data.snapshotLoadedAt)||syyLastReadAt||Date.now();DASH.nextReconcile=DASH.lastFullLoad+DASH_RECONCILE_MS;
+      var loadedAt=syyLastReadAt||Date.now(),timeFormat={hour:'2-digit',minute:'2-digit'};
+      document.getElementById('lastUpdated').innerText='โหลดข้อมูลเมื่อ '+new Date(loadedAt).toLocaleTimeString('th-TH',timeFormat)+
+        (syyLastReadSource==='memory'||syyLastReadSource==='validated-cache'?' · Cache':'')+
+        (syyLastReadSource==='validated-cache'&&syyLastCheckedAt?' · ตรวจล่าสุด '+new Date(syyLastCheckedAt).toLocaleTimeString('th-TH',timeFormat):'');
       if(!readInfo||!readInfo.notModified){dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();}
       if(DASH.reloadRequested){DASH.reloadRequested=false;var queuedForce=!!DASH.forceReload;DASH.forceReload=false;setTimeout(function(){dashLoad(queuedForce);},0);}else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
     }, function(err){

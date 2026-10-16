@@ -428,9 +428,11 @@
     if(syyFreshState&&syyFreshState.busy||issueBusy||issueUncertain()||prefillBusy)return;
     var refreshButton=document.getElementById('btnRefreshProducts');btnBusy(refreshButton,'กำลังตรวจข้อมูล...');
     var revision=syyDataStarted();
-    callApi('getAllProducts', [{compact:true}], function (data) {
+    callApi('getAllProducts', [{compact:true}], function (data, readInfo) {
       btnDone(refreshButton);if(revision!==syyDataRevision()){syyDataFailed();return;}
       syyDataLoaded();
+      // A validated unchanged response must not reset the user's working view.
+      if(readInfo&&readInfo.notModified)return;
       products = (data || []).filter(function (p) { return (p.status || 'Active') === 'Active'; });
       basket.forEach(function(item){var fresh=products.find(function(p){return p.productCode===item.productCode;});item.stock=fresh?num(fresh.currentStock):0;if(fresh){item.productName=fresh.productName;item.costPrice=num(fresh.costPrice);item.minStock=num(fresh.minStock);}});renderBasket();
       buildCategoryFilter();
@@ -453,9 +455,10 @@
       if (c && !seen[c]) { seen[c] = true; cats.push(c); }
     });
     cats.sort(function (a, b) { return a.localeCompare(b, 'th'); });
-    var sel = document.getElementById('filterCategory');
+    var sel = document.getElementById('filterCategory'), selected = sel.value;
     sel.innerHTML = '<option value="">หมวดหมู่: ทั้งหมด</option>' +
       cats.map(function (c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
+    sel.value = cats.indexOf(selected)>=0 ? selected : '';
   }
 
   function updateCounts() {

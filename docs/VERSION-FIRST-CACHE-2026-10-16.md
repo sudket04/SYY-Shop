@@ -69,3 +69,15 @@ Baseline ก่อนแก้: `npm test` **209/209 ผ่าน** (`test-resul
 Search/XLFilter/contains/complex sort/Export **ใช้ชุดเดิม**: cold path ยังอาจอ่านทั้ง catalog; Dashboard/POS cold load ที่ต้องคำนวณหรือค้นหาครบสินค้ายังใช้ catalog เดิม ไม่มี aggregation/index/search-engine rewrite ในงานนี้ การเปลี่ยนข้อมูลจากเครื่องอื่นอาจต้องกดรีเฟรชก่อนเห็น การไม่มี polling ไม่ได้ให้ realtime consistency
 
 สิ่งที่ Not Tested: authenticated Production UAT, latency/billing/Query Explain จริง, browser partition ของ Apps Script จริง และ 5 executions พร้อมกันจริง ต้องใช้ staging/บัญชีจริงตามแผนตรวจรับก่อนอ้างผล Production
+
+## แก้บัคที่พบจากการตรวจซ้ำ
+
+ผู้ใช้อนุมัติแก้สองจุดที่ยืนยันจาก Browser fixtures บน Source `8374896`:
+
+- `StockIssue.html`: เมื่อรีเฟรชได้ `notModified` จะคง DOM หมวดหมู่ หน้ารายการและตำแหน่งเลื่อนเดิม; หากได้ข้อมูลใหม่จะคงหมวดหมู่ที่ยังมีอยู่ หากหมวดหมู่นั้นไม่มีสินค้าแล้วจะกลับไป “ทั้งหมด” โดยไม่เก็บตัวเลือกที่ใช้ไม่ได้
+- `index.html`: แสดง “โหลดข้อมูลเมื่อ” ตามเวลาโหลดเดิม และแยก “Cache / ตรวจล่าสุด” เมื่อได้รับการยืนยัน Version; การใช้ Cache ไม่ขยายอายุ snapshot ในกรณี server รุ่นเดิมไม่ได้ส่ง `snapshotLoadedAt`
+- `tests/browser.cjs`: เพิ่ม regression สำหรับ unchanged/changed/removed category, ตำแหน่งรายการและ DOM, เวลาโหลด/ตรวจ Cache, ข้อมูลใหม่ และเครือข่ายล้มเหลว; การทดสอบใช้ข้อมูลจำลองเท่านั้น
+
+ผลตรวจหลังแก้: **219/219 tests**, **112/112 Browser regression groups**, syntax **69 scripts/manifest** และ `git diff --check` ผ่าน หลักฐาน local: `test-results/refresh-ui-bugs-unit.log`, `refresh-ui-bugs-full-browser.log`
+
+ไม่มีการเปลี่ยน backend, query, สิทธิ์ หรือข้อมูล DB และไม่เพิ่ม Firestore Reads/Writes; ไม่มีการ Sync Apps Script หรือ Deploy ในงานแก้บัคนี้

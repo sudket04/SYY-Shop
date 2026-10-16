@@ -1147,6 +1147,27 @@ async function main(){
     });await p.waitForFunction(()=>!syyFreshState.busy);await p.evaluate(()=>{addToBasket('P1');basket[0].unitPrice=123;renderBasket();});await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>syyLastReadSource),'validated-cache');assert.equal(await p.evaluate(()=>basket[0].unitPrice),123);
     await p.evaluate(()=>apiFailure='getAllProducts');await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.match(await p.locator('#resultList').innerText(),/Test Part/);assert.equal(await p.evaluate(()=>basket[0].unitPrice),123);assert.equal(await p.locator('#btnRefreshProducts').isDisabled(),false);assert.match(await p.locator('#toastWrap').innerText(),/ข้อมูลเดิม/);assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('POS refresh preserves category, selected window and DOM for unchanged data; changed and removed categories reconcile safely',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{
+      const old=respond;window.posVersion='v1';window.posRows=Array.from({length:81},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i,productName:'Part '+String(i).padStart(3,'0'),categoryName:i===80?'Oil':'Brakes'}));
+      respond=(fn,args,meta)=>fn==='getAllProducts'?{__syyCache:1,version:posVersion,...(meta?.version===posVersion?{notModified:true}:{data:posRows})}:fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'',imageUrls:[]}])):old(fn,args,meta);loadProducts();
+    });await p.waitForFunction(()=>!syyFreshState.busy);await p.selectOption('#filterCategory','Brakes');
+    await p.evaluate(()=>{changeResultWindow(1);window.retainedRow=document.querySelector('#resultList .res-row');document.getElementById('resultList').scrollTop=120;window.retainedScroll=document.getElementById('resultList').scrollTop;});
+    await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);
+    assert.equal(await p.locator('#filterCategory').inputValue(),'Brakes');assert.equal(await p.evaluate(()=>resultWindowStart),60);assert(await p.evaluate(()=>retainedRow===document.querySelector('#resultList .res-row')));assert(await p.evaluate(()=>document.getElementById('resultList').scrollTop===retainedScroll));
+    await p.evaluate(()=>{posVersion='v2';posRows[60].currentStock=99;});await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.locator('#filterCategory').inputValue(),'Brakes');assert.equal(await p.evaluate(()=>products.find(x=>x.productCode==='P60').currentStock),99);
+    await p.evaluate(()=>{posVersion='v3';posRows=posRows.filter(x=>x.categoryName==='Oil');});await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.locator('#filterCategory').inputValue(),'');assert.equal(await p.evaluate(()=>results.length),1);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Dashboard distinguishes original load time from cached validation, preserves snapshot age and advances only for new data',async()=>{
+    const p=await pageFor('index.html');await p.waitForFunction(()=>!DASH.loading);await p.evaluate(()=>{
+      const RealDate=Date;window.auditNow=RealDate.now();window.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[auditNow]));}static now(){return auditNow;}};
+      const old=respond;window.dashVersion='v1';respond=(fn,args,meta)=>fn==='getDashboardBootstrap'?{__syyCache:1,version:dashVersion,...(meta?.version===dashVersion?{notModified:true}:{data:{products:[fixtureProduct],movements:[],poVendorMap:{},serverTime:new Date().toISOString()}})}:old(fn,args,meta);dashLoad();
+    });await p.waitForFunction(()=>!DASH.loading);const before=await p.locator('#lastUpdated').innerText(),age=await p.evaluate(()=>DASH.lastFullLoad);assert.match(before,/โหลดข้อมูลเมื่อ/);
+    await p.evaluate(()=>auditNow+=60000);await p.locator('#btnRefresh').click();await p.waitForFunction(()=>!DASH.loading);const validated=await p.locator('#lastUpdated').innerText();assert(validated.startsWith(before+' · Cache · ตรวจล่าสุด '));assert.equal(await p.evaluate(()=>DASH.lastFullLoad),age);
+    await p.evaluate(()=>dashLoad());await p.waitForFunction(()=>!DASH.loading);assert.equal(await p.locator('#lastUpdated').innerText(),before+' · Cache');assert.equal(await p.evaluate(()=>DASH.lastFullLoad),age);
+    await p.evaluate(()=>{dashVersion='v2';auditNow+=1000;});await p.locator('#btnRefresh').click();await p.waitForFunction(()=>!DASH.loading);assert.doesNotMatch(await p.locator('#lastUpdated').innerText(),/Cache|ตรวจล่าสุด/);assert((await p.evaluate(()=>DASH.lastFullLoad))>age);
+    await p.evaluate(()=>apiFailure='getDashboardBootstrap');await p.locator('#btnRefresh').click();await p.waitForFunction(()=>!DASH.loading);assert.match(await p.locator('#lastUpdated').innerText(),/โหลดไม่สำเร็จ/);assert.equal(await p.evaluate(()=>DASH.products.length),1);assert.deepEqual(p.errors,[]);await p.close();
+  });
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));
