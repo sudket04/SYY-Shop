@@ -22,7 +22,7 @@ test('cursor pagination pins one snapshot, has unique order, respects descending
  assert.equal(rows.length,121);assert.equal(new Set(rows.map(x=>x.id)).size,121);assert(rows.some(x=>x.id==='P00070'));assert(!rows.some(x=>x.id==='P00000A'));assert.equal(rows.at(-1).id,'P00120');
  const t=fixture(121);r=page(t,{sortCol:'productCode',sortAsc:false});rows=[...r.products];while(r.hasMore){r=page(t,{sortCol:'productCode',sortAsc:false,page:r.page+1,cursor:r.nextCursor});rows.push(...r.products);}assert.equal(rows[0].id,'P00120');assert.equal(rows.at(-1).id,'P00000');assert.equal(t.commits.length,0);
 });
-test('five authorized users share one cold query while continuation is bound to account, role, query, size, generation and age',()=>{
+test('five authorized users share one cold query while continuation is bound to account, role, query, size and maximum anchor age',()=>{
  const s=fixture(100);s.c.getSession_=token=>({username:token,role:'viewer'});const responses=[];
  for(let i=0;i<5;i++){const r=s.c.apiGateway('user'+i,'getProductCatalogPage',[{cursorMode:true,pageSize:50}],'fixture');assert.equal(r.products.length,50);responses.push(r);}
  assert.equal(s.count(),51);assert.equal(new Set(responses.map(r=>r.nextCursor)).size,5);
@@ -31,8 +31,8 @@ test('five authorized users share one cold query while continuation is bound to 
  s.c.getSession_=()=>({username:'user0',role:'staff'});assert.equal(s.c.apiGateway('user0','getProductCatalogPage',[opts],'fixture').success,false);
  s.c.getSession_=()=>({username:'user0',role:'viewer'});for(const bad of [{...opts,pageSize:25},{...opts,page:3},{...opts,cursor:cursor+'x'}])assert.equal(s.c.apiGateway('user0','getProductCatalogPage',[bad],'fixture').success,false);
  assert.equal(s.c.apiGateway('user0','getProductCatalogPage',[opts],'fixture').products.length,50);
- s.c.clearCollectionCache_('Master_Products');assert.equal(s.c.apiGateway('user0','getProductCatalogPage',[opts],'fixture').success,false);
- const expired=JSON.parse(Buffer.from(cursor.split('.')[0],'base64').toString());expired.at=Date.now()-120001;assert.throws(()=>page(s,{...opts,cursor:s.c.productCatalogCursor_(expired)}));
+ s.c.clearCollectionCache_('Master_Products');const rebased=s.c.apiGateway('user0','getProductCatalogPage',[opts],'fixture');assert.equal(rebased.page,2);assert.equal(rebased.snapshotRebased,true);
+ const expired=JSON.parse(Buffer.from(cursor.split('.')[0],'base64').toString());expired.at=Date.now()-86400001;assert.throws(()=>page(s,{...opts,cursor:s.c.productCatalogCursor_(expired)}));
  assert.equal(s.commits.length,0);
 });
 test('complete search and facets retain global results beyond visited pages; old clients retain total-count API',()=>{
@@ -64,4 +64,27 @@ test('browse result reuse cannot extend its original 30-second expiry in the bro
  const s=fixture(100);let now=Date.now();s.c.Date=class extends Date{constructor(...args){super(args.length?args[0]:now);}static now(){return now;}};s.c.getSession_=()=>({username:'staff',role:'staff'});
  const first=s.c.apiGateway('token','getProductCatalogPage',[{cursorMode:true}],'fixture',{protocol:1});assert.equal(first.expiresAt,now+30000);const reads=s.count();now+=29000;
  const repeat=s.c.apiGateway('token','getProductCatalogPage',[{cursorMode:true}],'fixture',{protocol:1});assert.equal(repeat.expiresAt,first.expiresAt);assert.equal(s.count(),reads);
+});
+
+test('expired/changed browse snapshots resume at the signed anchor with bounded current reads, including deleted anchors and descending order',()=>{
+ for(const descending of [false,true]){
+  const s=fixture(10000);let now=Date.now();s.c.Date=class extends Date{static now(){return now;}};
+  const sort=descending?{sortCol:'productCode',sortAsc:false}:{},first=page(s,sort),anchor=first.products.at(-1).id;
+  now+=120001;s.c.readTime=new Date(now).toISOString();
+  s.docs.delete('Master_Products/'+anchor);
+  const expected=descending?'P09949':'P00050';s.put('Master_Products/'+expected,{Product_Name:'Updated',Current_Stock:999});s.c.clearCollectionCache_('Master_Products');
+  const before=s.count(),next=page(s,{...sort,page:2,cursor:first.nextCursor});
+  assert.equal(next.page,2);assert.equal(next.snapshotRebased,true);assert.equal(next.products[0].id,expected);assert.equal(next.products[0].currentStock,999);assert.equal(s.count()-before,51);
+  const body=JSON.parse(s.calls.filter(x=>x.url.endsWith(':runQuery')).at(-1).options.payload);
+  assert.equal(body.readTime,undefined);assert.equal(body.structuredQuery.offset,undefined);assert.equal(body.structuredQuery.limit,51);
+  assert.equal(body.structuredQuery.startAt.values[0].referenceValue.split('/').at(-1),anchor);
+  const third=page(s,{...sort,page:3,cursor:next.nextCursor});assert.equal(third.snapshotRebased,false);assert.equal(third.readTime,next.readTime);assert.equal(s.commits.length,0);
+ }
+});
+
+test('background/manual browse refresh retains page and anchor while explicitly renewing a still-valid snapshot',()=>{
+ const s=fixture(200),first=page(s);let second=page(s,{page:2,cursor:first.nextCursor});
+ s.put('Master_Products/P00050',{Product_Name:'External update',Current_Stock:123});s.c.readTime=new Date(Date.now()+1000).toISOString();
+ second=page(s,{page:2,cursor:first.nextCursor,refreshSnapshot:true});
+ assert.equal(second.page,2);assert.equal(second.snapshotRebased,true);assert.equal(second.products[0].id,'P00050');assert.equal(second.products[0].currentStock,123);assert.equal(s.commits.length,0);
 });

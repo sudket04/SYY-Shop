@@ -181,9 +181,9 @@
   }
 
   function loadTable(){
-    var revision=syyDataRevision();
+    var revision=syyDataStarted();
     document.getElementById('recordCount').innerText='กำลังโหลด';
-    document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
+    if(!masterDataLoaded)document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
       if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
       syyDataLoaded();masterDataLoaded=true;
@@ -234,9 +234,9 @@
       return;
     }
 
-    tbody.innerHTML = rows.map(function(it,i){
+    syyPatchRows(tbody,rows.map(function(it,i){
       var rack = it.Rack_no ? '<span class="chip-zone">'+esc(it.Rack_no)+'</span>' : '<span class="cell-empty">—</span>';
-      return '<tr>'+
+      return '<tr data-row-key="'+esc(it.id)+'">'+
         '<td class="text-center"><span class="rownum">'+(i+1)+'</span></td>'+
         '<td><span class="chip-code">'+esc(it.id)+'</span></td>'+
         '<td style="font-weight:500;color:var(--ink)">'+esc(it.Area)+'</td>'+
@@ -250,7 +250,7 @@
           '<button class="btn btn-icon del" title="ลบ" onclick="confirmDelete(\''+escJs(it.id)+'\')">🗑️</button>'+
         '</span></td>'+
       '</tr>';
-    }).join('');
+    }).join(''));
   }
 
   function clearAllFilters(){

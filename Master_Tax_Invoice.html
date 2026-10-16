@@ -665,11 +665,11 @@ var documentPager;
 window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},invalidate:function(){invoiceLoadGeneration++;},render:function(){renderRows();renderDashboard();}});});
 var invoiceLoadGeneration=0,invoiceSectionVersions={};
 function loadAll(yearParam, onDone, onError, forceFull) {
-  var requestGeneration=++invoiceLoadGeneration,revision=syyDataRevision();
+  var requestGeneration=++invoiceLoadGeneration,revision=syyDataStarted();
   var refreshButton=document.getElementById('btnInvoiceRefresh');btnBusy(refreshButton,'กำลังโหลด...');
   if(taxInvoiceBootstrapped && yearParam==null){yearParam=currentPageYear;forceFull=true;}
   if(syyReadFresh)forceFull=true;
-  if(documentPager)documentPager.cancel();
+  if(documentPager)documentPager.beginRefresh();
   var tbody = document.getElementById('taxBody');
   if(!taxInvoiceBootstrapped)tbody.innerHTML = skeletonRows(9,5);
   document.getElementById('recordCount').innerText = 'กำลังโหลด';
@@ -679,7 +679,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
   if(!taxInvoiceBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','invoice-year');if(savedYear)yearParam=savedYear;}
   callApi(apiName, [yearParam || '',{compactCatalog:true,sectionVersions:syyReadFresh?{}:invoiceSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function(data) {
       if(requestGeneration!==invoiceLoadGeneration)return;
-      if(revision!==syyDataRevision()){syyDataFailed();btnDone(refreshButton);document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
+      if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();btnDone(refreshButton);document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
       if (!data || data.success === false || !Array.isArray(data.invoices)) {
         failedLoad({message:data && data.message || 'ข้อมูลใบกำกับภาษีไม่ถูกต้อง'}); return;
       }
@@ -718,7 +718,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
     }, failedLoad);
   function failedLoad(err) {
       if(requestGeneration!==invoiceLoadGeneration)return;
-      syyDataFailed();
+      syyDataFailed();if(documentPager)documentPager.cancel();
       btnDone(refreshButton);
       tbody.innerHTML = emptyStateHtml(9,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadAll()'}]});
@@ -1735,7 +1735,7 @@ function drillItemInvoices(yearBE, itemName) {
 }
 </script>
 <script>
-syyRegisterFreshness({reload:function(){loadAll(currentPageYear,null,null,true);},canRefresh:function(){return !invoiceSaving && !document.getElementById('qcBtnSave')?.disabled && !(documentPager&&documentPager.busy());},
+syyRegisterFreshness({reload:function(){loadAll(currentPageYear,null,null,true);},canRefresh:function(){return !invoiceSaving && !document.getElementById('qcBtnSave')?.disabled && (!documentPager||documentPager.canRefresh());},
   stock:function(stocks){syyApplyStockRows(productsCache,stocks);},product:function(product,deleted){syyApplyProductRows(productsCache,product,deleted);}});
 </script>
 <script>

@@ -631,7 +631,10 @@ async function main(){
       await p.evaluate(()=>{if(typeof renderList==='function')renderList();else if(typeof renderRows==='function')renderRows();else renderHistoryTab();});
       assert.equal(await p.evaluate(()=>retainedRow.isConnected&&retainedRow.contains(document.activeElement)),true,file);
       for(let i=0;i<4;i++){await p.locator('.syy-display-pages button').last().click();await p.waitForTimeout(10);}
-      assert.equal(await body.locator('tr').count(),50);assert((await p.locator('.syy-select-panel').count())<60);assert.deepEqual(p.errors,[]);await p.close();
+      assert.equal(await body.locator('tr').count(),50);assert((await p.locator('.syy-select-panel').count())<60);
+      const before=await p.evaluate(()=>({calls:apiCalls.length,offset:documentPager.offset()}));await p.evaluate(()=>{syyFreshState.active=true;syyFreshState.dirty=true;syyFreshState.lastAttempt=0;syyFreshState.refresh();});await p.waitForTimeout(20);
+      assert.equal(await p.evaluate(()=>documentPager.offset()),before.offset);assert.equal(await p.evaluate(()=>apiCalls.length),before.calls);assert.equal(await p.evaluate(()=>documentPager.canRefresh()),false);
+      assert.deepEqual(p.errors,[]);await p.close();
     }
   });
   await check('Filtered quotation empty state and partial invoice count are honest',async()=>{
@@ -1029,7 +1032,7 @@ async function main(){
       const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>new Promise((ok,fail)=>callApi('getBrands',[],ok,fail)));assert.equal(await p.evaluate(()=>apiCalls.length),before);assert.deepEqual(errors,[]);await p.close();
     }
   });
-  await check('cursor UI reuses visited pages, resets expired cursors once, preserves prior page on network failure and keeps pagination visible',async()=>{
+  await check('cursor UI reuses visited pages, preserves the active page during refresh/expiry/failure and retains rows while loading',async()=>{
     const p=await pageFor('Master_Products.html');await p.evaluate(()=>{
       window.fixtureBrowseFailure='';respond=(fn,args)=>{
         if(fn==='getAllProducts'||fn==='getProductCatalogPage'){
@@ -1041,7 +1044,14 @@ async function main(){
     });await p.waitForFunction(()=>productRemote&&productRemote.cursorMode);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);await p.evaluate(()=>prevPage());await p.waitForFunction(()=>productRemote.page===1);
     const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>apiCalls.length),before);
     await p.evaluate(()=>{fixtureBrowseFailure='network';nextPage();});await p.waitForFunction(()=>document.getElementById('toastWrap')?.innerText.includes('ข้อมูลเดิม'));assert.equal(await p.evaluate(()=>currentPage),2);
-    await p.evaluate(()=>{fixtureBrowseFailure='expired';nextPage();});await p.waitForTimeout(100);assert.equal(await p.evaluate(()=>productRemote.page),1,JSON.stringify({state:await p.evaluate(()=>({page:currentPage,remote:productRemote.page,requests:apiCalls.slice(-4),toast:document.getElementById('toastWrap')?.innerText})),errors:p.errors}));assert.equal(await p.locator('#productBody tr').count(),50);assert.match(await p.locator('#pageIndicator').innerText(),/หน้า 1/);assert.deepEqual(p.errors,[]);await p.close();
+    const expiredBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>{fixtureBrowseFailure='expired';nextPage();});await p.waitForTimeout(50);assert.equal(await p.evaluate(()=>productRemote.page),2);assert.equal(await p.evaluate(()=>apiCalls.length),expiredBefore+1);
+    await p.evaluate(()=>{fixtureBrowseFailure='';apiHold='getAllProducts';syyFreshState.active=true;syyFreshState.dirty=true;syyFreshState.lastAttempt=0;syyFreshState.refresh();});
+    assert.equal(await p.locator('#productBody tr').count(),50);assert.equal(await p.locator('#productBody').getAttribute('aria-busy'),'true');assert.equal(await p.evaluate(()=>currentPage),2);assert.equal(await p.locator('#btnNextPage').isDisabled(),true);
+    const during=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>syyFreshState.refresh());assert.equal(await p.evaluate(()=>apiCalls.length),during);
+    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>productRemote.page),2);assert.match(await p.locator('#pageIndicator').innerText(),/หน้า 2/);
+    const deltaBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>applyStockDeltaToProductPage([{productCode:productsCache[0].productCode,currentStock:44}]));await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>apiCalls.length),deltaBefore);assert.equal(await p.evaluate(()=>productsCache[0].currentStock),44);
+    const editBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>{upsertProductLocal({...productsCache[0],productName:'Changed A'});upsertProductLocal({...productsCache[1],productName:'Changed B'});});await p.waitForTimeout(300);assert.equal(await p.evaluate(()=>apiCalls.length),editBefore+1);assert.equal(await p.evaluate(()=>currentPage),2);
+    await p.screenshot({path:path.join(output,'pagination-stable-page-2.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('IndexedDB evicts corrupt/expired records and bounds storage across sessions without blocking business reads',async()=>{
     const p=await hybridPage();await p.waitForFunction(()=>cache.length===1);
@@ -1058,6 +1068,25 @@ async function main(){
       IDBObjectStore.prototype.put=function(){throw new DOMException('fixture quota','QuotaExceededError');};
       try{const stored=await syyDiskCache.put('getBrands[]',stamp.record,stamp);const data=await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));return {failedSafely:stored===null,name:data[0].Name,errors:syyDiskCache.stats.errors};}finally{IDBObjectStore.prototype.put=original;}
     });assert.equal(result.failedSafely,true);assert.equal(result.name,'Honda');assert(result.errors>0);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('all six master pages retain existing rows during refresh and skip DOM replacement when content is unchanged',async()=>{
+    for(const file of ['Master_Brands.html','Master_Categories.html','Master_Cars.html','Master_Customers.html','Master_Vendors.html','Master_Zones.html']){
+      const p=await pageFor(file);await p.waitForFunction(()=>masterDataLoaded);
+      await p.evaluate(()=>{const original=respond;respond=(fn,args)=>fn===API.list?[{id:'KEEP',Name:'Retained',Brand:'Retained',Customer_Name:'Retained',Vendor_name:'Retained',Area:'Retained'}]:original(fn,args);loadTable();});await p.waitForFunction(()=>!syyFreshState.busy&&cache[0]?.id==='KEEP');
+      await p.evaluate(()=>{window.keptMasterRow=document.querySelector('#tbodyMain tr');apiHold=API.list;loadTable();});
+      assert.equal(await p.evaluate(()=>keptMasterRow.isConnected&&document.getElementById('tbodyMain').contains(keptMasterRow)),true,file);
+      const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>syyFreshState.refresh());assert.equal(await p.evaluate(()=>apiCalls.length),before);
+      await p.evaluate(()=>{const original=respond;respond=(fn,args)=>fn===API.list?cache:original(fn,args);apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>!syyFreshState.busy);
+      assert.equal(await p.evaluate(()=>keptMasterRow.isConnected),true,file);assert.deepEqual(p.errors,[]);await p.close();
+    }
+  });
+  await check('document refresh locks page navigation until completion and failures release the pager without losing rows',async()=>{
+    for(const [file,api] of [['Quotation.html','getQuotationPageData'],['Master_Tax_Invoice.html','getTaxInvoicePageData'],['Purchase_Orders.html','getPurchaseOrderPageData']]){
+      const p=await pageFor(file);const before=await p.locator('#listBody,#taxBody,#historyTableBody').innerHTML();
+      await p.evaluate(api=>{apiHold=api;if(typeof loadPageData==='function')loadPageData(currentPageYear,null,null,true);else if(typeof currentPageYear!=='undefined')loadAll(currentPageYear,null,null,true);else loadAll();},api);
+      assert.equal(await p.evaluate(()=>documentPager.busy()),true,file);for(const button of await p.locator('.syy-pager button').all())assert.equal(await button.isDisabled(),true,file);
+      await p.evaluate(api=>{apiFailure=api;apiHold='';apiPending.splice(0).forEach(fn=>fn());},api);await p.waitForFunction(()=>!documentPager.busy());assert.equal(await p.locator('#listBody,#taxBody,#historyTableBody').innerHTML(),before,file);assert.deepEqual(p.errors,[]);await p.close();
+    }
   });
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');

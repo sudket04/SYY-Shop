@@ -382,10 +382,10 @@ var documentPager;
 window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getQuotationListData',key:'quotations',year:function(){return currentPageYear;},rows:function(){return quotations;},invalidate:function(){quotationLoadGeneration++;},render:function(){renderList();}});});
 var quotationLoadGeneration=0,quotationSectionVersions={};
 function loadPageData(yearParam, afterLoad, onError, forceFull) {
-  var requestGeneration=++quotationLoadGeneration,revision=syyDataRevision();
+  var requestGeneration=++quotationLoadGeneration,revision=syyDataStarted();
   if(quotationBootstrapped && yearParam==null){yearParam=currentPageYear;forceFull=true;}
   if(syyReadFresh)forceFull=true;
-  if(documentPager)documentPager.cancel();
+  if(documentPager)documentPager.beginRefresh();
   var btn = document.querySelector('.page-head .btn-ghost');
   if (btn) btnBusy(btn, 'กำลังโหลด...');
   var badge = document.getElementById('listYearLoadingBadge');
@@ -394,7 +394,7 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
   if(!quotationBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','quotation-year');if(savedYear)yearParam=savedYear;}
   callApi(apiName, [yearParam || '',{compactCatalog:true,sectionVersions:syyReadFresh?{}:quotationSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function (data) {
     if(requestGeneration!==quotationLoadGeneration)return;
-    if(revision!==syyDataRevision()){syyDataFailed();if(btn)btnDone(btn);if(badge)badge.style.display='none';return;}
+    if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();if(btn)btnDone(btn);if(badge)badge.style.display='none';return;}
     if (!data || data.success === false || !Array.isArray(data.quotations)) {
       failedLoad({message:data && data.message || 'ข้อมูลใบเสนอราคาไม่ถูกต้อง'}); return;
     }
@@ -428,7 +428,7 @@ function loadPageData(yearParam, afterLoad, onError, forceFull) {
   }, failedLoad);
   function failedLoad(err) {
     if(requestGeneration!==quotationLoadGeneration)return;
-    syyDataFailed();
+    syyDataFailed();if(documentPager)documentPager.cancel();
     if (btn) btnDone(btn);
     if (badge) badge.style.display = 'none';
     populateListYearDropdown();
@@ -1180,7 +1180,7 @@ function confirmDeleteQuotation(docId) {
 }
 </script>
 <script>
-syyRegisterFreshness({reload:function(){loadPageData(currentPageYear,null,null,true);},canRefresh:function(){return !quickCustomerSaving && !quotationSaving && !(documentPager&&documentPager.busy());},
+syyRegisterFreshness({reload:function(){loadPageData(currentPageYear,null,null,true);},canRefresh:function(){return !quickCustomerSaving && !quotationSaving && (!documentPager||documentPager.canRefresh());},
   stock:function(stocks){syyApplyStockRows(products,stocks);basket.forEach(function(line){var p=products.find(function(x){return x.productCode===line.productCode;});if(p)line.stock=num(p.currentStock);});renderResults();updateBasketSummary();},
   product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();renderResults();}});
 </script>

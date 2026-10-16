@@ -2,6 +2,27 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {setup,plain}=require('./support/services.cjs');
 const source=fs.readFileSync('Shared.html','utf8');
+function freshness(){
+ let now=1000000,reloads=0;const events={};
+ const c={Date:{now:()=>now},Number,Math,syyLastReadAt:0,syyReadRevalidate:false,syyViewStart:()=>{},syyDraftStart:()=>{},setTimeout:()=>{},setInterval:()=>{},syyPostParent:()=>{},syyTrustedParentMessage:()=>true,
+ document:{hidden:false,addEventListener:()=>{}},window:{addEventListener:(k,f)=>{events[k]=f;}}};c.window.parent=c.window;
+ vm.createContext(c);vm.runInContext(source.slice(source.indexOf('var syyFreshState=null;'),source.indexOf('function syyApplyProductRows')),c);
+ c.syyRegisterFreshness({reload(){reloads++;c.syyDataStarted();}});
+ return {c,events,tick(ms){now+=ms;},get reloads(){return reloads;}};
+}
+
+test('ordinary page reads block overlapping freshness refreshes and acknowledge the revision actually loaded',()=>{
+ const b=freshness(),s=b.c.syyFreshState;s.revision=3;s.dirty=true;b.c.syyDataStarted();b.tick(20000);s.refresh();assert.equal(b.reloads,0);
+ b.c.syyDataLoaded();assert.equal(s.busy,false);assert.equal(s.dirty,false);
+ b.c.syyDataStarted();s.revision++;b.c.syyDataLoaded();assert.equal(s.dirty,true);
+ b.tick(10001);s.refresh();assert.equal(b.reloads,1);assert.equal(s.busy,true);
+});
+
+test('successful conditional validation schedules freshness from check time without extending displayed source age',()=>{
+ const b=freshness(),s=b.c.syyFreshState;b.c.syyDataStarted();b.c.syyDataLoaded(1);assert.equal(s.lastLoaded,1);
+ b.tick(60000);s.refresh();assert.equal(b.reloads,0);b.tick(60001);s.refresh();assert.equal(b.reloads,1);
+ b.c.syyDataLoaded(1);b.tick(60000);s.refresh();assert.equal(b.reloads,1);assert.equal(s.lastLoaded,1);
+});
 function browser(){
  let now=Date.now(),id={owner:'alice',role:'staff'};const calls=[],timers=[],events={},storage={};
  const sessionStorage=new Proxy({getItem:k=>storage[k]||null,setItem:(k,v)=>{storage[k]=v;},removeItem:k=>{delete storage[k];}},{ownKeys:()=>Object.keys(storage),getOwnPropertyDescriptor:()=>({enumerable:true,configurable:true})});

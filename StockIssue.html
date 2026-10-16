@@ -424,7 +424,7 @@
 
   /* ═══ โหลดสินค้า ═══ */
   function loadProducts() {
-    var revision=syyDataRevision();
+    var revision=syyDataStarted();
     callApi('getAllProducts', [{compact:true}], function (data) {
       if(revision!==syyDataRevision()){syyDataFailed();return;}
       syyDataLoaded();

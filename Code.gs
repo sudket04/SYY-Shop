@@ -1180,20 +1180,24 @@ function getProductBrowsePage_(options,spec,size,page){
     if(typeof options.cursor!=='string'||options.cursor.length>4096)throw Error('cursor');
     var parts=options.cursor.split('.');if(parts.length!==2||movementCursorSignature_('catalog-v1:'+parts[0])!==parts[1])throw Error('signature');
     cursor=JSON.parse(Utilities.newBlob(Utilities.base64Decode(parts[0])).getDataAsString());
-    if(cursor.mode!=='browse-v1'||cursor.query!==query||cursor.version!==version||cursor.page!==page||!validDocumentId_(cursor.last)||!Number.isFinite(cursor.at)||Date.now()-cursor.at>=120000||cursor.at>Date.now()+60000||!validIsoTimestamp_(cursor.readTime))throw Error('stale');
+    if(cursor.mode!=='browse-v1'||cursor.query!==query||cursor.page!==page||!validDocumentId_(cursor.last)||!Number.isFinite(cursor.at)||Date.now()-cursor.at>=86400000||cursor.at>Date.now()+60000||!validIsoTimestamp_(cursor.readTime))throw Error('stale');
   }catch(e){productBrowseRestart_();}}
   else if(page!==1)throw new Error('กรุณาเปิดหน้าก่อนหน้าก่อนเปลี่ยนหน้า');
+  // Keep the signed document anchor when stock changes or the short snapshot
+  // expires. Resume with a new bounded snapshot instead of forcing page one.
+  var rebased=!!(cursor&&(options.refreshSnapshot===true||cursor.version!==version||Date.now()-cursor.at>=120000));
+  var snapshotTime=cursor&&!rebased?cursor.readTime:'';
   // Shared rows contain no caller-specific data. Sign continuation per caller
   // after cache reuse, so five authorized users share the same initial query.
-  var key='product-browse-v1:'+readCacheKey_(JSON.stringify([spec,size,cursor&&cursor.last,cursor&&cursor.readTime]));
+  var key='product-browse-v1:'+readCacheKey_(JSON.stringify([spec,size,cursor&&cursor.last,snapshotTime]));
   var response=cachedReadResult_(key,PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]),30000,function(){
     var fields=['Product_Name','Part_Type','Part_Number','Barcode','Barcode_Generated','Brand_ID','Category_ID','Default_Vendor_ID','Zone_ID','Car_IDs','Car_ID','Cost_Price','Selling_Price','Current_Stock','Min_Stock','Status'];
     var q={from:[{collectionId:'Master_Products'}],select:{fields:fields.map(function(f){return {fieldPath:f};})},orderBy:[{field:{fieldPath:'__name__'},direction:spec.sortAsc?'ASCENDING':'DESCENDING'}],limit:size+1};
     if(cursor)q.startAt={values:[{referenceValue:fsDocPath_('Master_Products',cursor.last)}],before:false};
-    var body={structuredQuery:q};if(cursor)body.readTime=cursor.readTime;
+    var body={structuredQuery:q};if(snapshotTime)body.readTime=snapshotTime;
     var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});
     if(res.getResponseCode()!==200)throw new Error('โหลดหน้าสินค้าไม่สำเร็จ กรุณารีเฟรชแล้วลองใหม่');
-    var entries=JSON.parse(res.getContentText()),readTime=cursor&&cursor.readTime||'',docs=[];
+    var entries=JSON.parse(res.getContentText()),readTime=snapshotTime,docs=[];
     entries.forEach(function(entry){if(!readTime&&entry.readTime)readTime=entry.readTime;if(entry.document){var d=entry.document;docs.push({id:d.name.split('/').pop(),fields:d.fields||{},updateTime:d.updateTime||''});}});
     if(!validIsoTimestamp_(readTime))throw new Error('ไม่พบ snapshot ของหน้าสินค้า กรุณาลองใหม่');
     var more=docs.length>size;docs=docs.slice(0,size);
@@ -1205,11 +1209,13 @@ function getProductBrowsePage_(options,spec,size,page){
     return {catalogPage:true,cursorMode:true,products:rows,page:page,pageSize:size,total:null,unfilteredTotal:null,readTime:readTime,hasMore:more,createdAt:Date.now(),last:docs.length?docs[docs.length-1].id:''};
   });
   response=Object.assign({},response);response.page=page;
-  response.cacheExpiresAt=Math.min(response.createdAt+30000,(cursor?cursor.at:response.createdAt)+120000);
-  response.nextCursor=response.hasMore?productCatalogCursor_({mode:'browse-v1',query:query,version:version,page:page+1,last:response.last,readTime:response.readTime,at:cursor?cursor.at:response.createdAt}):'';
+  response.snapshotRebased=rebased;
+  var snapshotAt=cursor&&!rebased?cursor.at:response.createdAt;
+  response.cacheExpiresAt=Math.min(response.createdAt+30000,snapshotAt+120000);
+  response.nextCursor=response.hasMore?productCatalogCursor_({mode:'browse-v1',query:query,version:version,page:page+1,last:response.last,readTime:response.readTime,at:snapshotAt}):'';
   delete response.createdAt;delete response.last;return response;
 }
-function productBrowseRestart_(){var error=new Error('รายการสินค้าเปลี่ยนแปลงหรือหมดอายุ กรุณารีเฟรชเพื่อเริ่มหน้าแรก');error.restartPage=true;throw error;}
+function productBrowseRestart_(){var error=new Error('ข้อมูลเปลี่ยนแปลงระหว่างโหลดหรือตัวแบ่งหน้าไม่ถูกต้อง กรุณาลองอีกครั้ง');error.restartPage=true;throw error;}
 function validIsoTimestamp_(value){return typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?Z$/.test(value)&&Number.isFinite(Date.parse(value));}
 function mapProductPageDocs_(docs,masters,imageMap){
   var brands=buildMapFromDocs_(masters.Master_Brands,'Brand_Name'),categories=buildMapFromDocs_(masters.Master_Categories,'Category_Name'),vendors=buildMapFromDocs_(masters.Master_Vendors,'Vendor_name'),zones=buildZoneMapFromDocs_(masters.Master_Zones),cars=buildCarMapFromDocs_(masters.Master_Cars);

@@ -216,9 +216,9 @@
   }
 
   function loadTable(){
-    var revision=syyDataRevision();
+    var revision=syyDataStarted();
     document.getElementById('recordCount').innerText='กำลังโหลด';
-    document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
+    if(!masterDataLoaded)document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     callApi(API.list, [], function(data){
       if(revision!==syyDataRevision()){syyDataFailed();renderRows();return;}
       syyDataLoaded();masterDataLoaded=true;
@@ -280,7 +280,7 @@
       return;
     }
 
-    tbody.innerHTML = rows.map(function(it,i){
+    syyPatchRows(tbody,rows.map(function(it,i){
       var isActive = (it.Status||'Active')==='Active';
       var statusHtml = '<span class="badge '+(isActive?'badge-ok':'badge-danger')+'">'+(isActive?'Active':'Inactive')+'</span>';
       var phoneTxt = it.Phone ? formatPhoneDisplay(it.Phone) : '<span class="cell-empty">—</span>';
@@ -289,7 +289,7 @@
         ? '<div class="mono" style="font-size:12px">'+esc(it.Tax_ID)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(it.Branch||'สำนักงานใหญ่')+'</div>'
         : '<span class="badge badge-mute">— ไม่มี —</span>';
       var typeTxt = it.Customer_Type ? '<span class="badge badge-info">'+esc(it.Customer_Type)+'</span>' : '<span class="cell-empty">—</span>';
-      return '<tr>'+
+      return '<tr data-row-key="'+esc(it.id)+'">'+
         '<td class="text-center"><span class="rownum">'+(i+1)+'</span></td>'+
         '<td><span class="chip-code">'+esc(it.id)+'</span></td>'+
         '<td style="font-weight:600;color:var(--ink)">'+esc(it.Customer_Name)+'</td>'+
@@ -303,7 +303,7 @@
           '<button class="btn btn-icon del" title="ลบ" onclick="confirmDelete(\''+escJs(it.id)+'\')">🗑️</button>'+
         '</span></td>'+
       '</tr>';
-    }).join('');
+    }).join(''));
   }
 
   function clearAllFilters(){
