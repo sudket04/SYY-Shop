@@ -1,5 +1,7 @@
 # Version-first manual refresh และ Cache หน้าสินค้า — 16 ตุลาคม 2569
 
+**สถานะล่าสุด:** เผยแพร่แล้วเป็น **Version 98 เวลา 23:50 วันที่ 16 ตุลาคม 2569** Runtime `cfafa3e` พร้อมงานแก้บัคท้ายรายงาน ตรวจ published Source ครบ 24 ไฟล์ ดู [ผล Deployment](DEPLOYMENT-2026-10-16-V98.md) ส่วนข้อความยังไม่ Deploy ด้านล่างเป็นสถานะขณะพัฒนา
+
 ## ขอบเขตและสถานะ
 
 ผู้ใช้อนุมัติให้ดำเนินการหลังตรวจข้อกำหนด Production-Safe Performance Optimization โดยยืนยัน **ใช้การค้นหา/กรองชุดเดิม** งานนี้ต่อยอด Source `0b40586` บน `main` ไม่สร้างระบบใหม่ ไม่เพิ่ม Infrastructure และ **ยังไม่ Sync Apps Script หรือ Deploy** Production ล่าสุดที่ตรวจยืนยันในงานก่อนหน้าคือ Version 97 (`b6e2d40`)

@@ -6,7 +6,7 @@ Source ผ่านการแก้ audit 1–40 และทดสอบใ�
 
 งานรองรับสินค้า 10,000 รายการเผยแพร่แล้ว: ตารางสินค้าปกติใช้ bounded cursor จาก server, metadata รูปเฉพาะรายการที่แสดง, compact catalog และ POS ครั้งละ 60 แถว ดู [ผลทดสอบและข้อจำกัด](docs/HYBRID-CACHE-2026-10-16.md) — การค้นหา substring/XLFilter และการเรียงซับซ้อนยังใช้ complete-catalog fallback เพื่อรักษาผลค้นหาเดิม
 
-งานใหม่บน `main` **ยังไม่ Sync/Deploy**: รีเฟรชตรวจ Version ก่อนอ่านรายการ, ปิดการโหลดจาก notifications/dirty activation, Cache เฉพาะหน้าสินค้าที่เหมาะสมใน IndexedDB และรักษาหน้าเอกสารเมื่อข้อมูลไม่เปลี่ยน ดู [ขอบเขต ผลทดสอบ และข้อจำกัด](docs/VERSION-FIRST-CACHE-2026-10-16.md) โดยการค้นหา/กรองยังใช้ชุดเดิม
+**Production ล่าสุดเป็น Version 98 เมื่อ 16 ตุลาคม 2569 เวลา 23:50** Runtime `cfafa3e`: รีเฟรชตรวจ Version ก่อนอ่านรายการ, ปิดการโหลดจาก notifications/dirty activation, Cache หน้าสินค้าใน IndexedDB, รักษาหน้าเอกสาร และแก้ POS หมวดหมู่หาย/เวลา Cache บน Dashboard ตรวจ published Source 24/24 และหน้า Login ผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-16-V98.md) และ [ขอบเขต ผลทดสอบ และข้อจำกัด](docs/VERSION-FIRST-CACHE-2026-10-16.md) โดยการค้นหา/กรองยังใช้ชุดเดิม
 
 ## โครงสร้าง
 
