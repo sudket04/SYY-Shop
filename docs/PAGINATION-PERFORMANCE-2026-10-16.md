@@ -1,5 +1,7 @@
 # การโหลดข้อมูลและ Pagination — 16 ตุลาคม 2569
 
+**เผยแพร่แล้ว:** งานนี้รวมอยู่ใน Production รุ่น 97 (`b6e2d40`) เวลา 18:26 วันที่ 16 ตุลาคม 2569 พร้อมยกเลิก polling ตามเวลา ดู [ผล Deployment](DEPLOYMENT-2026-10-16-V97.md) ข้อความรอ Deploy/auto refresh ด้านล่างเป็นสถานะ ณ implementation
+
 Baseline: `45ccfd6` (`main`); runtime ที่เผยแพร่อยู่ก่อนงานนี้คือ `3860e9d`, Deployment 96
 
 ## สาเหตุและการแก้ไข

@@ -2,9 +2,9 @@
 
 ระบบบริหารร้านอะไหล่บน Google Apps Script V8, HTML/CSS/JavaScript และ Cloud Firestore REST API รองรับ Dashboard, Master Data, สินค้า/รูป/บาร์โค้ด, ตัดสต๊อก, PO/รับสินค้า, ใบเสนอราคา, ใบกำกับภาษี และบัญชีผู้ใช้
 
-Source ผ่านการแก้ audit 1–40 และทดสอบในเครื่องแล้ว **Production URL ที่อนุมัติอัปเดตเป็นรุ่น 93 เมื่อ 13 ตุลาคม 2569 เวลา 17:40** โดยตรวจ Source ครบ 24 ไฟล์และหน้า Login จริงผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-13.md). ผล local/mock และการเปิดหน้า Login ยังไม่ยืนยันการใช้งานหลัง Login, OAuth/Mail, IAM/indexes, billing หรือข้อมูลจริงทุก workflow; งาน [Staging UAT](docs/STAGING-UAT-2026-10-12.md) และการตรวจรับที่ต้องใช้บัญชีจริงยังค้างอยู่
+Source ผ่านการแก้ audit 1–40 และทดสอบในเครื่องแล้ว **Production URL เดิมอัปเดตเป็นรุ่น 97 เมื่อ 16 ตุลาคม 2569 เวลา 18:26** รวมการแก้ Pagination/ลดโหลดซ้ำและยกเลิก polling ตามเวลา ตรวจ published Source ครบ 24 ไฟล์และหน้า Login จริงผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-16-V97.md). ผล local/mock และการเปิดหน้า Login ยังไม่ยืนยันการใช้งานหลัง Login, OAuth/Mail, IAM/indexes, billing หรือข้อมูลจริงทุก workflow; งาน [Staging UAT](docs/STAGING-UAT-2026-10-12.md) และการตรวจรับที่ต้องใช้บัญชีจริงยังค้างอยู่
 
-งานรองรับสินค้า 10,000 รายการปรับ Source แล้ว: ตารางแบ่งหน้าจาก server, metadata รูปเฉพาะรายการที่แสดง, compact catalog และ POS ครั้งละ 60 แถว ดู [ผลทดสอบและข้อจำกัด](docs/CATALOG-SCALE-2026-10-14.md) — ชุดนี้ยังไม่ได้ Deploy และ cold product scan ยังคงอ่านครบทั้งแค็ตตาล็อกเพื่อรักษาผลค้นหาเดิม
+งานรองรับสินค้า 10,000 รายการเผยแพร่แล้ว: ตารางสินค้าปกติใช้ bounded cursor จาก server, metadata รูปเฉพาะรายการที่แสดง, compact catalog และ POS ครั้งละ 60 แถว ดู [ผลทดสอบและข้อจำกัด](docs/HYBRID-CACHE-2026-10-16.md) — การค้นหา substring/XLFilter และการเรียงซับซ้อนยังใช้ complete-catalog fallback เพื่อรักษาผลค้นหาเดิม
 
 ## โครงสร้าง
 
@@ -39,7 +39,8 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 ## รายงานและงานค้าง
 
 - [ยกเลิก polling ตามเวลา คง Manual refresh และอัปเดตหลังข้อมูลเปลี่ยน](docs/MANUAL-REFRESH-2026-10-16.md)
-- [แก้ Pagination เด้งหน้าแรก ลดโหลดซ้อนและคงแถวตารางระหว่างรีเฟรช — รอ Deploy](docs/PAGINATION-PERFORMANCE-2026-10-16.md)
+- [Production รุ่น 97: Manual refresh, แก้หน้าเด้งและลดโหลดซ้ำ ตรวจ published Source ครบ 24 ไฟล์](docs/DEPLOYMENT-2026-10-16-V97.md)
+- [แก้ Pagination เด้งหน้าแรก ลดโหลดซ้อนและคงแถวตารางระหว่างรีเฟรช](docs/PAGINATION-PERFORMANCE-2026-10-16.md)
 - [Production รุ่น 96: Deploy main 3860e9d, checksum 24 ไฟล์ และ Login smoke](docs/DEPLOYMENT-2026-10-16.md)
 - [Hybrid Cache: IndexedDB, product cursor, ผลจำลองลด product reads 99.49% และ Delta Sync ที่ยังเหลือ](docs/HYBRID-CACHE-2026-10-16.md)
 - [Cache quality: รีเฟรช DB จริง แยกโหลดส่วนเปลี่ยน และผลจำลอง 10,000 สินค้า](docs/CACHE-QUALITY-2026-10-15.md)
