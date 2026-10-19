@@ -10,6 +10,8 @@ Source ผ่านการแก้ audit 1–40 และทดสอบใ�
 
 ## โครงสร้าง
 
+งานใหม่วันที่ 19 ตุลาคมบน `main` **ยังไม่ Sync/Deploy**: แสดงสถานะขณะเปิดเมนู มี timeout/ปุ่มลองใหม่ และยืนยัน child frame/origin ก่อนส่งข้อความ รองรับ Profile/Manage Users ด้วย ดู [ผลตรวจและข้อจำกัด](docs/MENU-FRAME-RECOVERY-2026-10-19.md)
+
 - `Code.gs`: routing, authenticated API gateway, Firestore, stock/documents, accounts, backup/restore และ maintenance workers
 - `ProductImagesV2.gs`: gallery และ image gateway
 - HTML 21 files: routed pages, shared styles/helpers, filters และ address data

@@ -1168,6 +1168,21 @@ async function main(){
     await p.evaluate(()=>{dashVersion='v2';auditNow+=1000;});await p.locator('#btnRefresh').click();await p.waitForFunction(()=>!DASH.loading);assert.doesNotMatch(await p.locator('#lastUpdated').innerText(),/Cache|ตรวจล่าสุด/);assert((await p.evaluate(()=>DASH.lastFullLoad))>age);
     await p.evaluate(()=>apiFailure='getDashboardBootstrap');await p.locator('#btnRefresh').click();await p.waitForFunction(()=>!DASH.loading);assert.match(await p.locator('#lastUpdated').innerText(),/โหลดไม่สำเร็จ/);assert.equal(await p.evaluate(()=>DASH.products.length),1);assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('lazy menu frames show loading, allow explicit retry after timeout and reject the previous frame channel',async()=>{
+    const p=await pageFor('index.html');const held=[];await p.route('**/*page=brands*',route=>{held.push(route);});await p.clock.install();await p.locator('#menu-brands').click();await p.waitForFunction(()=>document.getElementById('iframe-brands').syyStatus&&!document.getElementById('iframe-brands').syyStatus.hidden);
+    assert.match(await p.locator('#brandsForm .syy-frame-status').innerText(),/กำลังเปิดหน้า แบรนด์สินค้า/);assert.equal(await p.locator('#brandsForm .syy-frame-status button').isVisible(),false);const oldChannel=await p.locator('#iframe-brands').getAttribute('data-channel');
+    await p.clock.fastForward(31000);assert.match(await p.locator('#brandsForm .syy-frame-status').innerText(),/ยังเปิดหน้าไม่สำเร็จ/);assert.equal(held.length,1,'timeout must not start automatic requests');
+    await p.locator('#brandsForm .syy-frame-status button').click();const newChannel=await p.locator('#iframe-brands').getAttribute('data-channel');assert.notEqual(newChannel,oldChannel);await p.waitForFunction(()=>document.getElementById('iframe-brands').dataset.ready==='false');
+    await p.evaluate(oldChannel=>{const f=document.getElementById('iframe-brands');window.dispatchEvent(new MessageEvent('message',{source:f.contentWindow,origin:location.origin,data:{action:'PAGE_READY',channel:oldChannel}}));},oldChannel);assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),true);
+    await p.unroute('**/*page=brands*');for(const route of held)await route.continue().catch(()=>{});await p.clock.resume();await p.frameLocator('#iframe-brands').locator('#searchInput').waitFor({state:'visible'});
+    await p.waitForFunction(()=>document.getElementById('iframe-brands').dataset.ready==='true');assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);assert.equal(await p.locator('#iframe-brands').isVisible(),true);
+    await p.locator('#menu-products').click();await p.frameLocator('#iframe-products').locator('#productBody .view').waitFor({state:'visible'});await p.locator('#menu-brands').click();assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Profile and user-management frames announce readiness even without business freshness registration',async()=>{
+    const p=await pageFor('index.html','admin');
+    for(const id of ['profile','manageusers']){await p.evaluate(id=>switchPage(id),id);await p.waitForFunction(id=>document.getElementById('iframe-'+id).dataset.ready==='true',id);assert.equal(await p.locator('#'+id+'Form .syy-frame-status').isVisible(),false);assert.equal(await p.locator('#iframe-'+id).isVisible(),true);}
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));

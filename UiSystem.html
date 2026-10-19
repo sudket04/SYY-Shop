@@ -1,3 +1,19 @@
+<script>
+// Every routed page announces readiness, including pages without Shared.html.
+window.addEventListener('load',function(){
+  if(typeof syyPostParent==='function'){syyPostParent({action:'PAGE_READY'});return;}
+  var meta=document.querySelector('meta[name="syy-frame-channel"]'),channel=meta&&meta.content;
+  if(!channel||window.parent===window)return;
+  var p=window;
+  for(var i=0;i<8;i++){
+    try{if(p.parent===p)break;p=p.parent;}catch(e){break;}
+    var origin='';try{origin=p.location.origin;}catch(e){}
+    if(!origin&&location.ancestorOrigins)origin=location.ancestorOrigins[i]||'';
+    if(!origin&&i===0)try{origin=new URL(document.referrer).origin;}catch(e){}
+    try{var u=new URL(origin);if(origin===location.origin&&origin!=='null'||u.protocol==='https:'&&(u.hostname==='script.google.com'||u.hostname==='script.googleusercontent.com'||u.hostname.endsWith('-script.googleusercontent.com')))p.postMessage({action:'PAGE_READY',channel:channel},origin);}catch(e){}
+  }
+});
+</script>
 <style>
 /* Stable content widths follow the information on each page, even after filtering. */
 [hidden]{display:none!important}

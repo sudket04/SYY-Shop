@@ -2,6 +2,22 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {setup,plain}=require('./support/services.cjs');
 const source=fs.readFileSync('Shared.html','utf8');
+test('frame messages address each actual ancestor origin once, including Google wrapper frames',()=>{
+ const calls=[],appOrigin='https://fixture-script.googleusercontent.com',wrapperOrigin='https://script.google.com';
+ const top={location:{origin:wrapperOrigin},postMessage:(data,origin)=>calls.push({at:'top',origin,data})};top.parent=top;
+ const shell={parent:top,location:{origin:appOrigin},postMessage:(data,origin)=>calls.push({at:'shell',origin,data})};
+ const wrapper={parent:shell,postMessage:(data,origin)=>calls.push({at:'wrapper',origin,data})};Object.defineProperty(wrapper,'location',{get(){throw Error('Cross origin');}});
+ const c={URL,window:{parent:wrapper},location:{origin:appOrigin,ancestorOrigins:[wrapperOrigin,appOrigin,wrapperOrigin]},document:{referrer:wrapperOrigin+'/exec',querySelector:()=>({content:'fixture-channel-123456'})}};
+ vm.createContext(c);vm.runInContext(source.slice(source.indexOf('function syyMessageOriginAllowed'),source.indexOf('/* Calendar dates')),c);c.syyPostParent({action:'PAGE_READY'});
+ assert.deepEqual(calls.map(x=>[x.at,x.origin]),[['wrapper',wrapperOrigin],['shell',appOrigin],['top',wrapperOrigin]]);assert(calls.every(x=>x.data.channel==='fixture-channel-123456'));
+ c.location.ancestorOrigins=undefined;calls.length=0;c.syyPostParent({action:'PAGE_READY'});assert.equal(calls.length,3);assert(calls.every(x=>x.origin!=='*'));
+});
+test('shell never posts to an unbound Google wrapper or an untrusted child origin',()=>{
+ const calls=[],c={URL,location:{origin:'https://fixture-script.googleusercontent.com'},window:{},document:{}};vm.createContext(c);vm.runInContext(source.slice(source.indexOf('function syyMessageOriginAllowed'),source.indexOf('/* Calendar dates')),c);
+ const frame={dataset:{channel:'fixture-channel-123456'},contentWindow:{postMessage:()=>{throw Error('Wrapper must not receive app payload');}}};
+ c.syyPostFrame(frame,{action:'PAGE_ACTIVATED'});frame.syyReceiver={postMessage:(data,origin)=>calls.push({data,origin})};frame.syyOrigin='https://evil.invalid';c.syyPostFrame(frame,{action:'PAGE_ACTIVATED'});assert.equal(calls.length,0);
+ frame.syyOrigin=c.location.origin;c.syyPostFrame(frame,{action:'PAGE_ACTIVATED'});assert.equal(calls.length,1);assert.equal(calls[0].origin,c.location.origin);assert.equal(calls[0].data.channel,frame.dataset.channel);
+});
 function freshness(){
  let now=1000000,reloads=0;const events={};
  const c={Date:{now:()=>now},Number,Math,syyLastReadAt:0,syyReadRevalidate:false,syyViewStart:()=>{},syyDraftStart:()=>{},setTimeout:()=>{},setInterval:()=>{},syyPostParent:()=>{},syyTrustedParentMessage:()=>true,

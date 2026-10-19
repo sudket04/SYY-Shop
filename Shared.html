@@ -31,15 +31,23 @@ function syyTrustedParentMessage(e){return syyFrameChannel() && e.data && e.data
 function syyPostParent(data){
   var channel=syyFrameChannel();if(!channel||window.parent===window)return;
   data=Object.assign({},data,{channel:channel});
-  var origins=[location.origin];
-  [document.referrer,typeof WEB_APP_URL!=='undefined'?WEB_APP_URL:''].forEach(function(url){try{var origin=new URL(url).origin;if(syyMessageOriginAllowed(origin)&&origins.indexOf(origin)<0)origins.push(origin);}catch(e){}});
   var p=window;
-  for(var i=0;i<8;i++){try{if(p.parent===p)break;p=p.parent;origins.forEach(function(origin){p.postMessage(data,origin);});}catch(e){break;}}
+  for(var i=0;i<8;i++){
+    try{if(p.parent===p)break;p=p.parent;}catch(e){break;}
+    var origin='';
+    try{origin=p.location.origin;}catch(e){}
+    if(!origin&&location.ancestorOrigins)origin=location.ancestorOrigins[i]||'';
+    if(!origin&&i===0)try{origin=new URL(document.referrer).origin;}catch(e){}
+    // Google adds cross-origin wrapper frames. Address each known recipient
+    // once instead of broadcasting guessed origins to every ancestor.
+    if(syyMessageOriginAllowed(origin))try{p.postMessage(data,origin);}catch(e){}
+  }
 }
 function syyPostFrame(frame,data){
-  if(!frame||!frame.contentWindow||!frame.dataset.channel)return;
-  var target=frame.syyReceiver||frame.contentWindow, origin=frame.syyOrigin||new URL(frame.src||frame.dataset.src,location.href).origin;
-  target.postMessage(Object.assign({},data,{channel:frame.dataset.channel}),origin);
+  if(!frame||!frame.dataset.channel||!frame.syyReceiver||!syyMessageOriginAllowed(frame.syyOrigin))return;
+  // The /exec URL belongs to Google's wrapper, not the app receiving messages.
+  // A validated PAGE_READY message binds the actual child window and origin.
+  frame.syyReceiver.postMessage(Object.assign({},data,{channel:frame.dataset.channel}),frame.syyOrigin);
 }
 function syyFrameOwnsSource(frame,source){
   var queue=[frame.contentWindow],depth=0;
@@ -93,7 +101,6 @@ function syyRegisterFreshness(options){
     }finally{syyApplyingNotification=priorPatch;}
     refresh();
   });
-  window.addEventListener('load',function(){syyPostParent({action:'PAGE_READY'});});
   return {refresh:refresh};
 }
 function syyApplyProductRows(rows,product,deleted){

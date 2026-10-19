@@ -47,8 +47,12 @@
 
     .main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
     .content{flex:1;overflow:auto;display:flex;flex-direction:column;min-height:0}
-    .form-wrapper{display:none;flex:1;min-height:0}
+    .form-wrapper{display:none;flex:1;min-height:0;position:relative}
     .form-wrapper.active{display:flex}
+    .syy-frame-pending{visibility:hidden}
+    .syy-frame-status{position:absolute;inset:12px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:24px;text-align:center;background:var(--card,#fff);border:1px solid var(--line);border-radius:12px;color:var(--muted);box-shadow:0 2px 8px #0f294508}
+    .syy-frame-status[hidden]{display:none}
+    .syy-frame-status strong{font-size:16px;color:var(--text)}
     iframe{width:100%;flex:1;min-height:0;border:none;background:transparent}
     #homeScreen{display:flex;flex-direction:column;gap:12px;padding:14px 18px;min-height:0;flex:1}
 
@@ -638,7 +642,7 @@
   window.addEventListener('message', function(e){
     if(!syyTrustedChildMessage(e))return;
     var d = e.data || {};
-    if(/_READY$/.test(d.action)){var readyFrame=Array.from(document.querySelectorAll('iframe')).find(function(f){return f.contentWindow===e.source||f.dataset.channel===d.channel;});if(readyFrame&&readyFrame.parentElement?.classList.contains('active'))syyPostFrame(readyFrame,{action:'PAGE_ACTIVATED'});}
+    if(/_READY$/.test(d.action)){var readyFrame=Array.from(document.querySelectorAll('iframe')).find(function(f){return f.contentWindow===e.source||f.dataset.channel===d.channel;});if(readyFrame){syyFrameOpened(readyFrame);if(readyFrame.parentElement?.classList.contains('active'))syyPostFrame(readyFrame,{action:'PAGE_ACTIVATED'});}}
     if(d.action==='CACHE_INVALIDATED'){syyInvalidateReadScopes(d.scopes,false);broadcastDataDelta(d,d.channel);}
     else if(d.action==='PRODUCT_DELTA'){syyInvalidateReadScopes(['Master_Products','Product_Images'],false);applyDashboardProductDelta(d.product,d.deleted);broadcastDataDelta(d,d.channel); }
     else if(d.action==='STOCK_DELTA'){syyInvalidateReadScopes(['Master_Products','Stock_Movements'],false);forwardStockDeltaToProducts(d.productStocks,d.channel); }
@@ -733,6 +737,29 @@
     localStorage.setItem('syy_sidebar', sb.classList.contains('mini')?'mini':'full');
   }
 
+  function syyFrameOpened(frame){
+    clearTimeout(frame.syyOpenTimer);frame.dataset.ready='true';frame.classList.remove('syy-frame-pending');
+    if(frame.syyStatus)frame.syyStatus.hidden=true;
+  }
+  function syyOpenFrame(frame,retry){
+    if(!frame||!frame.dataset.src)return;
+    if(retry){
+      var next=new URL(frame.dataset.src,location.href);frame.dataset.channel=crypto.randomUUID();next.searchParams.set('channel',frame.dataset.channel);frame.dataset.src=next.href;
+      delete frame.syyReceiver;delete frame.syyOrigin;
+      if(frame.id==='iframe-stockissue')stockIssueReady=false;if(frame.id==='iframe-products')productsReady=false;if(frame.id==='iframe-taxinvoice')taxInvoiceReady=false;
+    }
+    clearTimeout(frame.syyOpenTimer);frame.dataset.ready='false';frame.classList.add('syy-frame-pending');
+    var status=frame.syyStatus;
+    if(!status){
+      status=frame.syyStatus=document.createElement('div');status.className='syy-frame-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+      status.syyTitle=document.createElement('strong');status.syyMessage=document.createElement('span');status.syyRetry=document.createElement('button');status.syyRetry.type='button';status.syyRetry.className='btn btn-primary';status.syyRetry.textContent='ลองเปิดหน้านี้อีกครั้ง';
+      status.syyRetry.addEventListener('click',function(){syyOpenFrame(frame,true);});status.append(status.syyTitle,status.syyMessage,status.syyRetry);frame.parentElement.appendChild(status);
+    }
+    status.hidden=false;status.syyRetry.hidden=true;status.syyTitle.textContent='กำลังเปิดหน้า '+(LABEL_OF[frame.id.replace('iframe-','')]||'');status.syyMessage.textContent='กรุณารอสักครู่…';
+    function delayed(){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);status.syyTitle.textContent='ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent='ใช้เวลานานกว่าปกติหรือการเชื่อมต่อขัดข้อง สามารถลองเปิดหน้านี้อีกครั้งได้';status.syyRetry.hidden=false;}
+    frame.onerror=delayed;frame.syyOpenTimer=setTimeout(delayed,30000);
+    frame.src=frame.dataset.src;
+  }
   function switchPage(id,fromHistory){
     document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'PAGE_HIDDEN'});});
     var target=null;
@@ -763,7 +790,7 @@
       return;
     }
     var frame=document.getElementById('iframe-'+id);
-    if(frame && !frame.src && frame.dataset.src) frame.src=frame.dataset.src;
+    if(frame && !frame.src && frame.dataset.src)syyOpenFrame(frame,false);
     var wrap=document.getElementById(id+'Form');
     if(wrap) wrap.classList.add('active');
     if(frame) {syyPostFrame(frame,{action:'PAGE_ACTIVATED'});frame.addEventListener('load',function(){if(wrap&&wrap.classList.contains('active'))syyPostFrame(frame,{action:'PAGE_ACTIVATED'});},{once:true});}
