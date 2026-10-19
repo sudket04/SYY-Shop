@@ -1254,6 +1254,34 @@ async function main(){
     await p.locator('#dashHealthNext').click();assert.equal(await p.evaluate(()=>DASH.healthPage),2);assert.match(await p.locator('#dashHealthBody tr:first-child').innerText(),/P00050/);await p.evaluate(()=>dashRenderAll());assert.equal(await p.evaluate(()=>DASH.healthPage),2);
     await p.locator('#dashSearch').fill('P09999');await p.waitForFunction(()=>DASH._sortedRows.length===1);assert.equal(await p.locator('#dashHealthBody tr').count(),1);assert.match(await p.locator('#dashHealthBody').innerText(),/P09999/);assert.equal(await p.locator('#dashHealthPrev').isDisabled(),true);assert.equal(await p.locator('#dashHealthNext').isDisabled(),true);assert.equal(await p.evaluate(()=>apiCalls.length),0);assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Sales aliases are clickable by staff, fetch complete recorded details by internal identity and reuse validated cache',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{
+      const ts=new Date();DASH.year=ts.getFullYear();DASH.month=ts.getMonth();
+      const line={id:'SI-private-uuid-1',docNo:'SI-private-uuid',billNo:'SI-20261019-0001',type:'OUT',reason:'ขายหน้าร้าน',productCode:'P1',productName:'Saved part',qty:2,unitPrice:125,hasUnitPrice:true,stockBefore:10,stockAfter:8,timestamp:ts.toISOString(),ts};
+      DASH.movements=[line];fixtureMovementDetails[line.docNo]={docNo:line.docNo,billNo:line.billNo,complete:true,movements:[line,{...line,id:'SI-private-uuid-2',productCode:'P2',productName:'Server-only line <unsafe>',qty:1,unitPrice:0}]};
+      const original=respond;respond=(fn,args)=>fn==='getStockMovementDetail'?{__syyCache:1,version:'bill-test',expiresAt:Date.now()+120000,data:original(fn,args)}:original(fn,args);
+      dashBuildAggregates();dashOpenDoc('sales');
+    });const link=p.locator('[data-sales-doc="SI-private-uuid"]');assert.equal(await link.innerText(),'SI-20261019-0001');assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),0);
+    await link.click();await p.waitForFunction(()=>document.getElementById('dashBillBody').textContent.includes('Server-only line'));assert.match(await p.locator('#dashBillBody').innerText(),/250\.00/);assert.equal(await p.locator('#dashBillBody unsafe').count(),0);assert.match(await p.locator('#dashBillBody').innerText(),/SI-private-uuid/);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail')[0].args[0]),'SI-private-uuid');assert.equal(await p.locator('#dashBillBody input, #dashBillBody select').count(),0);
+    await p.keyboard.press('Escape');assert.equal(await p.locator('#dashBillModal.active').count(),0);assert.equal(await p.evaluate(()=>DASH.docType),'sales');assert.equal(await link.evaluate(x=>document.activeElement===x),true);
+    await link.click();await p.waitForFunction(()=>document.getElementById('dashBillBody').textContent.includes('Server-only line'));assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),1);
+    await p.setViewportSize({width:390,height:844});assert.equal(await p.locator('#dashBillModal').evaluate(el=>el.getBoundingClientRect().right<=innerWidth),true);await p.screenshot({path:path.join(output,'sales-bill-detail-mobile-2026-10-19.png')});assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Sales detail handles network retry, coalesces double opens and ignores late responses after close',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{fixtureMovements=[{id:'SI-a-1',docNo:'SI-a',billNo:'SI-20261019-0002',qty:1,type:'OUT',productName:'Delayed bill',timestamp:new Date().toISOString()}];apiHold='getStockMovementDetail';dashOpenBill('SI-a');dashOpenBill('SI-a');});
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),1);await p.evaluate(()=>{dashCloseBill();apiPending.shift()();});await p.waitForTimeout(30);assert.equal(await p.locator('#dashBillModal.active').count(),0);
+    await p.evaluate(()=>{apiFailure='getStockMovementDetail';dashOpenBill('SI-a');apiPending.shift()();});await p.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).waitFor();
+    await p.evaluate(()=>{apiHold='';apiFailure='';});await p.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).click();await p.waitForFunction(()=>document.getElementById('dashBillBody').textContent.includes('Delayed bill'));assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|issue|commit)/.test(x.fn))),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Viewer keeps sales summaries without expanding staff-only movement detail permissions',async()=>{
+    const p=await pageFor('index.html','viewer');await p.evaluate(()=>{const ts=new Date();DASH.year=ts.getFullYear();DASH.month=ts.getMonth();DASH.movements=[{id:'SI1-1',docNo:'SI1',billNo:'SI-20261019-0003',type:'OUT',reason:'ขายหน้าร้าน',qty:1,unitPrice:125,productCode:'P1',timestamp:ts.toISOString(),ts}];dashBuildAggregates();dashOpenDoc('sales');dashOpenBill('SI1');});
+    assert.match(await p.locator('#dashDrawerRoot').innerText(),/SI-20261019-0003/);assert.equal(await p.locator('[data-sales-doc]').count(),0);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getStockMovementDetail').length),0);assert.equal(await p.locator('#dashBillModal.active').count(),0);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Stock history searches human bill alias while detail still uses immutable Doc_No and legacy fallback',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{fixtureMovements=[{id:'SI-legacy-1',docNo:'SI-legacy',billNo:'SI-20261019-0004',type:'OUT',productCode:'P1',productName:'Saved part',qty:1,unitPrice:0,hasUnitPrice:true,timestamp:new Date().toISOString()}];switchTab('history');});await p.waitForFunction(()=>document.querySelector('#mvBody .movement-link'));
+    await p.locator('#mvSearchInput').fill('SI-20261019-0004');assert.equal(await p.locator('#mvBody .movement-link').innerText(),'SI-20261019-0004');await p.locator('#mvBody .movement-link').click();await p.waitForFunction(()=>document.getElementById('movementDetailBody').textContent.includes('SI-20261019-0004'));assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getStockMovementDetail').args[0]),'SI-legacy');assert.deepEqual(p.errors,[]);await p.close();
+  });
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));

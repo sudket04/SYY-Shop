@@ -63,7 +63,7 @@ test('committed sale invalidates compact catalog while retaining atomic writes a
  const s=fixture(100);s.c.getAllProducts_({compact:true});const before=s.reads.Master_Products;
  const result=s.c.issueStock_({requestId:'catalog-stock-00001',reason:'ขายหน้าร้าน',items:[{productCode:'P00001',qty:2}]},'staff');
  assert.equal(result.success,true,result.message);const rows=s.c.unpackProductCatalog_(s.c.getAllProducts_({compact:true}));
- assert.equal(rows.find(p=>p.productCode==='P00001').currentStock,8);assert.equal(s.reads.Master_Products-before,2);assert.equal(s.commits.length,1);assert.equal(s.commits[0].length,2);
+ assert.equal(rows.find(p=>p.productCode==='P00001').currentStock,8);assert.equal(s.reads.Master_Products-before,2);assert.equal(s.commits.length,1);assert.equal(s.commits[0].length,4);
  assert.equal(s.value('Master_Products/P00001','Extra'),'preserve');assert.equal(s.value('Master_Products/P00001','Selling_Price'),11);
 });
 test('live producer cannot cause duplicate full scans after 900ms; released/failed leases recover and owner cleanup is scoped',()=>{

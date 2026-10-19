@@ -10,7 +10,7 @@ function po(s){s.put('Purchase_Orders/PO1',{Status:'Ordered',Vendor_ID:'V1',Item
 
 test('stock retry replays committed result without a second stock or movement write',()=>{
   const s=setup();s.seed();const first=s.c.issueStock_(issue,'staff'),second=s.c.issueStock_(plain(issue),'staff');
-  assert.equal(first.success,true,first.message);assert.equal(second.docNo,first.docNo);assert.equal(second.replayed,true);assert.equal(s.value('Master_Products/P1','Current_Stock'),8);assert.equal(s.commits.length,1);assert.equal(s.docs.size,3);
+  assert.equal(first.success,true,first.message);assert.equal(second.docNo,first.docNo);assert.equal(second.replayed,true);assert.equal(s.value('Master_Products/P1','Current_Stock'),8);assert.equal(s.commits.length,1);assert.equal(s.docs.size,5);
   assert.equal(s.c.issueStock_({...issue,items:[{productCode:'P1',qty:3}]},'staff').success,false);
   assert.equal(s.c.issueStock_(issue,'other-user').success,false);
 });

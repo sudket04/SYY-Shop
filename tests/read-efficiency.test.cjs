@@ -18,13 +18,13 @@ test('10,000-product document refresh model measures section payload savings and
  require('node:fs').writeFileSync(require('node:path').join(__dirname,'..','test-results','cache-quality-read-model.json'),JSON.stringify({fixtureOnly:true,products:10000,requests:10,initialPayloadBytes:fullBytes,unchangedPayloadBytes:repeatBytes,payloadReductionPercent:Number(saved.toFixed(2)),yearMetadataRequests:yearRequests,yearRequestReductionPercent:90,additionalProductDocumentsRead:s.reads.Master_Products-before,productionMeasurements:false},null,2));
 });
 
-test('stock commit patches only one authoritative product; cache order/unknown fields/expiry survive, writes are unchanged',()=>{
+test('stock commit patches only one authoritative product; cache order/unknown fields/expiry survive, stock writes remain atomic with bill metadata',()=>{
  const s=fresh();products(s);s.c.getAllProducts_();const base=s.c.collectionCacheBaseKey_('Master_Products'),expiry=JSON.parse(s.cache.get(base+'__manifest')).expiresAt,order=s.c.readCollectionCache_('Master_Products').map(x=>x.id);
  s.reads={};const r=s.c.issueStock_(issue,'staff');assert.equal(r.success,true,r.message);assert.equal(s.value('Master_Products/P1','Current_Stock'),8);
  // One authoritative stock precondition read and one raw read for the cache patch.
  assert.equal(s.reads.Master_Products,2);const before=s.reads.Master_Products;assert.equal(s.c.getAllProducts_().find(p=>p.id==='P1').currentStock,8);assert.equal(s.reads.Master_Products,before);
  const cached=s.c.readCollectionCache_('Master_Products');assert.deepEqual(plain(cached.map(x=>x.id)),plain(order));assert.equal(s.c.parseFirestoreValue_(cached.find(p=>p.id==='P1').fields.Extra),'keep');assert.equal(JSON.parse(s.cache.get(base+'__manifest')).expiresAt,expiry);
- assert.equal(s.commits.length,1);assert.equal(s.commits[0].length,2);assert.equal(s.docs.size,770);
+ assert.equal(s.commits.length,1);assert.equal(s.commits[0].length,4);assert.equal(s.docs.size,772);
 });
 test('concurrent cache patches discard the stale publisher and recover all affected products',()=>{
  const s=fresh();products(s,3);s.c.getAllProducts_();s.put('Master_Products/P1',{Product_Name:'P1',Current_Stock:8});

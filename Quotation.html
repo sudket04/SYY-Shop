@@ -1029,7 +1029,7 @@ function renderDoc() {
   var btnIssue = document.getElementById('btnIssueFromDoc');
   if (docQ && docQ.status === 'ปิดงาน-ขายสำเร็จ') {
     btnIssue.style.display = '';
-    btnIssue.innerHTML = docQ.stockIssued ? 'ตัดสต๊อกแล้ว (' + esc(docQ.stockIssueDoc) + ') · ตัดซ้ำ' : '📤 ตัดสต๊อกจากใบนี้';
+    btnIssue.innerHTML = docQ.stockIssued ? 'ตัดสต๊อกแล้ว (' + esc(docQ.stockIssueBillNo || docQ.stockIssueDoc) + ') · ตัดซ้ำ' : '📤 ตัดสต๊อกจากใบนี้';
   } else {
     btnIssue.style.display = 'none';
   }
@@ -1107,7 +1107,7 @@ function renderList() {
         '<button class="btn btn-icon view" title="ดู/พิมพ์" onclick="viewQuotation(\'' + escJs(q.id) + '\')">👁️</button>' +
         '<button class="btn btn-icon edit" title="แก้ไข" onclick="editQuotation(\'' + escJs(q.id) + '\')">✏️</button>' +
         (q.status === 'ปิดงาน-ขายสำเร็จ'
-          ? '<button class="btn btn-icon" title="' + (q.stockIssued ? 'ตัดสต๊อกแล้ว (' + esc(q.stockIssueDoc) + ') — คลิกเพื่อตัดซ้ำ' : 'ตัดสต๊อกจากใบนี้') + '" onclick="issueStockFromQuote(\'' + escJs(q.id) + '\')">' + (q.stockIssued ? '✅' : '📤') + '</button>'
+          ? '<button class="btn btn-icon" title="' + (q.stockIssued ? 'ตัดสต๊อกแล้ว (' + esc(q.stockIssueBillNo || q.stockIssueDoc) + ') — คลิกเพื่อตัดซ้ำ' : 'ตัดสต๊อกจากใบนี้') + '" onclick="issueStockFromQuote(\'' + escJs(q.id) + '\')">' + (q.stockIssued ? '✅' : '📤') + '</button>'
           : '') +
         '<button class="btn btn-icon del" title="ลบ" onclick="confirmDeleteQuotation(\'' + escJs(q.id) + '\')">🗑️</button>' +
       '</div></td>' +
@@ -1155,7 +1155,7 @@ function issueStockFromQuote(docId) {
     swyConfirm({
       icon: 'warning',
       title: 'ใบนี้ตัดสต๊อกไปแล้ว',
-      html: 'ใบเสนอราคา <b>' + esc(q.quoteNo) + '</b> เคยถูกตัดสต๊อกไปแล้ว<br>เลขที่รายการตัดสต๊อก: <b>' + esc(q.stockIssueDoc || '-') + '</b>' +
+      html: 'ใบเสนอราคา <b>' + esc(q.quoteNo) + '</b> เคยถูกตัดสต๊อกไปแล้ว<br>เลขที่รายการตัดสต๊อก: <b>' + esc(q.stockIssueBillNo || q.stockIssueDoc || '-') + '</b>' +
             '<br><br>ต้องการเปิดหน้าตัดสต๊อกพร้อมรายการนี้อีกครั้งหรือไม่? (ระวังตัดซ้ำ)',
       confirmText: 'เปิดอีกครั้ง'
     }).then(function (ok) { if (ok) go(); });

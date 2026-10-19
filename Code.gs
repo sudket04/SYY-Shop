@@ -2382,6 +2382,7 @@ function mapQuotationDoc_(doc) {
     updatedAt       : parseFirestoreValue_(f.Updated_At)|| "",
     stockIssued     : parseFirestoreValue_(f.Stock_Issued) === "true",
     stockIssueDoc   : parseFirestoreValue_(f.Stock_Issue_Doc) || "",
+    stockIssueBillNo: parseFirestoreValue_(f.Stock_Issue_Bill_No) || "",
     stockIssuedBy   : parseFirestoreValue_(f.Stock_Issued_By) || "",
     stockIssuedAt   : parseFirestoreValue_(f.Stock_Issued_At) || ""
   };
@@ -4076,7 +4077,7 @@ function clientReadVersion_(scopes){
   var keys=scopes.map(function(name){return collectionCacheBaseKey_(name)+'__disabled';}),disabled=CacheService.getScriptCache().getAll(keys);
   if(keys.some(function(key){return disabled[key];}))throw new Error('Cache bypass');
   var props=PropertiesService.getScriptProperties().getProperties();
-  return scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
+  return (scopes.indexOf('Stock_Movements')>=0||scopes.indexOf('Quotations')>=0?'sales-bill-v1|':'')+scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
 }
 function clientReadExpiry_(scopes,maxAge){
   var expiry=Date.now()+maxAge;
@@ -4987,7 +4988,8 @@ function issueStock_(d, callerUsername) {
         }).join(", "), { insufficient: insufficient });
       }
 
-      var writes = [];
+      var bill = prepareSalesBillNumber_(nowIso,docNo);
+      var writes = bill.writes.slice();
       lines.forEach(function (l, i) {
         // 1) ลดสต๊อก — ผูก precondition กับ updateTime ที่อ่านมาข้างบน
         var stockWrite = {
@@ -5005,6 +5007,7 @@ function issueStock_(d, callerUsername) {
             name: fsDocPath_(STOCK_MOVEMENT_COLLECTION, docNo + "-" + (i + 1)),
             fields: {
               Doc_No       : { stringValue: docNo },
+              Bill_No      : { stringValue: bill.billNo },
               Type         : { stringValue: "OUT" },
               Product_Code : { stringValue: l.productCode },
               Product_Name : { stringValue: String(l.productName) },
@@ -5024,10 +5027,10 @@ function issueStock_(d, callerUsername) {
         });
       });
 
-      var result = {success:true,title:"สำเร็จ",message:"ตัดสต๊อกเรียบร้อย",docNo:docNo,
+      var result = {success:true,title:"สำเร็จ",message:"ตัดสต๊อกเรียบร้อย",docNo:docNo,billNo:bill.billNo,
         results:lines.map(function(l) {return {productCode:l.productCode,productName:l.productName,qty:l.qty,before:l.before,after:l.after,belowMin:l.after <= l.minStock};})};
-      if (quoteDoc) writes.push({update:{name:fsDocPath_(QUOTATION_COLLECTION,d.quoteId),fields:mapToFirestoreFields_({Stock_Issued:"true",Stock_Issue_Doc:docNo,Stock_Issued_By:user,Stock_Issued_At:nowIso})},
-        updateMask:{fieldPaths:["Stock_Issued","Stock_Issue_Doc","Stock_Issued_By","Stock_Issued_At"]},currentDocument:{updateTime:quoteDoc.updateTime}});
+      if (quoteDoc) writes.push({update:{name:fsDocPath_(QUOTATION_COLLECTION,d.quoteId),fields:mapToFirestoreFields_({Stock_Issued:"true",Stock_Issue_Doc:docNo,Stock_Issue_Bill_No:bill.billNo,Stock_Issued_By:user,Stock_Issued_At:nowIso})},
+        updateMask:{fieldPaths:["Stock_Issued","Stock_Issue_Doc","Stock_Issue_Bill_No","Stock_Issued_By","Stock_Issued_At"]},currentDocument:{updateTime:quoteDoc.updateTime}});
       sealStockRequest_(writes,request,result);
       commitAttempted=true;
       commit = fsCommit_(writes);
@@ -5105,6 +5108,7 @@ function stockMovementDto_(document) {
   return {
     id          : document.name.split("/").pop(),
     docNo       : parseFirestoreValue_(f.Doc_No),
+    billNo      : parseFirestoreValue_(f.Bill_No) || "",
     type        : parseFirestoreValue_(f.Type) || "OUT",
     productCode : parseFirestoreValue_(f.Product_Code),
     productName : parseFirestoreValue_(f.Product_Name),
@@ -5141,7 +5145,7 @@ function getStockMovementDetail_(docNo) {
   var rows = (JSON.parse(res.getContentText()) || []).filter(function(row) { return !!row.document; });
   if (!rows.length) throw new Error("ไม่พบเลขรายการนี้ กรุณารีเฟรชประวัติแล้วลองอีกครั้ง");
   return {
-    docNo: docNo, complete: rows.length <= 1000,
+    docNo: docNo, billNo:parseFirestoreValue_((rows[0].document.fields||{}).Bill_No)||"", complete: rows.length <= 1000,
     movements: rows.slice(0, 1000).map(function(row) { return stockMovementDto_(row.document); }).sort(function(a,b) {
       return a.id.localeCompare(b.id, "en", { numeric: true });
     })
@@ -5231,6 +5235,7 @@ function fetchAllStockMovements_() {
 
     out.push({
       docNo       : parseFirestoreValue_(f.Doc_No)       || "",
+      billNo      : parseFirestoreValue_(f.Bill_No) || "",
       type        : parseFirestoreValue_(f.Type)         || "OUT",
       productCode : parseFirestoreValue_(f.Product_Code) || "",
       productName : parseFirestoreValue_(f.Product_Name) || "",
@@ -5259,6 +5264,7 @@ function mapDashboardMovementRow_(row) {
   return {
     id          : row.document.name.split('/').pop(),
     docNo       : parseFirestoreValue_(f.Doc_No) || "",
+    billNo      : parseFirestoreValue_(f.Bill_No) || "",
     type        : parseFirestoreValue_(f.Type) || "OUT",
     productCode : parseFirestoreValue_(f.Product_Code) || "",
     productName : parseFirestoreValue_(f.Product_Name) || "",
@@ -5327,7 +5333,7 @@ function getDashboardBootstrap_(options){
   options=options||{};var now=new Date(),current=Number(businessDate_().slice(0,4)),year=Number(options.year)||current;
   if(!Number.isInteger(year)||year<current-4||year>current)throw new Error('ปีไม่ถูกต้อง');
   var start=dashboardRangeStart_(year),healthStart=dashboardRangeStart_(current),end=year===current?now.toISOString():new Date(Date.UTC(year+1,0,1)-7*3600000-1).toISOString();
-  var snapshot=cachedReadResult_('dashboard:'+current+':'+year,[STOCK_MOVEMENT_COLLECTION],60000,function(){
+  var snapshot=cachedReadResult_('dashboard-bill-v1:'+current+':'+year,[STOCK_MOVEMENT_COLLECTION],60000,function(){
     var ranges=[{start:start,end:end}];
     if(year<current){if(Date.parse(end)+1>=Date.parse(healthStart))ranges[0].end=now.toISOString();else ranges.push({start:healthStart,end:now.toISOString()});}
     var movements=[],readTime='';ranges.forEach(function(range){var rows=queryDashboardMovementsRange_(range.start,range.end,false,readTime);readTime=readTime||rows.readTime;movements=movements.concat(rows);});
@@ -5346,7 +5352,7 @@ function getDashboardDelta_(sinceIso,options) {
   var since=String(sinceIso||'').trim(),time=Date.parse(since);
   if(!since||since.length>64||isNaN(time)||time>Date.now()+60000||Date.now()-time>900000)return {success:false,fullRefresh:true,message:'กรุณาโหลดข้อมูลล่าสุดเพื่อเริ่มซิงก์ใหม่'};
   options=options||{};
-  return cachedReadResult_('dashboard-delta:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
+  return cachedReadResult_('dashboard-delta-bill-v1:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
 }
 function getDashboardDeltaUncached_(since,time,options){
   options=options||{};var page=queryMovementPage_('Committed_At',new Date(time-60000).toISOString(),{pageSize:200,cursor:options.cursor},null);
@@ -5409,6 +5415,108 @@ function canonicalRequest_(value) {
   }
   return value;
 }
+// Human-facing SI numbers never replace Doc_No, movement IDs or retry keys.
+function salesBillDay_(instant) {
+  if(typeof instant!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(instant)||!validDateOnly_(instant.slice(0,10)))throw new Error('วันที่ทำรายการเดิมไม่ครบ ต้องตรวจข้อมูลก่อน');
+  var time=Date.parse(instant);
+  if(!Number.isFinite(time))throw new Error('ไม่พบวันที่ทำรายการที่ถูกต้อง');
+  return new Date(time+7*3600000).toISOString().slice(0,10).replace(/-/g,'');
+}
+function salesBillNumber_(day,number) {
+  if(!/^\d{8}$/.test(day)||!Number.isSafeInteger(number)||number<1)throw new Error('เลขบิลไม่ถูกต้อง');
+  return 'SI-'+day+'-'+String(number).padStart(4,'0');
+}
+function readSalesBillCounter_(day) {
+  var id='SI_'+day,url='https://firestore.googleapis.com/v1/'+fsDocPath_(RUNNING_NUMBER_COLLECTION,id);
+  var res=UrlFetchApp.fetch(url,{method:'get',headers:getAuthHeader_(),muteHttpExceptions:true});
+  if(res.getResponseCode()===404)return {id:id,value:0,precondition:{exists:false}};
+  if(res.getResponseCode()!==200)throw new Error('อ่านตัวนับเลขบิลไม่สำเร็จ');
+  var doc=JSON.parse(res.getContentText()),value=parseFirestoreValue_((doc.fields||{}).Value);
+  if(!doc.updateTime||typeof value!=='number'||!Number.isSafeInteger(value)||value<0)throw new Error('ตัวนับเลขบิลไม่ถูกต้อง');
+  return {id:id,value:Number(value),precondition:{updateTime:doc.updateTime}};
+}
+function salesBillWrites_(counter,billNo,docNo) {
+  var number=Number(billNo.split('-')[2]);
+  return [
+    {update:{name:fsDocPath_(RUNNING_NUMBER_COLLECTION,counter.id),fields:{Value:{integerValue:String(number)}}},updateMask:{fieldPaths:['Value']},currentDocument:counter.precondition},
+    {update:{name:fsDocPath_(DOC_NO_RESERVATION_COLLECTION,'SI_BILL__'+billNo.replace(/-/g,'_')),fields:mapToFirestoreFields_({Doc_No:docNo,Bill_No:billNo})},currentDocument:{exists:false}}
+  ];
+}
+function prepareSalesBillNumber_(instant,docNo) {
+  var day=salesBillDay_(instant),counter=readSalesBillCounter_(day),billNo=salesBillNumber_(day,counter.value+1);
+  return {billNo:billNo,writes:salesBillWrites_(counter,billNo,docNo)};
+}
+
+// Operator-only maintenance: private handlers, never registered in apiGateway,
+// never run by a list read, trigger, deployment or application startup.
+function inspectSalesBillBackfill_() {
+  var fetched=fetchAllPagesRaw_(STOCK_MOVEMENT_COLLECTION);
+  if(!fetched.ok)throw new Error('อ่านประวัติไม่ครบ ห้ามกำหนดเลขย้อนหลัง');
+  var days={},invalid=[];
+  fetched.docs.forEach(function(doc){var f=doc.fields||{},type=parseFirestoreValue_(f.Type);if(type!=='OUT'){if(type!=='IN')invalid.push(doc.id);return;}
+    try{var no=parseFirestoreValue_(f.Doc_No);if(typeof no!=='string'||!no.trim())throw Error('missing Doc_No');var day=salesBillDay_(parseFirestoreValue_(f.Timestamp));days[day]=(days[day]||0)+1;}catch(e){invalid.push(doc.id);}
+  });return {project:PROJECT_ID,days:Object.keys(days).sort().map(function(day){return {day:day,rows:days[day]};}),invalidMovementIds:invalid,readDocuments:fetched.docs.length,writes:0};
+}
+function planSalesBillBackfill_(day) {
+  if(!/^\d{8}$/.test(String(day)))throw new Error('ระบุวันที่ YYYYMMDD');
+  var date=day.slice(0,4)+'-'+day.slice(4,6)+'-'+day.slice(6,8);
+  if(!validDateOnly_(date))throw new Error('วันที่ไม่ถูกต้อง');
+  var start=new Date(date+'T00:00:00+07:00'),end=new Date(start.getTime()+86400000),q={from:[{collectionId:STOCK_MOVEMENT_COLLECTION}],where:{compositeFilter:{op:'AND',filters:[
+    {fieldFilter:{field:{fieldPath:'Timestamp'},op:'GREATER_THAN_OR_EQUAL',value:{stringValue:start.toISOString()}}},
+    {fieldFilter:{field:{fieldPath:'Timestamp'},op:'LESS_THAN',value:{stringValue:end.toISOString()}}}
+  ]}},orderBy:[{field:{fieldPath:'Timestamp'},direction:'ASCENDING'}],limit:10001};
+  var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify({structuredQuery:q}),muteHttpExceptions:true});
+  if(res.getResponseCode()!==200)throw new Error('อ่านประวัติสำหรับแผนย้อนหลังไม่สำเร็จ');
+  var documents=JSON.parse(res.getContentText()).filter(function(r){return !!r.document;}).map(function(r){return r.document;});
+  if(documents.length>10000)throw new Error('เกิน 10,000 บรรทัดต่อวัน ต้องจัดแผนเป็นช่วงย่อยก่อน');
+  var groups=Object.create(null),used=Object.create(null),max=0;
+  documents.forEach(function(doc){var f=doc.fields||{},type=parseFirestoreValue_(f.Type);if(type==='IN')return;if(type!=='OUT')throw Error('ประเภทประวัติไม่ถูกต้อง ต้องตรวจข้อมูลก่อน');var no=parseFirestoreValue_(f.Doc_No);
+    if(typeof no!=='string'||!no||!doc.updateTime)throw Error('ข้อมูลเดิมไม่ครบ ห้ามกำหนดเลขอัตโนมัติ');
+    var group=groups[no]||(groups[no]={docNo:no,timestamp:parseFirestoreValue_(f.Timestamp),rows:[],numbers:[]});
+    group.rows.push({id:doc.name.split('/').pop(),updateTime:doc.updateTime});group.numbers.push(parseFirestoreValue_(f.Bill_No)||'');
+  });
+  var pending=[],assigned=0;
+  Object.keys(groups).forEach(function(no){var g=groups[no],numbers=g.numbers.filter(Boolean);
+    if(numbers.length){var bill=numbers[0],match=/^SI-(\d{8})-(\d{4,})$/.exec(bill);
+      if(numbers.length!==g.rows.length||numbers.some(function(n){return n!==bill;})||!match||match[1]!==day||salesBillNumber_(day,Number(match[2]))!==bill||used[bill])throw Error('เลขบิลเดิมซ้ำหรือไม่ครบ ต้องตรวจด้วยมือ');
+      used[bill]=no;max=Math.max(max,Number(match[2]));assigned++;return;
+    }pending.push(g);
+  });
+  var counter=readSalesBillCounter_(day);
+  if(counter.value<max)throw Error('ตัวนับต่ำกว่าเลขที่ใช้แล้ว ต้องตรวจตัวนับก่อน');
+  pending.sort(function(a,b){return a.timestamp.localeCompare(b.timestamp)||a.docNo.localeCompare(b.docNo);});
+  // At most 20 complete bills per approved batch; re-plan remaining bills.
+  var entries=pending.slice(0,20).map(function(g,i){
+    var all=queryByEqualityField_(STOCK_MOVEMENT_COLLECTION,'Doc_No',g.docNo,1001);
+    if(all.length!==g.rows.length||all.some(function(row){return parseFirestoreValue_(row.fields.Type)!=='OUT'||salesBillDay_(parseFirestoreValue_(row.fields.Timestamp))!==day||parseFirestoreValue_(row.fields.Bill_No);}))throw Error('บิลมีข้อมูลข้ามวันหรือเปลี่ยนระหว่างวางแผน');
+    var quotes=queryByEqualityField_(QUOTATION_COLLECTION,'Stock_Issue_Doc',g.docNo,451);
+    if(g.rows.length+quotes.length+2>450||quotes.some(function(row){return !row.updateTime||!!parseFirestoreValue_(row.fields.Stock_Issue_Bill_No);}))throw Error('บิลใหญ่เกินขอบเขตหรือเลขอ้างอิงไม่ตรง ต้องตรวจด้วยมือ');
+    return {docNo:g.docNo,billNo:salesBillNumber_(day,counter.value+i+1),rows:g.rows,quotes:quotes.map(function(row){return {id:row.id,updateTime:row.updateTime};})};
+  });
+  var plan={project:PROJECT_ID,day:day,counter:counter,entries:entries,remaining:Math.max(0,pending.length-entries.length),alreadyAssigned:assigned};
+  plan.planHash=hashPassword_(JSON.stringify(plan),PROJECT_ID+':sales-bill-backfill-v1');return plan;
+}
+function applySalesBillBackfill_(day,approvedPlanHash) {
+  var plan=planSalesBillBackfill_(day);
+  if(!approvedPlanHash||plan.planHash!==approvedPlanHash)throw Error('แผนไม่ตรงกับที่อนุมัติ ต้องตรวจแผนใหม่ก่อน');
+  var completed=[],started=Date.now(),problem='',attempted=false;
+  for(var i=0;i<plan.entries.length;i++){
+    var entry=plan.entries[i];
+    try{
+      if(Date.now()-started>180000)throw Error('พักงานก่อนหมดเวลา ต้องวางแผนส่วนที่เหลือใหม่');
+      var prepared=prepareSalesBillNumber_(day.slice(0,4)+'-'+day.slice(4,6)+'-'+day.slice(6,8)+'T12:00:00+07:00',entry.docNo);
+      if(prepared.billNo!==entry.billNo)throw Error('ตัวนับเปลี่ยน ต้องวางแผนใหม่');
+      var writes=prepared.writes.slice();
+      // Empty transforms preserve the original Committed_At, including legacy absence.
+      entry.rows.forEach(function(row){writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,row.id),fields:{Bill_No:{stringValue:entry.billNo}}},updateMask:{fieldPaths:['Bill_No']},updateTransforms:[],currentDocument:{updateTime:row.updateTime}});});
+      entry.quotes.forEach(function(row){writes.push({update:{name:fsDocPath_(QUOTATION_COLLECTION,row.id),fields:{Stock_Issue_Bill_No:{stringValue:entry.billNo}}},updateMask:{fieldPaths:['Stock_Issue_Bill_No']},currentDocument:{updateTime:row.updateTime}});});
+      attempted=true;var commit=fsCommit_(writes);if(!commit.ok)throw Error('ข้อมูลเปลี่ยนหรือบันทึกไม่สำเร็จ ต้องตรวจแผนใหม่');
+      completed.push({docNo:entry.docNo,billNo:entry.billNo});
+    }catch(e){problem=e.message;break;}
+  }
+  if(attempted){clearCollectionCache_(STOCK_MOVEMENT_COLLECTION);clearCollectionCache_(QUOTATION_COLLECTION);}
+  return {complete:!problem&&plan.remaining===0,completed:completed,remaining:plan.remaining+plan.entries.length-completed.length,message:problem||'',requiresNewPlan:!!problem||plan.remaining>0};
+}
 function stockRequest_(kind, data, username) {
   var id = String(data.requestId || "");
   if (!/^[A-Za-z0-9-]{8,80}$/.test(id)) throw new Error("กรุณารีเฟรชหน้าเพื่อส่งรายการพร้อมรหัสคำขอ");
@@ -5422,6 +5530,7 @@ function replayStockRequest_(request) {
   var f = JSON.parse(res.getContentText()).fields || {};
   if (parseFirestoreValue_(f.Request_Fingerprint) !== request.fingerprint) throw new Error("รหัสคำขอนี้ถูกใช้กับรายการอื่นแล้ว");
   var result = JSON.parse(parseFirestoreValue_(f.Request_Result_JSON));
+  result.billNo = result.billNo || parseFirestoreValue_(f.Bill_No) || "";
   result.replayed = true;
   clearCollectionCache_("Master_Products");clearCollectionCache_("Purchase_Orders");clearCollectionCache_(STOCK_MOVEMENT_COLLECTION);
   try{

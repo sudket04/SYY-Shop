@@ -70,4 +70,6 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## แนวทาง Git ปัจจุบัน
 
+งานเลขบิลล่าสุด: [เลขบิลรายวัน SI-YYYYMMDD-0001 และคลิกดูรายละเอียดบิลขาย](docs/SALES-BILL-NUMBERS-2026-10-19.md) — Source พร้อมตรวจ; การเติมเลขย้อนหลังและ Deploy แยกอนุมัติ และยังไม่ได้รันกับ Production
+
 ตามคำสั่งผู้ใช้วันที่ 12 ตุลาคม 2569 ให้ทำงานบน `main` และอัปเดต `origin/main` ทุกครั้งหลังตรวจและ commit งานที่เสร็จ จนกว่าจะมีคำสั่งเปลี่ยนแปลง ดูคำสั่งถาวรใน [AGENTS.md](AGENTS.md) การ push source ไม่ใช่การ deploy Apps Script หรือการอนุมัติเปลี่ยนข้อมูล Production

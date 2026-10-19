@@ -156,9 +156,9 @@ test('stock issue retains atomic movement+stock and approved quotation price, ma
   s.c.getProductStockMap_=()=>({P1:{name:'Part',stock:10,minStock:2,costPrice:100,sellingPrice:200,updateTime:'v1'}});
   let writes;s.c.fsCommit_=w=>{writes=w;return {ok:true};};
   const r=s.c.issueStock_({requestId:'request-issue-001',quoteId:'QT1',items:[{productCode:'P1',qty:2,unitPrice:1}],reason:'ขายหน้าร้าน'},'staff');
-  assert.equal(r.success,true);assert.equal(r.results[0].after,8);assert.equal(writes.length,3);
-  assert.equal(writes[0].currentDocument.updateTime,'v1');assert.equal(writes[0].transform.fieldTransforms[0].increment.doubleValue,-2);
-  assert.equal(writes[1].update.fields.Unit_Price.doubleValue,125);
+  assert.equal(r.success,true);assert.equal(r.results[0].after,8);assert.equal(writes.length,5);
+  assert.equal(writes[2].currentDocument.updateTime,'v1');assert.equal(writes[2].transform.fieldTransforms[0].increment.doubleValue,-2);
+  assert.equal(writes[3].update.fields.Unit_Price.doubleValue,125);
   assert.equal(writes.some(w=>w.update?.fields.Selling_Price),false);
 });
 test('stock issue refuses insufficient stock and does not commit',()=>{

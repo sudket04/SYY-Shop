@@ -344,6 +344,7 @@
     </div>
 
     <div id="dashDrawerRoot"></div>
+    <div class="modal-overlay" id="dashBillModal" onclick="if(event.target===this)dashCloseBill()"><div class="modal-box" style="width:960px" role="dialog" aria-modal="true" aria-labelledby="dashBillTitle"><div class="modal-header"><span id="dashBillTitle">รายละเอียดบิลขาย</span><button type="button" class="modal-close" onclick="dashCloseBill()" aria-label="ปิดรายละเอียดบิล">×</button></div><div class="modal-body" id="dashBillBody" aria-live="polite"></div><div class="modal-footer"><button type="button" class="btn btn-ghost" onclick="dashCloseBill()">ปิด</button></div></div></div>
 
     <!-- ─── SUB PAGES (lazy iframe) ─── -->
     <div id="stockissueForm"  class="form-wrapper"><iframe id="iframe-stockissue"  data-src="<?= webAppUrl ?>?page=stockissue&token=<?= authToken ?>"></iframe></div>
@@ -1532,7 +1533,7 @@
   function dashGroupDocs(rows, filterFn){
     var map={};
     rows.filter(filterFn).forEach(function(r){
-      if(!map[r.docNo]) map[r.docNo]={docNo:r.docNo, ts:r.ts, items:0, qty:0, amtSell:0, amtCost:0, refNo:r.refNo, note:r.note, reasons:{}};
+      if(!map[r.docNo]) map[r.docNo]={docNo:r.docNo, billNo:r.billNo, ts:r.ts, items:0, qty:0, amtSell:0, amtCost:0, refNo:r.refNo, note:r.note, reasons:{}};
       var g=map[r.docNo];
       g.items++; g.qty+=r.qty; g.amtSell+=r.qty*num(r.unitPrice); g.amtCost+=r.qty*num(r.costPrice);
       if(r.reason) g.reasons[r.reason]=true;
@@ -1557,7 +1558,7 @@
                  {label:'เฉลี่ยต่อบิล',value:'฿'+Math.round(docs.length?period.cur.salesValue/docs.length:0).toLocaleString()}],
         heads:[['เลขที่บิล','left'],['เวลา','left'],['หมายเหตุ/อ้างอิง','left'],['รายการ','right'],['ยอดรวม','right']],
         rows:docs.map(function(d){ return [
-          {t:esc(d.docNo),s:cellM},{t:esc(d.ts.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}))+' น.',s:cellD},
+          {t:dashBillLink(d),s:cellM},{t:esc(d.ts.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}))+' น.',s:cellD},
           {t:esc(d.refNo||d.note||'—'),s:cellD},{t:d.items,s:cellR},{t:'฿'+Math.round(d.amtSell).toLocaleString(),s:cellR}]; }),
         footNote:'แสดง '+docs.length+' บิล · ข้อมูลจาก Stock_Movements (Type=OUT, เหตุผล=ขายหน้าร้าน/Online)'};
     }
@@ -1588,11 +1589,32 @@
                {label:'จำนวนใบเบิก',value:docs3.length.toLocaleString()+' ใบ'}],
       heads:[['เลขที่ใบเบิก','left'],['รายการ','right'],['จำนวน','right'],['มูลค่าต้นทุน','right'],['เหตุผล','left']],
       rows:docs3.map(function(d){ var reasons=Object.keys(d.reasons); return [
-        {t:esc(d.docNo),s:cellM},{t:d.items,s:cellR},{t:Math.round(d.qty).toLocaleString(),s:cellR},
+        {t:esc(d.billNo||d.docNo),s:cellM},{t:d.items,s:cellR},{t:Math.round(d.qty).toLocaleString(),s:cellR},
         {t:'฿'+Math.round(d.amtCost).toLocaleString(),s:cellR},{t:esc(reasons.length===1?reasons[0]:(reasons.length+' เหตุผล')),s:cellD}]; }),
       footNote:'แสดง '+docs3.length+' ใบเบิก · ข้อมูลจาก Stock_Movements (Type=OUT ทุกเหตุผล)'};
   }
 
+  // Bill labels are presentation only: detail requests always use the original Doc_No.
+  var dashBillDoc='',dashBillPending=Object.create(null),dashBillFocus=null;
+  function dashBillLink(d){
+    var label=esc(d.billNo||d.docNo||'—');
+    return ['admin','staff'].indexOf(USER_ROLE)>=0&&d.docNo?'<button type="button" class="sales-bill-link" data-sales-doc="'+esc(d.docNo)+'" aria-label="ดูรายละเอียดบิล '+label+'">'+label+'</button>':label;
+  }
+  document.getElementById('dashDrawerRoot').addEventListener('click',function(e){var button=e.target.closest('[data-sales-doc]');if(button)dashOpenBill(button.dataset.salesDoc);});
+  function dashCloseBill(){dashBillDoc='';closeModal('dashBillModal');if(dashBillFocus&&dashBillFocus.isConnected)dashBillFocus.focus();}
+  function dashOpenBill(docNo){
+    if(['admin','staff'].indexOf(USER_ROLE)<0||!docNo)return;
+    dashBillFocus=document.activeElement;dashBillDoc=docNo;openModal('dashBillModal');
+    document.getElementById('dashBillBody').innerHTML='<div class="empty-state" role="status">กำลังโหลดรายละเอียดบิล…</div>';
+    if(dashBillPending[docNo])return;
+    dashBillPending[docNo]=true;
+    function failed(message){if(dashBillDoc!==docNo)return;document.getElementById('dashBillBody').innerHTML='<div class="empty-state"><b>โหลดรายละเอียดไม่สำเร็จ</b><p>'+esc(message)+'</p><button type="button" class="btn btn-primary" onclick="dashOpenBill(dashBillDoc)">ลองอีกครั้ง</button></div>';}
+    callApi('getStockMovementDetail',[docNo],function(data){
+      delete dashBillPending[docNo];if(dashBillDoc!==docNo)return;
+      if(!data||data.docNo!==docNo||!Array.isArray(data.movements)||!data.movements.length){failed('ไม่พบรายการบิลนี้');return;}
+      document.getElementById('dashBillBody').innerHTML=syyMovementDetailHtml(data);
+    },function(err){delete dashBillPending[docNo];failed(syyErrorMessage(err));});
+  }
   function dashOpenDoc(type){ DASH.docType=type; dashRenderDrawers(); }
   function dashCloseDoc(){ DASH.docType=null; dashRenderDrawers(); }
 
@@ -1695,7 +1717,7 @@
                   '<th style="text-align:right;padding:7px 10px;font-weight:500;font-size:11px;color:var(--faint);border-bottom:1px solid var(--line)">คงเหลือ</th></tr></thead><tbody>'+
                   (d.moves.length? d.moves.map(function(mv){ var isIn=mv.type==='IN'; return '<tr style="border-bottom:1px solid var(--line-soft)">'+
                     '<td class="dash-mono" style="padding:7px 10px;font-size:11.5px;color:var(--muted);white-space:nowrap">'+thDate(mv.timestamp,true)+'</td>'+
-                    '<td class="dash-mono" style="padding:7px 10px;font-size:11.5px;color:var(--primary);white-space:nowrap">'+esc(mv.docNo)+'</td>'+
+                    '<td class="dash-mono" style="padding:7px 10px;font-size:11.5px;color:var(--primary);white-space:nowrap">'+esc(mv.billNo||mv.docNo)+'</td>'+
                     '<td style="padding:7px 10px;text-align:center;white-space:nowrap"><span style="'+dashTagStyle(isIn?'ok':'warn',true)+'">'+(isIn?'เข้า':'ออก')+'</span></td>'+
                     '<td class="dash-mono" style="padding:7px 10px;text-align:right;font-weight:600;'+(isIn?'color:var(--ok)':'color:#b91c1c')+'">'+(isIn?'+':'−')+mv.qty+'</td>'+
                     '<td class="dash-mono" style="padding:7px 10px;text-align:right;color:var(--muted)">'+mv.stockAfter+'</td></tr>'; }).join('')
@@ -1713,6 +1735,7 @@
   }
 
   document.addEventListener('keydown', function(e){
+    if(e.key==='Escape' && dashBillDoc){e.preventDefault();dashCloseBill();return;}
     if(e.key==='Escape' && DASH.docType){ e.preventDefault(); dashCloseDoc(); return; }
     if(!DASH.openCode) return;
     if(e.key==='Escape'){ e.preventDefault(); dashCloseProduct(); }

@@ -759,3 +759,35 @@ document.addEventListener('DOMContentLoaded',function(){
   setInterval(syyUxStatus,30000);
 });
 </script>
+
+<style>
+  .movement-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px}
+  .movement-meta>div{padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:9px;min-width:0}
+  .movement-meta .label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .movement-meta .value{color:var(--ink);overflow-wrap:anywhere;white-space:pre-wrap}
+  .movement-summary{margin-top:16px;padding:12px 14px;border:1px solid var(--primary-line);background:var(--primary-soft);border-radius:9px;display:flex;gap:14px;justify-content:space-between;flex-wrap:wrap}
+  .movement-scroll-hint{display:none}
+  @media(max-width:640px){.movement-meta{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.movement-meta>div{padding:10px}.movement-meta .value{font-size:14px}.movement-scroll-hint{display:block;font-size:12px;color:var(--muted);margin:8px 0}}
+#dashBillBody .table-wrap{max-height:50vh;overflow:auto}#dashBillBody .product-name-cell{min-width:180px;white-space:normal}.sales-bill-link{border:0;background:transparent;color:var(--primary);text-decoration:underline;cursor:pointer;font:inherit;padding:4px 0}.sales-bill-link:focus-visible{outline:2px solid var(--primary)}
+</style>
+<script>
+  function syyMovementDetailHtml(data,formatTime){
+    var rows=data.movements,complete=data.complete!==false;
+    function values(key,format){var out=[];rows.forEach(function(m){var value=format?format(m[key]):String(m[key]||'');if(value&&out.indexOf(value)<0)out.push(value);});return out.join('\n')||'—';}
+    function field(label,value){return '<div><span class="label">'+esc(label)+'</span><div class="value">'+esc(value)+'</div></div>';}
+    var totalQty=0,totalValue=0,priced=0;
+    var lines=rows.map(function(m,i){
+      var qty=Math.abs(num(m.qty)),hasPrice=m.hasUnitPrice===true,value=hasPrice?num(m.unitPrice)*qty:null;
+      totalQty+=qty;if(hasPrice){priced++;totalValue+=value;}
+      function stock(v){return v==null||v===''?'—':esc(v);}
+      return '<tr><td class="rownum">'+(i+1)+'</td><td class="product-name-cell">'+esc(m.productName||'—')+'<div><span class="pn-badge">'+esc(m.productCode||'—')+'</span></div></td><td class="text-center">'+(m.type==='IN'?'+':'−')+qty+'</td><td class="text-right">'+(hasPrice?money(m.unitPrice):'<span class="cell-empty">ไม่ได้บันทึก</span>')+'</td><td class="text-right">'+(value==null?'—':money(value))+'</td><td class="text-center">'+stock(m.stockBefore)+'</td><td class="text-center">'+stock(m.stockAfter)+'</td></tr>';
+    }).join('');
+    var summaryLabel=complete&&!data.legacy?'ยอดรวมรายการ':'ยอดรวมเฉพาะบรรทัดที่แสดง';
+    var html='<div class="movement-meta">'+field('เลขที่บิล / รายการ',data.billNo||rows[0].billNo||data.docNo||'ไม่มีเลขรายการ (ข้อมูลเดิม)')+(data.billNo||rows[0].billNo?field('รหัสอ้างอิงระบบเดิม',data.docNo):'')+field('ประเภท',values('type',function(t){return t==='IN'?'รับสินค้าเข้า':'ตัดสต๊อก / ขายหน้าร้าน';}))+field('เวลาที่ทำรายการ',values('timestamp',formatTime||function(v){return thDate(v,true);}))+field('ผู้ทำรายการ',values('user'))+field('เหตุผล',values('reason'))+field('เลขอ้างอิง',values('refNo'))+field('ใบเสนอราคาที่เกี่ยวข้อง',values('quoteId'))+field('หมายเหตุ',values('note'))+'</div>';
+    if(data.legacy)html+='<div class="alert alert-warn">ข้อมูลเดิมไม่มีเลขรายการ จึงแสดงรายละเอียดเฉพาะบรรทัดที่เลือก</div>';
+    if(!complete)html+='<div class="alert alert-warn">รายการนี้มีมากกว่า 1,000 บรรทัด ข้อมูลที่แสดงยังไม่ครบ กรุณาติดต่อผู้ดูแล</div>';
+    html+='<p class="movement-scroll-hint">เลื่อนตารางซ้าย–ขวาเพื่อดูราคาและสต๊อก</p><div class="table-wrap"><table><thead><tr><th>#</th><th>สินค้า</th><th>จำนวน</th><th>ราคาต่อหน่วยที่บันทึก</th><th>มูลค่า</th><th>สต๊อกก่อนทำ</th><th>สต๊อกหลังทำ</th></tr></thead><tbody>'+lines+'</tbody></table></div>';
+    html+='<div class="movement-summary"><span>'+summaryLabel+' · '+rows.length+' บรรทัด / '+totalQty.toLocaleString('th-TH')+' ชิ้น</span><b>'+(priced===rows.length?money(totalValue)+' บาท':priced?'มูลค่าเฉพาะ '+priced+' บรรทัดที่บันทึกราคา: '+money(totalValue)+' บาท':'ไม่ได้บันทึกมูลค่า')+'</b></div>';
+    return html;
+  }
+</script>
