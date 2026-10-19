@@ -56,4 +56,4 @@ Local mocked regression: 237 unit tests ผ่าน; syntax/manifest 71 scripts
 
 ทดสอบขอบเขตวันเวลา การส่งซ้ำ คำตอบสูญหาย สต๊อกไม่พอ ตัวนับล่ม ตัวนับถูกลบ การชนของคำขอคนละบิล ราคาเจรจาเดิม preview อ่านอย่างเดียว stale hash, CAS, เลขซ้ำ/เลขไม่ครบ/บิลข้ามวัน การรักษา field เดิมและการวางแผนต่อหลัง commit ไม่ทราบผล รวมถึง permissions, click/cache/retry/Escape/focus/mobile และค้น alias ใน browser
 
-สถานะงานนี้: แก้และทดสอบ source เท่านั้น ยังไม่ได้ Sync Editor/Deploy หรืออ่าน/เติมเลข Production ไม่เปลี่ยนข้อมูลหรือ trigger จริง Deployment ที่ยืนยันไว้ก่อนงานนี้ยังเป็น Version 99 (`ddf38ad`) ดู `DEPLOYMENT-2026-10-19-V99.md`
+อัปเดต 20 ตุลาคม 2569: ผู้ใช้อนุมัติ Deploy แล้ว เผยแพร่ runtime `036e3b0` เป็น **Version 100** และตรวจ Source 24/24 ตรงกัน ดู [ผล Deployment](DEPLOYMENT-2026-10-20-V100.md) ยังไม่รันเติมเลขย้อนหลังหรือเปลี่ยนข้อมูลธุรกิจ/Trigger จริง การนำแผนด้านบนไปรันกับ Production ต้องตรวจและอนุมัติ mapping/hash แยกก่อน

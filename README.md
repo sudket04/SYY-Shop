@@ -2,15 +2,17 @@
 
 ระบบบริหารร้านอะไหล่บน Google Apps Script V8, HTML/CSS/JavaScript และ Cloud Firestore REST API รองรับ Dashboard, Master Data, สินค้า/รูป/บาร์โค้ด, ตัดสต๊อก, PO/รับสินค้า, ใบเสนอราคา, ใบกำกับภาษี และบัญชีผู้ใช้
 
+**Production ล่าสุด: Version 100 เมื่อ 20 ตุลาคม 2569 เวลา 06:07** Runtime `036e3b0` เปิดใช้เลขบิลรายวันและคลิกดูรายละเอียดบิลขาย ตรวจ Source 24/24 และหน้า Login ผ่าน ยังไม่เติมเลขย้อนหลัง ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-20-V100.md)
+
 Source ผ่านการแก้ audit 1–40 และทดสอบในเครื่องแล้ว **Production URL เดิมอัปเดตเป็นรุ่น 97 เมื่อ 16 ตุลาคม 2569 เวลา 18:26** รวมการแก้ Pagination/ลดโหลดซ้ำและยกเลิก polling ตามเวลา ตรวจ published Source ครบ 24 ไฟล์และหน้า Login จริงผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-16-V97.md). ผล local/mock และการเปิดหน้า Login ยังไม่ยืนยันการใช้งานหลัง Login, OAuth/Mail, IAM/indexes, billing หรือข้อมูลจริงทุก workflow; งาน [Staging UAT](docs/STAGING-UAT-2026-10-12.md) และการตรวจรับที่ต้องใช้บัญชีจริงยังค้างอยู่
 
 งานรองรับสินค้า 10,000 รายการเผยแพร่แล้ว: ตารางสินค้าปกติใช้ bounded cursor จาก server, metadata รูปเฉพาะรายการที่แสดง, compact catalog และ POS ครั้งละ 60 แถว ดู [ผลทดสอบและข้อจำกัด](docs/HYBRID-CACHE-2026-10-16.md) — การค้นหา substring/XLFilter และการเรียงซับซ้อนยังใช้ complete-catalog fallback เพื่อรักษาผลค้นหาเดิม
 
-**Production ล่าสุดเป็น Version 98 เมื่อ 16 ตุลาคม 2569 เวลา 23:50** Runtime `cfafa3e`: รีเฟรชตรวจ Version ก่อนอ่านรายการ, ปิดการโหลดจาก notifications/dirty activation, Cache หน้าสินค้าใน IndexedDB, รักษาหน้าเอกสาร และแก้ POS หมวดหมู่หาย/เวลา Cache บน Dashboard ตรวจ published Source 24/24 และหน้า Login ผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-16-V98.md) และ [ขอบเขต ผลทดสอบ และข้อจำกัด](docs/VERSION-FIRST-CACHE-2026-10-16.md) โดยการค้นหา/กรองยังใช้ชุดเดิม
+**ประวัติ Production Version 98 เมื่อ 16 ตุลาคม 2569 เวลา 23:50** Runtime `cfafa3e`: รีเฟรชตรวจ Version ก่อนอ่านรายการ, ปิดการโหลดจาก notifications/dirty activation, Cache หน้าสินค้าใน IndexedDB, รักษาหน้าเอกสาร และแก้ POS หมวดหมู่หาย/เวลา Cache บน Dashboard ตรวจ published Source 24/24 และหน้า Login ผ่าน ดู [ผล Deployment](docs/DEPLOYMENT-2026-10-16-V98.md) และ [ขอบเขต ผลทดสอบ และข้อจำกัด](docs/VERSION-FIRST-CACHE-2026-10-16.md) โดยการค้นหา/กรองยังใช้ชุดเดิม
 
 ## โครงสร้าง
 
-งานใหม่วันที่ 19 ตุลาคมบน `main` **ยังไม่ Sync/Deploy**: แสดงสถานะขณะเปิดเมนู มี timeout/ปุ่มลองใหม่ และยืนยัน child frame/origin ก่อนส่งข้อความ รองรับ Profile/Manage Users ด้วย ดู [ผลตรวจและข้อจำกัด](docs/MENU-FRAME-RECOVERY-2026-10-19.md)
+งานเมนูวันที่ 19 ตุลาคมบน `main` **เผยแพร่แล้วตั้งแต่ Version 99**: แสดงสถานะขณะเปิดเมนู มี timeout/ปุ่มลองใหม่ และยืนยัน child frame/origin ก่อนส่งข้อความ รองรับ Profile/Manage Users ด้วย ดู [ผลตรวจและข้อจำกัด](docs/MENU-FRAME-RECOVERY-2026-10-19.md)
 
 - `Code.gs`: routing, authenticated API gateway, Firestore, stock/documents, accounts, backup/restore และ maintenance workers
 - `ProductImagesV2.gs`: gallery และ image gateway
@@ -42,6 +44,8 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [Production รุ่น 100: เลขบิลรายวันและรายละเอียดบิลขาย; ตรวจ Source 24/24](docs/DEPLOYMENT-2026-10-20-V100.md)
+
 - [Production รุ่น 99: Deploy ddf38ad พร้อม menu recovery ตรวจ Source 24 ไฟล์และข้อมูล/Pagination จริง](docs/DEPLOYMENT-2026-10-19-V99.md)
 - [แก้โหลดข้อมูลค้าง/หน้าสินค้าว่าง, โหลด dropdown เมื่อต้องใช้ และ Dashboard skeleton/ตาราง 10,000 รายการ](docs/DATA-LOADING-DASHBOARD-2026-10-19.md)
 - [ยกเลิก polling ตามเวลา คง Manual refresh และอัปเดตหลังข้อมูลเปลี่ยน](docs/MANUAL-REFRESH-2026-10-16.md)
@@ -70,6 +74,6 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## แนวทาง Git ปัจจุบัน
 
-งานเลขบิลล่าสุด: [เลขบิลรายวัน SI-YYYYMMDD-0001 และคลิกดูรายละเอียดบิลขาย](docs/SALES-BILL-NUMBERS-2026-10-19.md) — Source พร้อมตรวจ; การเติมเลขย้อนหลังและ Deploy แยกอนุมัติ และยังไม่ได้รันกับ Production
+งานเลขบิลล่าสุด: [เลขบิลรายวัน SI-YYYYMMDD-0001 และคลิกดูรายละเอียดบิลขาย](docs/SALES-BILL-NUMBERS-2026-10-19.md) — Deploy เป็น Version 100 แล้ว; การเติมเลขย้อนหลังยังรอตรวจและอนุมัติแผนก่อนรัน Production
 
 ตามคำสั่งผู้ใช้วันที่ 12 ตุลาคม 2569 ให้ทำงานบน `main` และอัปเดต `origin/main` ทุกครั้งหลังตรวจและ commit งานที่เสร็จ จนกว่าจะมีคำสั่งเปลี่ยนแปลง ดูคำสั่งถาวรใน [AGENTS.md](AGENTS.md) การ push source ไม่ใช่การ deploy Apps Script หรือการอนุมัติเปลี่ยนข้อมูล Production
