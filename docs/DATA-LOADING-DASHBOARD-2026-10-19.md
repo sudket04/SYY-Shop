@@ -1,5 +1,7 @@
 # Data loading recovery and Dashboard layout — 19 October 2026
 
+Rollout update: ผู้ใช้อนุมัติ Deploy ภายหลัง และเผยแพร่เป็น **Version 99** แล้ว พร้อมตรวจ published Source 24 ไฟล์และ Production smoke ดู [Deployment report](DEPLOYMENT-2026-10-19-V99.md) สถานะ pending ด้านล่างเป็นสถานะ ณ ตอนทำ implementation ก่อนการอนุมัตินั้น
+
 ## Scope and deployment
 
 Authorized source work: investigate and fix slow/intermittently empty Products, shared read recovery, and the Dashboard skeleton/layout reviewed with the owner. Search and XLFilter semantics, authentication, role permissions, stock transactions and database contents stay unchanged. No Apps Script source sync or Production deployment is performed. Production remains the last verified Version 98; the earlier menu recovery commit `bfe26f1` is also pending deployment.

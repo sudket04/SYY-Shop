@@ -42,6 +42,7 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [Production รุ่น 99: Deploy ddf38ad พร้อม menu recovery ตรวจ Source 24 ไฟล์และข้อมูล/Pagination จริง](docs/DEPLOYMENT-2026-10-19-V99.md)
 - [แก้โหลดข้อมูลค้าง/หน้าสินค้าว่าง, โหลด dropdown เมื่อต้องใช้ และ Dashboard skeleton/ตาราง 10,000 รายการ](docs/DATA-LOADING-DASHBOARD-2026-10-19.md)
 - [ยกเลิก polling ตามเวลา คง Manual refresh และอัปเดตหลังข้อมูลเปลี่ยน](docs/MANUAL-REFRESH-2026-10-16.md)
 - [Production รุ่น 97: Manual refresh, แก้หน้าเด้งและลดโหลดซ้ำ ตรวจ published Source ครบ 24 ไฟล์](docs/DEPLOYMENT-2026-10-16-V97.md)
