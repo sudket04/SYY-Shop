@@ -104,7 +104,7 @@
     .dash-gran button.on{background:#fff;color:var(--primary);font-weight:600;box-shadow:0 1px 3px rgba(15,23,42,.10)}
     .dash-picksel{height:34px;padding:0 28px 0 11px;border:1px solid var(--line);border-radius:8px;background-color:#fff;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px;color:var(--ink);cursor:pointer;outline:none}
 
-    .dash-kpi-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:stretch}
+    .dash-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:stretch}
     .dash-kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
     .dash-kpi.hero{background:var(--nav);color:#fff;border:none}
     .dash-kpi.hero .dash-kpi-lb{color:#9fc7e6}
@@ -117,6 +117,14 @@
     .dash-overview-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;line-height:1.5;color:#334155;letter-spacing:.01em;padding-top:2px}
     .dash-overview-title:after{content:"";height:1px;background:var(--line);flex:1}
     .dash-kpi-grid>.dash-kpi{height:100%}
+    .dash-kpi{min-height:166px}
+    .dash-placeholder{display:flex;flex-direction:column;justify-content:center;gap:14px;min-height:220px;padding:16px;color:var(--muted)}
+    .dash-placeholder .sk{display:block;height:14px;width:75%;border-radius:5px}
+    #dashChartSvgWrap{aspect-ratio:860/268;min-height:160px}
+    #dashCatBars{min-height:220px}
+    #dashFastMovers,#dashSlowMovers,#dashAging{min-height:230px}
+    #dashHealthCard{flex:none;min-width:0;overflow:hidden;display:flex;flex-direction:column}
+    #dashHealthCard .table-wrap{max-height:480px;min-height:220px}
     .dash-chip{display:inline-flex;align-items:center;gap:3px;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:500}
 
     .dash-alert-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px}
@@ -212,7 +220,7 @@
       <span class="count" id="lastUpdated"></span>
       <button class="btn btn-ghost btn-icon" title="สลับความหนาแน่นแถว" onclick="toggleDensity()"><span data-icon="list"></span></button>
       <button class="btn btn-ghost" id="btnRefresh" onclick="dashLoad(true)"><span data-icon="more"></span> รีเฟรช</button>
-      <button class="btn btn-ok" onclick="exportToExcel()">Export</button>
+      <button class="btn btn-ok" id="btnDashExport" onclick="exportToExcel()">Export</button>
     </div>
   </div>
 
@@ -236,6 +244,56 @@
         <div class="dash-alert-grid" id="dashAlertRow"></div>
       </div>
 
+      <div class="card" id="dashHealthCard">
+        <div style="padding:14px 18px 0;border-bottom:1px solid var(--line)">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div>
+              <div style="font-size:15px;font-weight:600;color:var(--ink)">การจัดการสินค้าตามสถานะสต๊อก (Stock Health)</div>
+              <div style="font-size:12px;color:var(--faint);margin-top:2px" id="dashTabHint"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <input type="text" id="dashSearch" class="input" style="width:210px;min-height:34px" placeholder="ค้นหารหัส / ชื่อสินค้า…" oninput="dashOnSearchInput()" autocomplete="off">
+            </div>
+          </div>
+          <div class="dash-health-tabs" id="dashHealthTabs"></div>
+        </div>
+
+        <div id="dashDeadRuleBar" style="display:none;align-items:center;gap:10px;padding:11px 18px;background:var(--bg);border-bottom:1px solid var(--line);flex-wrap:wrap">
+          <span style="font-size:12.5px;color:var(--muted)">เกณฑ์ไม่เคลื่อนไหว:</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap" id="dashDeadRules"></div>
+          <span style="margin-left:auto;font-size:12.5px;color:var(--muted)">มูลค่าจมรวม <b class="dash-mono" style="color:var(--danger)" id="dashTabValue">฿0</b></span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;background:#fff">
+          <span style="font-size:12px;color:var(--faint)">ตัวกรอง (Filter)</span>
+          <select class="select" id="dashFCat" onchange="dashOnFilterChange()" style="width:auto"></select>
+          <select class="select" id="dashFBrand" onchange="dashOnFilterChange()" style="width:auto"></select>
+          <select class="select" id="dashFPart" onchange="dashOnFilterChange()" style="width:auto">
+            <option value="">ทุกประเภท (All types)</option>
+            <option value="แท้">อะไหล่แท้ (Genuine)</option>
+            <option value="เทียบ">อะไหล่เทียบ (Aftermarket)</option>
+          </select>
+          <button type="button" class="btn btn-ghost" onclick="dashClearFilters()">✕ ล้างตัวกรอง</button>
+          <span style="margin-left:auto;font-size:12px;color:var(--faint)">เรียงตาม: <b id="dashSortLabel" style="color:#475569;font-weight:500"></b></span>
+        </div>
+
+        <div style="padding:7px 18px;background:var(--info-bg);border-bottom:1px solid #dbeafe;font-size:12px;color:var(--info);display:flex;align-items:center;gap:7px">
+          <span>💡</span>ดับเบิลคลิกที่แถว หรือกดปุ่ม 🔍 เพื่อดูข้อมูลสินค้าแบบละเอียด
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr id="dashHealthHead"></tr></thead>
+            <tbody id="dashHealthBody"></tbody>
+          </table>
+        </div>
+
+        <div class="pager">
+          <div class="info" id="dashHealthFoot">—</div>
+          <div style="display:flex;gap:6px;align-items:center"><button type="button" class="btn btn-ghost" id="dashHealthPrev" onclick="dashChangeHealthPage(-1)" disabled>ก่อนหน้า</button><span id="dashHealthPageLabel" aria-live="polite">—</span><button type="button" class="btn btn-ghost" id="dashHealthNext" onclick="dashChangeHealthPage(1)" disabled>ถัดไป</button></div>
+          <span style="font-size:12px;color:var(--faint)">ข้อมูลจากใบเบิก / ใบขาย / ใบรับเข้า · กดรีเฟรชเพื่อตรวจข้อมูลล่าสุด</span>
+        </div>
+      </div>
       <div class="dash-row2">
         <div class="card" style="padding:16px 18px 10px;min-width:0">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px">
@@ -282,55 +340,7 @@
         </div>
       </div>
 
-      <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden">
-        <div style="padding:14px 18px 0;border-bottom:1px solid var(--line)">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-            <div>
-              <div style="font-size:15px;font-weight:600;color:var(--ink)">การจัดการสินค้าตามสถานะสต๊อก (Stock Health)</div>
-              <div style="font-size:12px;color:var(--faint);margin-top:2px" id="dashTabHint"></div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <input type="text" id="dashSearch" class="input" style="width:210px;min-height:34px" placeholder="ค้นหารหัส / ชื่อสินค้า…" oninput="dashOnSearchInput()" autocomplete="off">
-            </div>
-          </div>
-          <div class="dash-health-tabs" id="dashHealthTabs"></div>
-        </div>
 
-        <div id="dashDeadRuleBar" style="display:none;align-items:center;gap:10px;padding:11px 18px;background:var(--bg);border-bottom:1px solid var(--line);flex-wrap:wrap">
-          <span style="font-size:12.5px;color:var(--muted)">เกณฑ์ไม่เคลื่อนไหว:</span>
-          <div style="display:flex;gap:6px;flex-wrap:wrap" id="dashDeadRules"></div>
-          <span style="margin-left:auto;font-size:12.5px;color:var(--muted)">มูลค่าจมรวม <b class="dash-mono" style="color:var(--danger)" id="dashTabValue">฿0</b></span>
-        </div>
-
-        <div style="display:flex;align-items:center;gap:8px;padding:10px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;background:#fff">
-          <span style="font-size:12px;color:var(--faint)">ตัวกรอง (Filter)</span>
-          <select class="select" id="dashFCat" onchange="dashOnFilterChange()" style="width:auto"></select>
-          <select class="select" id="dashFBrand" onchange="dashOnFilterChange()" style="width:auto"></select>
-          <select class="select" id="dashFPart" onchange="dashOnFilterChange()" style="width:auto">
-            <option value="">ทุกประเภท (All types)</option>
-            <option value="แท้">อะไหล่แท้ (Genuine)</option>
-            <option value="เทียบ">อะไหล่เทียบ (Aftermarket)</option>
-          </select>
-          <button type="button" class="btn btn-ghost" onclick="dashClearFilters()">✕ ล้างตัวกรอง</button>
-          <span style="margin-left:auto;font-size:12px;color:var(--faint)">เรียงตาม: <b id="dashSortLabel" style="color:#475569;font-weight:500"></b></span>
-        </div>
-
-        <div style="padding:7px 18px;background:var(--info-bg);border-bottom:1px solid #dbeafe;font-size:12px;color:var(--info);display:flex;align-items:center;gap:7px">
-          <span>💡</span>ดับเบิลคลิกที่แถว หรือกดปุ่ม 🔍 เพื่อดูข้อมูลสินค้าแบบละเอียด
-        </div>
-
-        <div class="table-wrap" style="flex:1;max-height:none">
-          <table>
-            <thead><tr id="dashHealthHead"></tr></thead>
-            <tbody id="dashHealthBody"></tbody>
-          </table>
-        </div>
-
-        <div class="pager">
-          <div class="info" id="dashHealthFoot">—</div>
-          <span style="font-size:12px;color:var(--faint)">อัปเดตจากใบเบิก / ใบขาย / ใบรับเข้า อัปเดตตามรอบและการทำรายการ</span>
-        </div>
-      </div>
     </div>
 
     <div id="dashDrawerRoot"></div>
@@ -531,7 +541,7 @@
   var allProducts=[], masters={},mastersLoaded=false,mastersLoadedAt=0;
 
   /* ═══ Init ═══ */
-  window.addEventListener('load', function(){
+  document.addEventListener('DOMContentLoaded', function(){
     initDensity();
     document.getElementById('userName').innerText   = USER_NAME || 'ผู้ใช้งาน';
     document.getElementById('userRole').innerText   = USER_ROLE || '';
@@ -856,7 +866,7 @@
     loaded:false, loading:false, pendingDelta:false, lastLoad:0, lastFullLoad:0, nextReconcile:0, lastSync:'', products:[], movements:[], poVendorMap:{},
     byDay:{}, byMonth:{}, byYear:{}, byProductMonth:{}, lastOut:{}, lastSale:{}, qty6mo:{}, health:null,
     gran:'m', year:Number(businessDate().slice(0,4)), month:Number(businessDate().slice(5,7))-1, day:Number(businessDate().slice(8,10)),
-    tab:'low', deadRule:90, search:'', fCat:'', fBrand:'', fPart:'',
+    tab:'low', deadRule:90, search:'', fCat:'', fBrand:'', fPart:'', healthPage:1, healthCriteria:'',
     sortKey:'value', sortDir:'desc', openCode:null, docType:null
   };
   var DASH_LOW_BUFFER=0.20, DASH_OVER_MONTHS=6, DASH_YEARS_BACK=4, DASH_RECONCILE_MS=900000;
@@ -864,14 +874,35 @@
   var DASH_M_FULL=['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
   var DASH_CAT_PALETTE=['#005088','#0a6fb8','#2a8fd4','#5ba9de','#7cb3d4','#93c5fd','#b6d7ef'];
 
+  function dashInitialState(failed){
+    dashRenderPeriodControls();dashRenderHealthHead(true);
+    document.getElementById('dashPeriodLabel').textContent=dashPeriod().periodLabel;
+    document.getElementById('dashChartTitle').textContent=dashPeriod().chartTitle;
+    document.getElementById('dashKpiRow').innerHTML=['มูลค่าสต๊อกคงเหลือ','ยอดขาย','รับเข้าสต๊อก','ตัดสต๊อก (เบิกออก)'].map(function(label){return '<div class="dash-kpi"><div class="dash-kpi-lb">'+label+'</div><div class="dash-placeholder" style="min-height:110px;padding:12px 0">'+(failed?'—':'<span class="sk"></span><span class="sk" style="width:50%"></span>')+'</div></div>';}).join('');
+    document.getElementById('dashAlertRow').innerHTML=['ใกล้หมด','หมดสต๊อก','ค้างนาน','เกินจำเป็น'].map(function(label){return '<div class="dash-alert"><div class="dash-alert-head">'+label+'</div><div class="dash-alert-body" style="min-height:98px">'+(failed?'—':'<span class="sk" style="display:block;width:50%;height:26px"></span>')+'</div></div>';}).join('');
+    ['dashChartSvgWrap','dashCatBars','dashFastMovers','dashSlowMovers','dashAging'].forEach(function(id){document.getElementById(id).innerHTML='<div class="dash-placeholder">'+(failed?'ยังโหลดข้อมูลไม่สำเร็จ':'<span class="sk"></span><span class="sk" style="width:50%"></span><span class="sk" style="width:85%"></span>')+'</div>';});
+    document.getElementById('dashFCat').innerHTML='<option value="">ทุกหมวดหมู่</option>';
+    document.getElementById('dashFBrand').innerHTML='<option value="">ทุกแบรนด์</option>';
+    document.getElementById('dashHealthBody').innerHTML=skeletonRows(DASH_COLS.length,6);
+    document.getElementById('dashHealthTabs').innerHTML=DASH_TABS.map(function(t){return '<button class="dash-health-tab" type="button" disabled>'+esc(t.label)+'<span class="n">—</span></button>';}).join('');
+  }
+  function dashLoadingState(busy){
+    document.getElementById('homeScreen').setAttribute('aria-busy',String(busy));
+    document.querySelectorAll('#headActions button:not(#btnRefresh),#headActions select,#dashHealthCard input,#dashHealthCard select,#dashHealthCard button:not(#dashHealthPrev):not(#dashHealthNext)').forEach(function(el){el.disabled=!DASH.loaded;});
+  }
+
   function dashLoad(force){
     if(DASH.loading){DASH.reloadRequested=true;DASH.forceReload=DASH.forceReload||force===true;return;}
     DASH.loading=true;DASH.nextReconcile=Date.now()+DASH_RECONCILE_MS;
     var btn=document.getElementById('btnRefresh');
     btnBusy(btn,'กำลังโหลด...');
-    if(!DASH.loaded) document.getElementById('dashHealthBody').innerHTML = skeletonRows(9,6);
+    if(!DASH.loaded)dashInitialState(false);
+    dashLoadingState(true);
+    var started=performance.now(),hadData=DASH.loaded;
     var requestedYear=DASH.year;
     callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true,catalogSection:DASH.loaded?DASH.catalogSection:undefined}], function(data, readInfo){
+      try{
+      if(!data||!Array.isArray(data.movements)||(!Array.isArray(data.products)&&!(DASH.loaded&&data.catalogSection))){syyInvalidateReadScopes(['Master_Products','Stock_Movements','Purchase_Orders'],false);throw Error('รูปแบบข้อมูล Dashboard ไม่ถูกต้อง กรุณาลองอีกครั้ง');}
       btnDone(btn);
       DASH.loading=false;
       data = data||{};
@@ -890,18 +921,23 @@
       document.getElementById('lastUpdated').innerText='โหลดข้อมูลเมื่อ '+new Date(loadedAt).toLocaleTimeString('th-TH',timeFormat)+
         (syyLastReadSource==='memory'||syyLastReadSource==='validated-cache'?' · Cache':'')+
         (syyLastReadSource==='validated-cache'&&syyLastCheckedAt?' · ตรวจล่าสุด '+new Date(syyLastCheckedAt).toLocaleTimeString('th-TH',timeFormat):'');
-      if(!readInfo||!readInfo.notModified){dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();}
+      var renderStarted=performance.now();
+      if(!hadData||!readInfo||!readInfo.notModified){dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();}
+      dashLoadingState(false);syyRecordViewTiming('dashboard',started,renderStarted,DASH.products.length);
       if(DASH.reloadRequested){DASH.reloadRequested=false;var queuedForce=!!DASH.forceReload;DASH.forceReload=false;setTimeout(function(){dashLoad(queuedForce);},0);}else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
-    }, function(err){
+      }catch(error){failed(error);}
+    },failed);
+    function failed(err){
       btnDone(btn);
-      DASH.loading=false;
-      document.getElementById('lastUpdated').innerText='โหลดไม่สำเร็จ · แสดงข้อมูลล่าสุดที่โหลดสำเร็จ';
+      DASH.loading=false;DASH.reloadRequested=false;DASH.forceReload=false;DASH.pendingDelta=false;dashLoadingState(false);
+      document.getElementById('lastUpdated').innerText=DASH.loaded?'โหลดไม่สำเร็จ · แสดงข้อมูลล่าสุดที่โหลดสำเร็จ':'โหลดข้อมูลไม่สำเร็จ';
       if(DASH.loaded) {DASH.year=DASH.loadedYear||DASH.year;dashRenderAll();return;}
-      document.getElementById('dashHealthBody').innerHTML=emptyStateHtml(9,{
+      dashInitialState(true);
+      document.getElementById('dashHealthBody').innerHTML=emptyStateHtml(DASH_COLS.length,{
         icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err),
         actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'dashLoad()'}]
       });
-    });
+    }
   }
 
   // ★ FIX (โควตา Firestore Reads): ใช้ตอนสินค้าเปลี่ยน (เพิ่ม/แก้/ลบ) แทนการเรียก dashLoad() เต็ม —
@@ -1173,8 +1209,7 @@
     var hideYoy=period.hideYoy;
 
     var html =
-      '<div class="dash-overview-title" style="order:1;grid-column:1">1. ภาพรวมสต๊อก (Stock Overview)</div>'+
-      '<div class="dash-kpi hero" style="order:4;grid-column:1">'+
+      '<div class="dash-kpi hero">'+
         '<div style="position:absolute;right:-24px;top:-24px;width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,.06)"></div>'+
         '<div style="display:flex;align-items:center;gap:8px"><span class="dash-kpi-ic" style="background:rgba(255,255,255,.14);color:#cfe6f7">▣</span>'+
         '<div class="dash-kpi-lb">มูลค่าสต๊อกคงเหลือ<br><span style="font-size:11px">(Stock Value)</span></div></div>'+
@@ -1182,25 +1217,23 @@
         '<div class="dash-kpi-foot" style="border-top-color:rgba(255,255,255,.14);color:#bfdcf5"><span>'+skuCount.toLocaleString()+' SKU</span><span style="color:rgba(255,255,255,.3)">|</span><span>'+Math.round(totalQty).toLocaleString()+' ชิ้น</span></div>'+
       '</div>'+
 
-      '<div class="dash-kpi" style="order:6;grid-column:3"><div style="display:flex;align-items:center;gap:8px"><span class="dash-kpi-ic" style="background:var(--ok-bg);color:var(--ok)">↓</span>'+
+      '<div class="dash-kpi"><div style="display:flex;align-items:center;gap:8px"><span class="dash-kpi-ic" style="background:var(--primary-soft);color:var(--primary)">฿</span>'+
+        '<div class="dash-kpi-lb">ยอดขาย<br><span style="font-size:11px">(Sales)</span></div></div>'+
+        '<div style="display:flex;align-items:baseline;gap:4px;margin-top:9px"><span style="font-size:13px;color:var(--faint)">฿</span><span class="dash-mono" style="font-size:24px;font-weight:600;color:var(--ink);letter-spacing:-.5px">'+Math.round(cur.salesValue).toLocaleString()+'</span></div>'+
+        '<div class="dash-mono" style="font-size:11.5px;color:var(--muted);margin-top:3px"><button type="button" class="dash-kpi-link" style="color:var(--primary);border-color:var(--primary-line)" onclick="dashOpenDoc(\'sales\')">'+cur.salesBills+' บิล ›</button> · เฉลี่ย ฿'+Math.round(cur.salesBills?cur.salesValue/cur.salesBills:0).toLocaleString()+'</div>'+
+        '<div class="dash-kpi-foot"><span class="dash-chip" style="'+salesPrev.style+'">'+salesPrev.text+'</span>'+(hideYoy?'':'<span class="dash-chip" style="'+salesYoy.style+'">'+salesYoy.text+'</span>')+'</div></div>'+
+
+      '<div class="dash-kpi"><div style="display:flex;align-items:center;gap:8px"><span class="dash-kpi-ic" style="background:var(--ok-bg);color:var(--ok)">↓</span>'+
         '<div class="dash-kpi-lb">รับเข้าสต๊อก<br><span style="font-size:11px">(Stock In)</span></div></div>'+
         '<div style="display:flex;align-items:baseline;gap:5px;margin-top:9px"><button type="button" class="dash-kpi-link" style="color:var(--ok);border-color:var(--ok-line)" onclick="dashOpenDoc(\'recv\')">'+Math.round(cur.recvQty).toLocaleString()+'</button><span style="font-size:12.5px;color:var(--faint)">ชิ้น</span></div>'+
         '<div class="dash-mono" style="font-size:11.5px;color:var(--muted);margin-top:3px">฿'+Math.round(cur.recvValue).toLocaleString()+(cur.recvUnknown?' (ต้นทุนไม่ครบ '+cur.recvUnknown+' รายการ)':'')+' · <button type="button" class="dash-kpi-link" style="font-family:var(--font-sans);font-size:11.5px;color:var(--ok);border-color:var(--ok-line)" onclick="dashOpenDoc(\'recv\')">'+cur.recvDocs+' ใบรับ ›</button></div>'+
         '<div class="dash-kpi-foot"><span class="dash-chip" style="'+recvPrev.style+'">'+recvPrev.text+'</span>'+(hideYoy?'':'<span class="dash-chip" style="'+recvYoy.style+'">'+recvYoy.text+'</span>')+'</div></div>'+
 
-      '<div class="dash-kpi" style="order:7;grid-column:1"><div style="display:flex;align-items:center;gap:8px"><span class="dash-kpi-ic" style="background:var(--warn-bg);color:var(--warn)">↑</span>'+
+      '<div class="dash-kpi"><div style="display:flex;align-items:center;gap:8px"><span class="dash-kpi-ic" style="background:var(--warn-bg);color:var(--warn)">↑</span>'+
         '<div class="dash-kpi-lb">ตัดสต๊อก (เบิกออก)<br><span style="font-size:11px">(Stock Out)</span></div></div>'+
         '<div style="display:flex;align-items:baseline;gap:5px;margin-top:9px"><button type="button" class="dash-kpi-link" style="color:var(--warn);border-color:var(--warn-line)" onclick="dashOpenDoc(\'issue\')">'+Math.round(cur.issueQty).toLocaleString()+'</button><span style="font-size:12.5px;color:var(--faint)">ชิ้น</span></div>'+
         '<div class="dash-mono" style="font-size:11.5px;color:var(--muted);margin-top:3px">฿'+Math.round(cur.issueValue).toLocaleString()+' · <button type="button" class="dash-kpi-link" style="font-family:var(--font-sans);font-size:11.5px;color:var(--warn);border-color:var(--warn-line)" onclick="dashOpenDoc(\'issue\')">ดูรายการ ›</button></div>'+
-        '<div class="dash-kpi-foot"><span class="dash-chip" style="'+issuePrev.style+'">'+issuePrev.text+'</span>'+(hideYoy?'':'<span class="dash-chip" style="'+issueYoy.style+'">'+issueYoy.text+'</span>')+'</div></div>'+
-
-      '<div class="dash-overview-title" style="order:2;grid-column:2">2. ภาพรวมการขาย (Sales Overview)</div>'+
-      '<div class="dash-kpi" style="order:5;grid-column:2"><div style="display:flex;align-items:center;gap:8px"><span class="dash-kpi-ic" style="background:var(--primary-soft);color:var(--primary)">฿</span>'+
-        '<div class="dash-kpi-lb">ยอดขาย<br><span style="font-size:11px">(Sales)</span></div></div>'+
-        '<div style="display:flex;align-items:baseline;gap:4px;margin-top:9px"><span style="font-size:13px;color:var(--faint)">฿</span><span class="dash-mono" style="font-size:24px;font-weight:600;color:var(--ink);letter-spacing:-.5px">'+Math.round(cur.salesValue).toLocaleString()+'</span></div>'+
-        '<div class="dash-mono" style="font-size:11.5px;color:var(--muted);margin-top:3px"><button type="button" class="dash-kpi-link" style="color:var(--primary);border-color:var(--primary-line)" onclick="dashOpenDoc(\'sales\')">'+cur.salesBills+' บิล ›</button> · เฉลี่ย ฿'+Math.round(cur.salesBills?cur.salesValue/cur.salesBills:0).toLocaleString()+'</div>'+
-        '<div class="dash-kpi-foot"><span class="dash-chip" style="'+salesPrev.style+'">'+salesPrev.text+'</span>'+(hideYoy?'':'<span class="dash-chip" style="'+salesYoy.style+'">'+salesYoy.text+'</span>')+'</div></div>'+
-      '<div class="dash-overview-title" style="order:3;grid-column:3">3. ภาพรวมการจัดซื้อ (Purchasing Overview)</div>';
+        '<div class="dash-kpi-foot"><span class="dash-chip" style="'+issuePrev.style+'">'+issuePrev.text+'</span>'+(hideYoy?'':'<span class="dash-chip" style="'+issueYoy.style+'">'+issueYoy.text+'</span>')+'</div></div>';
 
     document.getElementById('dashKpiRow').innerHTML=html;
   }
@@ -1400,6 +1433,15 @@
     dashRenderHealthTableOnly();
   }
 
+  function dashRenderHealthHead(disabled){
+    document.getElementById('dashHealthHead').innerHTML = DASH_COLS.map(function(c){
+      var label=c[0], key=c[1], align=c[2], on=key && DASH.sortKey===key;
+      return '<th style="text-align:'+align+';padding:0;font-weight:500;font-size:12px;border-bottom:1px solid var(--line);white-space:nowrap;background:'+(on?'#eef4fa':'var(--line-soft)')+'">'+
+        '<button type="button" '+(disabled?'disabled ':'')+'class="dash-sortbtn'+(on?' on':'')+'" style="justify-content:'+(align==='right'?'flex-end':align==='center'?'center':'flex-start')+';cursor:'+(key?'pointer':'default')+'" '+(key?'onclick="dashToggleSort(\''+key+'\')"':'')+'>'+esc(label)+
+        (key?'<span style="font-size:9px;color:'+(on?'var(--primary)':'#cbd5e1')+'">'+(on?(DASH.sortDir==='asc'?'▲':'▼'):'⇅')+'</span>':'')+'</button></th>';
+    }).join('');
+  }
+
   function dashRenderHealthTableOnly(){
     var all=DASH.health.rows;
     var active=DASH_TABS.filter(function(t){return t.id===DASH.tab;})[0]||DASH_TABS[0];
@@ -1425,13 +1467,12 @@
     });
     DASH._codes = sorted.map(function(r){return r.code;});
     DASH._sortedRows = sorted;
+    var criteria=JSON.stringify([DASH.tab,DASH.deadRule,DASH.search,DASH.fCat,DASH.fBrand,DASH.fPart,DASH.sortKey,DASH.sortDir]);
+    if(criteria!==DASH.healthCriteria){DASH.healthCriteria=criteria;DASH.healthPage=1;}
+    var pages=Math.max(1,Math.ceil(sorted.length/50));DASH.healthPage=Math.max(1,Math.min(pages,DASH.healthPage));
+    var offset=(DASH.healthPage-1)*50;
 
-    document.getElementById('dashHealthHead').innerHTML = DASH_COLS.map(function(c){
-      var label=c[0], key=c[1], align=c[2], on=key && sortKey===key;
-      return '<th style="text-align:'+align+';padding:0;font-weight:500;font-size:12px;border-bottom:1px solid var(--line);white-space:nowrap;background:'+(on?'#eef4fa':'var(--line-soft)')+'">'+
-        '<button type="button" class="dash-sortbtn'+(on?' on':'')+'" style="justify-content:'+(align==='right'?'flex-end':align==='center'?'center':'flex-start')+';cursor:'+(key?'pointer':'default')+'" '+(key?'onclick="dashToggleSort(\''+key+'\')"':'')+'>'+esc(label)+
-        (key?'<span style="font-size:9px;color:'+(on?'var(--primary)':'#cbd5e1')+'">'+(on?(DASH.sortDir==='asc'?'▲':'▼'):'⇅')+'</span>':'')+'</button></th>';
-    }).join('');
+    dashRenderHealthHead(false);
 
     var tbody=document.getElementById('dashHealthBody');
     if(!DASH.products.length){
@@ -1439,7 +1480,7 @@
     } else if(!sorted.length){
       tbody.innerHTML=emptyStateHtml(10,{icon:'✓',title:'ไม่พบรายการในเกณฑ์นี้',sub:'ลองลดคำค้นหรือล้างตัวกรอง',actions:[{label:'ล้างตัวกรอง',primary:true,onclick:'dashClearFilters()'}]});
     } else {
-      tbody.innerHTML = sorted.map(function(r){
+      tbody.innerHTML = sorted.slice(offset,offset+50).map(function(r){
         var p=r.p;
         var qtyStyle = r.qty<=0?'color:var(--danger);font-weight:600':(r.qty<=r.rop?'color:var(--warn);font-weight:600':'color:var(--ink)');
         var sel = DASH.openCode===r.code;
@@ -1462,10 +1503,15 @@
 
     var tabValue=list.reduce(function(s,r){return s+r.value;},0);
     document.getElementById('dashTabValue').innerText='฿'+Math.round(tabValue).toLocaleString();
-    document.getElementById('dashHealthFoot').innerText='แสดง '+sorted.length+' รายการ · มูลค่ารวม ฿'+Math.round(tabValue).toLocaleString();
+    document.getElementById('dashHealthFoot').innerText='แสดง '+(sorted.length?offset+1:0)+'–'+Math.min(offset+50,sorted.length)+' จาก '+sorted.length+' รายการ · มูลค่ารวม ฿'+Math.round(tabValue).toLocaleString();
+    document.getElementById('dashHealthPageLabel').textContent=DASH.healthPage+' / '+pages;
+    document.getElementById('dashHealthPrev').disabled=DASH.healthPage<=1;
+    document.getElementById('dashHealthNext').disabled=DASH.healthPage>=pages;
     var sortLabelName=(DASH_COLS.filter(function(c){return c[1]===sortKey;})[0]||['—'])[0];
     document.getElementById('dashSortLabel').innerText=sortLabelName+(DASH.sortDir==='asc'?' ↑ น้อย→มาก':' ↓ มาก→น้อย');
   }
+
+  function dashChangeHealthPage(step){if(!DASH.health)return;DASH.healthPage+=step;dashRenderHealthTableOnly();document.querySelector('#dashHealthCard .table-wrap').scrollTop=0;}
 
   function dashRenderAll(){
     if(!DASH.health) return;

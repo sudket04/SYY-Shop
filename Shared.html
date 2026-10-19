@@ -382,15 +382,20 @@ function swyConfirm(o){
    ทางลัดนี้ออกได้โดยไม่กระทบการ login */
 function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache){
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
-  function settled(failed){syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&/^(get|fetch)/.test(fnName))syyUxLoaded=Date.now();syyUxStatus();}
-  function fail(error){settled(true);if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,restartPage:error.restartPage===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
-  function expired(){syyClearReadCache();syyDraftFlush();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});settled(true);if(window.syyExpiryStarted)return;window.syyExpiryStarted=true;swyError('เซสชันหมดอายุ','ร่างที่รองรับถูกเก็บไว้ในเบราว์เซอร์ กรุณาเข้าสู่ระบบด้วยบัญชีเดิมเพื่อตรวจและกู้คืน').then(function(){setTimeout(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';},200);});}
+  var done=false,timer=null;
+  function settled(failed){if(done)return false;done=true;clearTimeout(timer);syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&/^(get|fetch)/.test(fnName))syyUxLoaded=Date.now();syyUxStatus();return true;}
+  function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,restartPage:error.restartPage===true,timeout:error.timeout===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
+  function expired(){if(!settled(true))return;syyClearReadCache();syyDraftFlush();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});if(window.syyExpiryStarted)return;window.syyExpiryStarted=true;swyError('เซสชันหมดอายุ','ร่างที่รองรับถูกเก็บไว้ในเบราว์เซอร์ กรุณาเข้าสู่ระบบด้วยบัญชีเดิมเพื่อตรวจและกู้คืน').then(function(){setTimeout(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';},200);});}
   if(!token){expired();return;}
-  google.script.run.withSuccessHandler(function(res){
+  // This only settles the browser read. GAS may finish later; late callbacks
+  // cannot overwrite a retry. Writes have no client deadline or automatic retry.
+  if(/^(get|fetch)/.test(fnName))timer=setTimeout(function(){fail({timeout:true,message:'รอข้อมูลเกิน 45 วินาที กรุณาลองอีกครั้ง'});},45000);
+  try{google.script.run.withSuccessHandler(function(res){
+    if(done)return;
     if(res&&res.__authError){expired();return;}
     if(res&&res.success===false&&/^(get|fetch)/.test(fnName)&&!(fnName==='getDashboardDelta'&&res.fullRefresh===true)){fail({message:res.message,restartPage:res.restartPage===true});return;}
     settled(res&&res.success===false);if(onSuccess)onSuccess(res);
-  }).withFailureHandler(fail).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);
+  }).withFailureHandler(fail).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);}catch(error){if(done)throw error;fail(error);}
 }
 
 // Fetch only requested pages; incomplete lists are visibly marked and cannot claim full totals.
@@ -424,7 +429,14 @@ function syyDocumentPager(options){
 // cannot mutate the stored snapshot. Credentials, users and backup APIs bypass it.
 var syyCacheScopes=['Master_Products','Product_Images','Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers','Stock_Movements','Purchase_Orders','Quotations','Master_Tax_Invoice'];
 var syyReadCache=new Map(),syyCacheEpochs={},syyReadRevalidate=false,syyCacheIdentity='',syyCacheUsedScopes=new Set(),syyLastReadAt=0;
-var syyCacheStats={hits:0,misses:0,revalidations:0,notModified:0,invalidations:0,authoritative:0,manual:0,byApi:{}};
+var syyCacheStats={hits:0,misses:0,revalidations:0,notModified:0,invalidations:0,authoritative:0,manual:0,byApi:{},views:{}};
+// Bounded local diagnostics only: names, counts and timings, never business rows
+// or credentials. No telemetry request, Firestore write or polling is added.
+function syyRecordViewTiming(name,started,renderStarted,rows){
+ var end=performance.now(),samples=(syyCacheStats.views[name]?.samples||[]).concat([{waitMs:Math.round(renderStarted-started),renderMs:Math.round(end-renderStarted),totalMs:Math.round(end-started),rows:rows,source:syyLastReadSource}]).slice(-20);
+ var sorted=samples.map(function(x){return x.totalMs;}).sort(function(a,b){return a-b;});
+ syyCacheStats.views[name]={samples:samples,last:samples[samples.length-1],p50Ms:sorted[Math.ceil(sorted.length*.5)-1],p95Ms:sorted[Math.ceil(sorted.length*.95)-1]};
+}
 var syyReadLatest=new Map(),syyDirtyReadScopes=new Set(),syyReadSequence=0,syyLastCheckedAt=0,syyLastReadSource='',syyReadDirty=false;
 // Persistent cache is an optional acceleration only. Its contents never grant
 // access: every restored response is conditionally validated by apiGateway.
@@ -607,7 +619,7 @@ function callApi(fnName,args,onSuccess,onFailure,options){
  syyCacheStats.misses++;if(record)syyCacheStats.revalidations++;
  listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);var rpcStarted=Date.now(),measured=false,fenceKey=key+':'+identity,requestSequence=++syyReadSequence;
  syyReadLatest.delete(fenceKey);syyReadLatest.set(fenceKey,requestSequence);while(syyReadLatest.size>200)syyReadLatest.delete(syyReadLatest.keys().next().value);
- function measure(failed){if(!policy||measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);}
+ function measure(failed){if(measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0,slowCount:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.slowCount=(m.slowCount||0)+(m.lastMs>=3000?1:0);m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);}
  function failed(error){measure(true);syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
  syyCallApiRaw(fnName,args,function(data){
    syyEnsureCacheIdentity();

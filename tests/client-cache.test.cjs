@@ -218,8 +218,14 @@ test('server and browser conditional caches cannot extend source expiry even whe
 });
 
 test('read metrics count actual coalesced RPCs and elapsed time without recording arguments or cached hits as requests',()=>{
- const b=browser();b.read('getBrands');b.read('getBrands');b.tick(25);b.complete([]);b.read('getBrands');b.flush();assert.deepEqual(plain(b.c.syyCacheStats.byApi.getBrands),{rpcCount:1,errorCount:0,totalMs:25,maxMs:25,lastMs:25});
+ const b=browser();b.read('getBrands');b.read('getBrands');b.tick(25);b.complete([]);b.read('getBrands');b.flush();assert.deepEqual(plain(b.c.syyCacheStats.byApi.getBrands),{rpcCount:1,errorCount:0,totalMs:25,maxMs:25,lastMs:25,slowCount:0});
  b.read('getBrands',[],{fresh:true});b.tick(10);b.calls.at(-1).fail({message:'network'});assert.equal(b.c.syyCacheStats.byApi.getBrands.rpcCount,2);assert.equal(b.c.syyCacheStats.byApi.getBrands.errorCount,1);assert.equal(b.c.syyCacheStats.byApi.getBrands.totalMs,35);assert.equal(b.c.syyCacheStats.hits,1);
+ b.read('getAllUsers');b.tick(3001);b.calls.at(-1).ok([]);assert.equal(b.c.syyCacheStats.byApi.getAllUsers.slowCount,1);
+});
+
+test('local view diagnostics retain only twenty count/timing samples with percentiles and never send telemetry',()=>{
+ const b=browser();b.c.performance={now:()=>100};for(let i=0;i<25;i++)b.c.syyRecordViewTiming('products',i,70,50);
+ const v=plain(b.c.syyCacheStats.views.products);assert.equal(v.samples.length,20);assert.deepEqual(Object.keys(v.last).sort(),['renderMs','rows','source','totalMs','waitMs']);assert.equal(v.last.renderMs,30);assert.equal(v.last.totalMs,76);assert.equal(v.p50Ms,85);assert.equal(v.p95Ms,94);assert.equal(b.calls.length,0);
 });
 
 test('changing token or role without starting another read still rejects pending and scheduled cached responses',()=>{

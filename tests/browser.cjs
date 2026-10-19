@@ -74,6 +74,9 @@ async function main(){
     page.on('pageerror',e=>page.errors.push(e.message));
     await page.goto('http://127.0.0.1:'+port+'/?file='+file+'&role='+role);
     await page.waitForTimeout(100);
+    // Wait for initial mock reads instead of assuming they finish within a
+    // fixed delay on a busy host. Held-request tests use their own page setup.
+    await page.waitForFunction(()=>typeof syyUxBusy==='undefined'||syyUxBusy===0);
     return page;
   }
   let encountered=0;async function check(name,fn){encountered++;if(encountered<Number(process.env.BROWSER_TEST_START||1))return;await fn();cases++;console.log('PASS: '+name);}
@@ -182,7 +185,7 @@ async function main(){
     await p.locator('#tableSearchInput').fill('missing');assert.equal(await p.locator('#productBody').getByRole('button',{name:'+ เพิ่มสินค้า',exact:true}).count(),0);
     await p.evaluate(()=>{productsCache=[];filterAndRenderTable();});assert.equal(await p.locator('#productBody').getByRole('button',{name:'+ เพิ่มสินค้า',exact:true}).count(),0);
     assert.deepEqual(p.errors,[]);await p.close();
-    for(const [role,canEdit,canDelete] of [['staff',true,false],['admin',true,true]]){const q=await pageFor('Master_Products.html',role);assert.equal(await q.locator('#btnAddProduct').isVisible(),canEdit);assert.equal(await q.locator('#productBody .edit').count(),1);assert.equal(await q.locator('#productBody .del').count(),canDelete?1:0);await q.locator('#productBody .edit').click();assert.equal(await q.locator('#productModal').isVisible(),true);assert.deepEqual(q.errors,[]);await q.close();}
+    for(const [role,canEdit,canDelete] of [['staff',true,false],['admin',true,true]]){const q=await pageFor('Master_Products.html',role);assert.equal(await q.locator('#btnAddProduct').isVisible(),canEdit);assert.equal(await q.locator('#productBody .edit').count(),1);assert.equal(await q.locator('#productBody .del').count(),canDelete?1:0);await q.locator('#productBody .edit').click();await q.locator('#productModal.active').waitFor();assert.equal(await q.locator('#productModal').isVisible(),true);assert.deepEqual(q.errors,[]);await q.close();}
   });
   await check('Stock history searches and opens a whole transaction, caches details, and preserves basket and read-only behavior',async()=>{
     const p=await pageFor('StockIssue.html');await p.evaluate(()=>{
@@ -303,7 +306,7 @@ async function main(){
     assert.match(await p.locator('#dashStats').innerText(),/2568/);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Invoice write succeeds but refresh fails: preview survives and write is not retried',async()=>{
-    const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>{openEditModal('TX1');document.getElementById('modalBuyerName').value='Saved Buyer';apiFailure='getTaxInvoiceListData';handleSubmit();});await p.waitForTimeout(60);
+    const p=await pageFor('Master_Tax_Invoice.html');await p.waitForFunction(()=>invoicesCache.some(x=>x.id==='TX1'));await p.evaluate(()=>{openEditModal('TX1');document.getElementById('modalBuyerName').value='Saved Buyer';apiFailure='getTaxInvoiceListData';handleSubmit();});await p.waitForFunction(()=>currentPrintInvoice?.buyerName==='Saved Buyer');
     assert.equal(await p.evaluate(()=>currentPrintInvoice.buyerName),'Saved Buyer');
     assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveTaxInvoice').length),1);
     assert.match(await p.locator('#toastWrap').innerText(),/บันทึก.*เรียบร้อย/);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getTaxInvoiceListData').length),0);assert.deepEqual(p.errors,[]);await p.close();
@@ -348,7 +351,7 @@ async function main(){
     await p.screenshot({path:path.join(output,'zone-legacy-desktop.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Product stock delta respects dirty stock input and baseline, zone labels propagate',async()=>{
-    const p=await pageFor('Master_Products.html');await p.evaluate(()=>openEditModal('P1'));
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>openEditModal('P1'));await p.locator('#productModal.active').waitFor();
     await p.evaluate(()=>applyStockDeltaToProductPage([{productCode:'P1',currentStock:8}]));assert.equal(await p.locator('#inp_currentStock').inputValue(),'8');
     await p.locator('#inp_currentStock').fill('12');await p.evaluate(()=>applyStockDeltaToProductPage([{productCode:'P1',currentStock:7}]));
     assert.equal(await p.locator('#inp_currentStock').inputValue(),'12');assert.equal(await p.evaluate(()=>document.getElementById('inp_currentStock').dataset.originalStock),'8');
@@ -356,7 +359,7 @@ async function main(){
     assert.equal(await p.evaluate(()=>productsCache[0].zoneName),'A — ชั้น 2 (Rack R1 · ระดับ 3)');assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Product image draft staging, move, primary, delete and cancel make no server calls',async()=>{
-    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{openEditModal('P1');window.callsBefore=apiCalls.length;stageProductImageNow('AA','data:image/jpeg;base64,AA',0);stageProductImageNow('BB','data:image/jpeg;base64,BB',1);setPrimaryProductImageNow(1);moveProductImageNow(1,0);deleteProductImageNow(1);});await p.waitForTimeout(30);
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>openEditModal('P1'));await p.locator('#productModal.active').waitFor();await p.evaluate(()=>{window.callsBefore=apiCalls.length;stageProductImageNow('AA','data:image/jpeg;base64,AA',0);stageProductImageNow('BB','data:image/jpeg;base64,BB',1);setPrimaryProductImageNow(1);moveProductImageNow(1,0);deleteProductImageNow(1);});await p.waitForTimeout(30);
     assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>callsBefore));
     assert.equal(await p.evaluate(()=>productImageDraftDirty),true);await p.evaluate(()=>closeProductModal());
     assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>callsBefore));assert.deepEqual(p.errors,[]);await p.close();
@@ -584,7 +587,7 @@ async function main(){
   });
   await check('Invoice close and product image cancel keep dirty drafts when the user continues editing',async()=>{
     for(const file of ['Master_Tax_Invoice.html','Master_Products.html']){
-      const p=await pageFor(file);await p.evaluate(()=>{openAddModal();Swal.fire=o=>{alerts.push(o);return Promise.resolve({isConfirmed:false});};if(typeof closeInvoiceModal==='function'){document.getElementById('modalBuyerName').value='Unsaved buyer';closeInvoiceModal();}else{stageProductImageNow('fixture','data:image/jpeg;base64,fixture',0);closeProductModal();}});
+      const p=await pageFor(file);await p.evaluate(()=>openAddModal());await p.locator('.modal-overlay.active').waitFor();await p.evaluate(()=>{Swal.fire=o=>{alerts.push(o);return Promise.resolve({isConfirmed:false});};if(typeof closeInvoiceModal==='function'){document.getElementById('modalBuyerName').value='Unsaved buyer';closeInvoiceModal();}else{stageProductImageNow('fixture','data:image/jpeg;base64,fixture',0);closeProductModal();}});
       await p.waitForTimeout(20);assert.equal(await p.locator('.modal-overlay.active').count(),1);
       assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|commit)/.test(x.fn))),false);assert.deepEqual(p.errors,[]);await p.close();
     }
@@ -1182,6 +1185,74 @@ async function main(){
     const p=await pageFor('index.html','admin');
     for(const id of ['profile','manageusers']){await p.evaluate(id=>switchPage(id),id);await p.waitForFunction(id=>document.getElementById('iframe-'+id).dataset.ready==='true',id);assert.equal(await p.locator('#'+id+'Form .syy-frame-status').isVisible(),false);assert.equal(await p.locator('#iframe-'+id).isVisible(),true);}
     assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Products keep first-load skeleton during search and only publish the newest criteria response',async()=>{
+    const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));
+    await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{
+      apiHold='getAllProducts';const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{catalogPage:true,page:1,pageSize:50,total:1,unfilteredTotal:1,products:[{...fixtureProduct,productName:args[0].search?'Newest search result':'Old initial result'}]}:old(fn,args);
+    }));
+    await p.goto('http://127.0.0.1:'+port+'/?file=Master_Products.html');await p.waitForFunction(()=>apiPending.length===1);
+    assert.equal(await p.evaluate(()=>apiCalls[0].args[0].includeMasters),false);assert.equal(await p.evaluate(()=>apiCalls.some(x=>x.fn==='getAllMasterDropdowns')),false);
+    await p.locator('#tableSearchInput').fill('Newest');assert(await p.locator('#productBody .sk').count()>0);await p.waitForFunction(()=>apiPending.length===2);
+    await p.evaluate(()=>apiPending[1]());await p.waitForFunction(()=>document.getElementById('productBody').textContent.includes('Newest search result'));
+    await p.evaluate(()=>apiPending[0]());assert.doesNotMatch(await p.locator('#productBody').innerText(),/Old initial/);assert.equal(await p.locator('#productBody').getAttribute('aria-busy'),'false');
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length),2);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Products render before a slow window asset loads, and edit dropdown failures cannot hide rows or open an incomplete form',async()=>{
+    const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));let heldAsset;
+    await p.route('**/slow-display-asset',r=>{heldAsset=r;});
+    await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{const img=new Image();img.src='/slow-display-asset';document.body.appendChild(img);}));
+    await p.goto('http://127.0.0.1:'+port+'/?file=Master_Products.html',{waitUntil:'domcontentloaded'});await p.locator('#productBody .view').first().waitFor();
+    assert.equal(await p.evaluate(()=>document.readyState),'interactive');assert.equal(await p.evaluate(()=>apiCalls.length),1);
+    await p.evaluate(()=>{apiFailure='getAllMasterDropdowns';openEditModal('P1');});await p.waitForFunction(()=>!productMastersLoading);
+    assert.match(await p.locator('#productBody').innerText(),/Test Part/);assert.equal(await p.locator('#productModal.active').count(),0);
+    await p.evaluate(()=>{apiFailure='';openEditModal('P1');});await p.locator('#productModal.active').waitFor();assert.equal(await p.locator('#inp_productName').inputValue(),'Test Part');
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllMasterDropdowns').length),2);await heldAsset.fulfill({status:204,body:''});await p.waitForLoadState();assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Malformed product responses show retry, preserve valid old rows and a valid empty result remains distinct',async()=>{
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{}:old(fn,args);productRemote=null;productsCache=[];loadTable();});
+    await p.waitForFunction(()=>document.getElementById('productBody').textContent.includes('รูปแบบข้อมูลสินค้าไม่ถูกต้อง'));assert.match(await p.locator('#recordCount').innerText(),/โหลดไม่สำเร็จ/);
+    await p.evaluate(()=>{respond=()=>({catalogPage:true,page:1,products:[fixtureProduct],total:1});loadTable();});await p.locator('#productBody .view').waitFor();
+    await p.evaluate(()=>{respond=()=>({});loadTable();});await p.waitForFunction(()=>!productLoading);assert.match(await p.locator('#productBody').innerText(),/Test Part/);
+    await p.evaluate(()=>{respond=()=>({catalogPage:true,page:1,products:[],total:0});loadTable();});await p.waitForFunction(()=>!productLoading);assert.equal(await p.locator('#productBody .view').count(),0);assert.doesNotMatch(await p.locator('#productBody').innerText(),/โหลดไม่สำเร็จ/);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Read deadline releases coalesced listeners, never retries automatically and discards a late response after explicit retry',async()=>{
+    const p=await pageFor('Master_Brands.html');await p.clock.install();await p.evaluate(()=>{
+      apiHold='getDeadlineFixture';window.deadlineErrors=0;window.deadlineValues=[];
+      for(let i=0;i<2;i++)callApi('getDeadlineFixture',[],x=>deadlineValues.push(x),e=>{if(e.timeout)deadlineErrors++;});
+    });await p.clock.fastForward(45001);assert.equal(await p.evaluate(()=>deadlineErrors),2);assert.equal(await p.evaluate(()=>syyPendingReads.size),0);assert.equal(await p.evaluate(()=>syyUxBusy),0);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDeadlineFixture').length),1);
+    await p.evaluate(()=>{respond=()=>({marker:'retry'});callApi('getDeadlineFixture',[],x=>deadlineValues.push(x));apiPending[1]();respond=()=>({marker:'late'});apiPending[0]();});
+    assert.deepEqual(await p.evaluate(()=>deadlineValues),[{marker:'retry'}]);assert.equal(await p.evaluate(()=>syyCacheStats.byApi.getDeadlineFixture.rpcCount),2);
+    await p.evaluate(()=>{apiHold='saveProduct';window.writeSettled=0;callApi('saveProduct',[{docId:'P1'}],()=>writeSettled++,()=>writeSettled++);});await p.clock.fastForward(90000);assert.equal(await p.evaluate(()=>writeSettled),0);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveProduct').length),1);await p.evaluate(()=>apiPending.at(-1)());assert.equal(await p.evaluate(()=>writeSettled),1);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Dashboard skeleton matches ten columns and all panels, table precedes analytics, errors recover and validated first data always renders',async()=>{
+    const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getDashboardBootstrap';}));
+    await p.goto('http://127.0.0.1:'+port+'/?file=index.html');await p.waitForFunction(()=>apiPending.length===1);
+    assert.equal(await p.locator('#dashHealthHead th').count(),10);assert.equal(await p.locator('#dashHealthBody tr:first-child td').count(),10);assert.equal(await p.locator('#dashKpiRow .dash-kpi').count(),4);assert.equal(await p.locator('#dashAlertRow .dash-alert').count(),4);
+    for(const id of ['dashChartSvgWrap','dashCatBars','dashFastMovers','dashSlowMovers','dashAging'])assert(await p.locator('#'+id+' .sk').count()>0,id);
+    assert.equal(await p.locator('#btnDashExport').isDisabled(),true);assert.match(await p.locator('#dashYearSel').inputValue(),/^20/);
+    assert.equal(await p.evaluate(()=>!!(document.getElementById('dashHealthCard').compareDocumentPosition(document.querySelector('.dash-row2'))&Node.DOCUMENT_POSITION_FOLLOWING)),true);
+    await p.screenshot({path:path.join(output,'dashboard-loading-2026-10-19.png'),fullPage:true});
+    await p.evaluate(()=>{apiFailure='getDashboardBootstrap';apiPending[0]();});assert.equal(await p.locator('#dashHealthBody td').getAttribute('colspan'),'10');assert.equal(await p.locator('#homeScreen .sk').count(),0);assert.equal(await p.locator('#btnRefresh').isEnabled(),true);
+    await p.evaluate(()=>{apiFailure='';apiHold='';const transport=callApi;callApi=(fn,args,ok,fail,opts)=>transport(fn,args,data=>ok(data,{notModified:true}),fail,opts);dashLoad();});await p.waitForFunction(()=>DASH.loaded&&!DASH.loading);
+    assert.equal(await p.locator('#dashKpiRow .dash-kpi').count(),4);assert.equal(await p.locator('#homeScreen .sk').count(),0);assert.equal(await p.locator('#btnDashExport').isEnabled(),true);
+    for(const [width,cols] of [[1440,4],[900,2],[390,1]]){await p.setViewportSize({width,height:950});assert.equal(await p.locator('#dashKpiRow').evaluate(x=>getComputedStyle(x).gridTemplateColumns.split(' ').length),cols);assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await p.screenshot({path:path.join(output,'dashboard-ready-'+width+'-2026-10-19.png'),fullPage:true});}
+    assert(await p.evaluate(()=>syyCacheStats.views.dashboard.last.rows===1));assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Lazy edit metadata preserves a recovering product draft while waiting or failing, then restores fields without a write',async()=>{
+    const p=await pageFor('Master_Products.html');await p.waitForFunction(()=>syyDrafts.product.ready);await p.evaluate(()=>{
+      apiHold='getAllMasterDropdowns';window.recoveryDraft={fields:{inp_productName:'Unsaved product',inp_brandId:'B1',inp_currentStock:'10'},editingDocId:'P1',originalStock:'10',cars:[],images:[],base64:[],primary:0,imageDirty:false};
+      syyDrafts.product.adapter.restore(recoveryDraft);syyDraftFlush();
+    });assert.equal(await p.evaluate(()=>syyLocalGet('draft','product').fields.inp_productName),'Unsaved product');
+    await p.evaluate(()=>{apiFailure='getAllMasterDropdowns';apiPending.shift()();syyDraftFlush();});assert.equal(await p.evaluate(()=>syyLocalGet('draft','product').fields.inp_productName),'Unsaved product');
+    await p.evaluate(()=>{apiFailure='';apiHold='';syyDrafts.product.adapter.restore(syyLocalGet('draft','product'));});await p.locator('#productModal.active').waitFor();assert.equal(await p.locator('#inp_productName').inputValue(),'Unsaved product');assert.equal(await p.locator('#inp_brandId').inputValue(),'B1');assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|issue|commit)/.test(x.fn))),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Dashboard renders only fifty of ten thousand matching rows while search, totals and later-page refresh use the entire data set without RPCs',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{
+      apiCalls=[];DASH.products=Array.from({length:10000},(_,i)=>({...fixtureProduct,id:'P'+String(i).padStart(5,'0'),productCode:'P'+String(i).padStart(5,'0')}));allProducts=DASH.products;DASH.tab='all';DASH.sortKey='code';DASH.sortDir='asc';dashBuildAggregates();dashRenderAll();
+    });assert.equal(await p.locator('#dashHealthBody tr').count(),50);assert.equal(await p.evaluate(()=>DASH._sortedRows.length),10000);assert.match(await p.locator('#dashHealthFoot').innerText(),/10,?000/);
+    await p.locator('#dashHealthNext').click();assert.equal(await p.evaluate(()=>DASH.healthPage),2);assert.match(await p.locator('#dashHealthBody tr:first-child').innerText(),/P00050/);await p.evaluate(()=>dashRenderAll());assert.equal(await p.evaluate(()=>DASH.healthPage),2);
+    await p.locator('#dashSearch').fill('P09999');await p.waitForFunction(()=>DASH._sortedRows.length===1);assert.equal(await p.locator('#dashHealthBody tr').count(),1);assert.match(await p.locator('#dashHealthBody').innerText(),/P09999/);assert.equal(await p.locator('#dashHealthPrev').isDisabled(),true);assert.equal(await p.locator('#dashHealthNext').isDisabled(),true);assert.equal(await p.evaluate(()=>apiCalls.length),0);assert.deepEqual(p.errors,[]);await p.close();
   });
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');
