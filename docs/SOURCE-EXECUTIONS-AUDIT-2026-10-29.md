@@ -2,6 +2,8 @@
 
 Baseline `44607c159047553a3e16d4ee51a2722ec36836c2` ต่อจาก [รายงานวันที่ 28](READONLY-AUDIT-BACKUP-2026-10-28.md) ผู้ใช้ยืนยันว่า session ยังไม่พร้อม ให้ตรวจ Source และ Executions ต่อ ไม่มี Staging และห้ามเขียน แก้ไข หรือลบ DB จริง
 
+อัปเดตหลังจบaudit: ผู้ใช้อนุมัติDeployแล้ว เผยแพร่runtime8900b06เป็นVersion101สำเร็จ ดู [Deployment29ต.ค.](DEPLOYMENT-2026-10-29-V101.md) ขอบเขต/ผลตรวจและรายการรออนุมัติด้านล่างบันทึกไว้ตามสถานะก่อนDeploy
+
 **รอบนี้ไม่ได้ Login, เรียก business API บน Production, Sync/Deploy, รัน Backup/Restore หรือแก้ Trigger/สิทธิ์/ข้อมูลจริง** อ่านเฉพาะ Executions และ Cloud logs เดิม ส่วนการทดสอบทั้งหมดต่อไปนี้ใช้บริการ/ข้อมูลในหน่วยความจำ
 
 ## สิ่งที่พบและแก้เพิ่ม

@@ -2,6 +2,8 @@
 
 เอกสารนี้เป็นแผนและ baseline ตอนส่งต่องาน ให้ตรวจสถานะล่าสุดก่อนเริ่มทุกครั้ง
 
+**สถานะล่าสุด: Deploy Version101 สำเร็จ 29ต.ค.2569 เวลา03:15 Asia/Bangkok** runtime `8900b06`, saved Headและimmutable versionตรง24/24ไฟล์, Login smokeผ่าน ไม่มี business writesหรือการรันBackup/Restoreจริง ดู [รายงานDeployและงานค้างปัจจุบัน](DEPLOYMENT-2026-10-29-V101.md) ย่อหน้าและbaselineรับช่วงด้านล่างเป็นประวัติก่อนDeploy ต้องไม่ใช้ข้อความ “ยังไม่Deploy” ด้านล่างแทนสถานะล่าสุด
+
 อัปเดตหลังรับช่วง: ลง Source ชุดถอดรูปตาราง, shared compact catalog, แยกโหลดเอกสาร/PO และ Admin correction แล้ว ดูรายละเอียด ผลทดสอบ และงานที่ยังไม่ผ่านเกณฑ์ที่ [รายงาน implementation](PERFORMANCE-STOCK-CORRECTION-2026-10-28.md) ตาราง baseline ด้านล่างเป็นสถานะ **ก่อน** ชุดนี้ ยังไม่ได้ Deploy ชุดใหม่ และยังไม่ยืนยันว่าทุกหน้าโหลดภายใน 10 วินาที
 
 อัปเดตรอบต่อ: ผู้ใช้ยืนยัน **ไม่มี Staging; อ่านระบบเดิมได้ แต่ห้ามเขียน/แก้/ลบ DB จริง** ตรวจพบ Backup Version100 วันที่28 เวลา22:02:30 timeout 360.807s และ Incremental folder ว่าง เพิ่ม verifier/discovery ที่พักงานได้ และแก้ POS ข้าม initial render เมื่อ server ยืนยัน catalog จาก IndexedDB; ดู [หลักฐานล่าสุดและงานค้าง](READONLY-AUDIT-BACKUP-2026-10-28.md) ชุดนี้ยังไม่ Sync/Deploy และต้องรอ session ที่ Login ไว้แล้วเพื่อวัดเมนูจริง
