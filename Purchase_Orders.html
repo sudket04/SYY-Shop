@@ -321,8 +321,8 @@
   // ==========================================
   var lowStockItems   = [];   // สินค้าสต็อกต่ำ (จาก getLowStockProductsForOrder)
   var purchaseOrders  = [];   // ประวัติใบสั่งซื้อ (จาก getPurchaseOrders)
-  var pendingSummary={codes:{},pendingCount:0},documentPager,purchaseLoadSequence=0,purchasePageLoaded=false;
-  window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#tabHistory',api:'getPurchaseOrderPageData',key:'purchaseOrders',id:'poId',rows:function(){return purchaseOrders;},render:function(){renderHistoryTab();updateStatCards();}});});
+  var pendingSummary={codes:{},pendingCount:0},documentPager,purchaseLoadSequence=0,purchasePageLoaded=false,purchaseCreateLoaded=false,purchaseHistoryLoaded=false;
+  document.addEventListener('DOMContentLoaded',function(){documentPager=syyDocumentPager({container:'#tabHistory',api:'getPurchaseOrderPageData',key:'purchaseOrders',id:'poId',rows:function(){return purchaseOrders;},render:function(){renderHistoryTab();updateStatCards();}});});
   var pendingProductCodes = {}; // productCode ที่มีคำสั่งซื้อค้างอยู่ (Pending/Ordered)
   var checkedState    = {};   // { productCode: true/false } เช็คบ็อกซ์ที่เลือกไว้
   var qtyState        = {};   // { productCode: qty } จำนวนที่จะสั่ง (แก้ไขได้)
@@ -341,7 +341,7 @@
 
   var pendingReceivePO = null; // PO object ที่กำลังบันทึกรับสินค้าอยู่ใน modal
 
-  window.addEventListener('load', function() {
+  document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('confirmOrderDate').value = businessDate();
     loadAll();
   });
@@ -349,6 +349,8 @@
   XLF.bindHeaderClicks('#historyThead', function() { return purchaseOrders; }, renderHistoryTab);
 
   function loadAll(force) {
+    var savedView=!purchasePageLoaded&&syyLocalGet('view','orders'),section=savedView&&savedView.tab==='history'||document.getElementById('tabHistory').classList.contains('active')?'history':'create';
+    if(force===true||syyReadFresh){purchaseCreateLoaded=false;purchaseHistoryLoaded=false;}
     var request=++purchaseLoadSequence,revision=syyDataStarted();if(documentPager)documentPager.beginRefresh();
     var btn = document.getElementById('btnRefresh');
     btn.classList.add('is-loading');
@@ -356,14 +358,14 @@
     // ★ ใช้ endpoint รวม getPurchaseOrderPageData() แทนการเรียก getLowStockProductsForOrder()
     //   + getPurchaseOrders() แยกกัน 2 รอบ (ซึ่งแต่ละรอบดึงข้อมูลผู้จัดจำหน่ายซ้ำกันเอง)
     //   ฝั่ง server ดึงข้อมูลผู้จัดจำหน่ายแค่ครั้งเดียว ใช้ร่วมกันทั้ง 2 ส่วน
-    callApi('getPurchaseOrderPageData', [{force:force===true}], function(data, readInfo) {
+    callApi('getPurchaseOrderPageData', [{section:section,force:force===true}], function(data, readInfo) {
         if(request!==purchaseLoadSequence)return;
         if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();btn.classList.remove('is-loading');return;}
-        if(purchasePageLoaded&&readInfo&&readInfo.manual&&readInfo.notModified){if(documentPager)documentPager.cancel();syyDataLoaded(data&&data.snapshotLoadedAt);btn.classList.remove('is-loading');return;}
+        if(purchasePageLoaded&&readInfo&&readInfo.manual&&readInfo.notModified){if(section==='history')purchaseHistoryLoaded=true;else purchaseCreateLoaded=true;if(documentPager)documentPager.cancel();syyDataLoaded(data&&data.snapshotLoadedAt);btn.classList.remove('is-loading');return;}
         syyDataLoaded(data&&data.snapshotLoadedAt);purchasePageLoaded=true;
-        lowStockItems  = (data && data.lowStockItems)  || [];
-        purchaseOrders = (data && data.purchaseOrders) || [];
-        pendingSummary=data.pendingSummary||{codes:{},pendingCount:purchaseOrders.filter(function(po){return po.status==='Pending';}).length};if(documentPager){documentPager.reset(data.pageInfo);var saved=syyLocalGet('view','purchaseOrders');if(saved&&saved.search&&(saved.search.number||saved.search.from||saved.search.to))document.querySelector('.syy-document-search').requestSubmit();}
+        if(Array.isArray(data&&data.lowStockItems)){lowStockItems=data.lowStockItems;purchaseCreateLoaded=true;}
+        if(Array.isArray(data&&data.purchaseOrders)){purchaseOrders=data.purchaseOrders;purchaseHistoryLoaded=true;}
+        if(data.pendingSummary)pendingSummary=data.pendingSummary;if(documentPager&&Array.isArray(data.purchaseOrders)){documentPager.reset(data.pageInfo,readInfo&&readInfo.manual);var saved=syyLocalGet('view','purchaseOrders');if(saved&&saved.search&&(saved.search.number||saved.search.from||saved.search.to))document.querySelector('.syy-document-search').requestSubmit();}else if(documentPager)documentPager.cancel();
 
         lowStockItems.forEach(function(p) {
           if (!(p.productCode in qtyState)) qtyState[p.productCode] = p.suggestedQty;
@@ -388,9 +390,9 @@
       });
   }
 
-  function rebuildPendingProductCodes(){
-    var orders=pendingSummary.orders||(pendingSummary.orders={});
-    purchaseOrders.forEach(function(po){if(['Pending','Ordered','PartiallyReceived'].indexOf(po.status)<0){delete orders[po.poId];return;}orders[po.poId]={status:po.status,codes:(po.items||[]).filter(function(it){return num(it.qty)-num(it.receivedQty)>0;}).map(function(it){return it.productCode;})};});
+  function rebuildPendingProductCodes(changed){
+    if(!pendingSummary.orders){pendingSummary.orders={};changed=purchaseOrders;}var orders=pendingSummary.orders;
+    (changed||[]).forEach(function(po){if(['Pending','Ordered','PartiallyReceived'].indexOf(po.status)<0){delete orders[po.poId];return;}orders[po.poId]={status:po.status,codes:(po.items||[]).filter(function(it){return num(it.qty)-num(it.receivedQty)>0;}).map(function(it){return it.productCode;})};});
     pendingProductCodes={};pendingSummary.pendingCount=0;Object.keys(orders).forEach(function(id){var order=orders[id];if(order.status==='Pending')pendingSummary.pendingCount++;order.codes.forEach(function(code){pendingProductCodes[code]=true;});});
   }
 
@@ -419,14 +421,14 @@
         qtyState[s.productCode] = lowStockItems[li].suggestedQty;
       }
     });
-    rebuildPendingProductCodes();
+    rebuildPendingProductCodes(p?[p]:[]);
     renderCreateTab();
     renderHistoryTab();
     updateStatCards();
   }
 
   function updateStatCards() {
-    document.getElementById('statLowCount').innerText = lowStockItems.length.toLocaleString();
+    document.getElementById('statLowCount').innerText = purchaseCreateLoaded?lowStockItems.length.toLocaleString():'—';
 
     var vendorIds = {};
     var estValue  = 0;
@@ -434,10 +436,10 @@
       if (p.vendorId) vendorIds[p.vendorId] = true;
       estValue += (qtyState[p.productCode] != null ? qtyState[p.productCode] : p.suggestedQty) * (p.costPrice || 0);
     });
-    document.getElementById('statVendorCount').innerText = Object.keys(vendorIds).length.toLocaleString();
-    document.getElementById('statEstValue').innerText    = estValue.toLocaleString('th-TH', { maximumFractionDigits: 0 });
+    document.getElementById('statVendorCount').innerText = purchaseCreateLoaded?Object.keys(vendorIds).length.toLocaleString():'—';
+    document.getElementById('statEstValue').innerText    = purchaseCreateLoaded?estValue.toLocaleString('th-TH', { maximumFractionDigits: 0 }):'—';
 
-    var pendingCount = documentPager&&(documentPager.hasMore()||documentPager.filtered())?pendingSummary.pendingCount:purchaseOrders.filter(function(po) { return po.status === 'Pending'; }).length;
+    var pendingCount = pendingSummary.pendingCount;
     document.getElementById('statPendingPO').innerText = pendingCount.toLocaleString();
   }
 
@@ -449,6 +451,7 @@
     document.getElementById('tabBtnHistory').classList.toggle('active', tab === 'history');
     document.getElementById('tabCreate').classList.toggle('active', tab === 'create');
     document.getElementById('tabHistory').classList.toggle('active', tab === 'history');
+    if(purchasePageLoaded&&(tab==='history'?!purchaseHistoryLoaded:!purchaseCreateLoaded))loadAll();
   }
 
   // ==========================================
@@ -1166,17 +1169,17 @@ syyRegisterFreshness({reload:loadAll,canRefresh:function(){return !receiveBusy &
 </script>
 <script>
 function renderPurchaseOrderState(){rebuildPendingProductCodes();renderCreateTab();renderHistoryTab();updateStatCards();}
-function upsertPurchaseOrder(po){if(!po||!po.poId)return;var index=purchaseOrders.findIndex(function(item){return item.poId===po.poId;});if(index>=0)purchaseOrders[index]=Object.assign({},purchaseOrders[index],po);else purchaseOrders.unshift(po);renderPurchaseOrderState();}
+function upsertPurchaseOrder(po){if(!po||!po.poId)return;var index=purchaseOrders.findIndex(function(item){return item.poId===po.poId;});if(index>=0)purchaseOrders[index]=Object.assign({},purchaseOrders[index],po);else purchaseOrders.unshift(po);rebuildPendingProductCodes([index>=0?purchaseOrders[index]:po]);renderPurchaseOrderState();}
 function refreshPurchaseOrder(id){callApi('getPurchaseOrderPageData',[{poId:id}],function(data){upsertPurchaseOrder(data.po);},function(){toast('โหลดสถานะล่าสุดไม่สำเร็จ กรุณารีเฟรช','warn');});}
 </script>
 <script>
-window.addEventListener('load',function(){syyDraftRegister('orders',{
+document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('orders',{
  capture:function(){return {checked:checkedState,qty:qtyState,unknown:!!syyUnknownWrites.savePurchaseOrder};},
  restore:function(d){if(!d||!d.checked||!d.qty)return;checkedState=d.checked;qtyState=d.qty;renderCreateTab();updateStatCards();if(d.unknown){syyUnknownWrites.savePurchaseOrder=true;syyLockUnknownWrite('savePurchaseOrder');}}
 });});
 </script>
 <script>
-window.addEventListener('load',function(){syyViewRegister('orders',function(){return {status:historyStatusFilter,tab:document.getElementById('tabHistory').classList.contains('active')?'history':'create',scroll:window.scrollY};},function(v){historyStatusFilter=v.status||'all';renderHistoryTab();switchTab(v.tab==='history'?'history':'create');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
+document.addEventListener('DOMContentLoaded',function(){syyViewRegister('orders',function(){return {status:historyStatusFilter,tab:document.getElementById('tabHistory').classList.contains('active')?'history':'create',scroll:window.scrollY};},function(v){historyStatusFilter=v.status||'all';renderHistoryTab();switchTab(v.tab==='history'?'history':'create');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

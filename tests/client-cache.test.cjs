@@ -218,7 +218,7 @@ test('server and browser conditional caches cannot extend source expiry even whe
 });
 
 test('read metrics count actual coalesced RPCs and elapsed time without recording arguments or cached hits as requests',()=>{
- const b=browser();b.read('getBrands');b.read('getBrands');b.tick(25);b.complete([]);b.read('getBrands');b.flush();assert.deepEqual(plain(b.c.syyCacheStats.byApi.getBrands),{rpcCount:1,errorCount:0,totalMs:25,maxMs:25,lastMs:25,slowCount:0});
+ const b=browser();b.read('getBrands');b.read('getBrands');b.tick(25);b.complete([]);b.read('getBrands');b.flush();const m=plain(b.c.syyCacheStats.byApi.getBrands);assert.deepEqual([m.rpcCount,m.errorCount,m.totalMs,m.maxMs,m.lastMs,m.slowCount,m.p50Ms,m.p95Ms],[1,0,25,25,25,0,25,25]);assert.deepEqual(m.samples,[{totalMs:25,failed:false,decodeMs:0,wireChars:2,source:'server'}]);
  b.read('getBrands',[],{fresh:true});b.tick(10);b.calls.at(-1).fail({message:'network'});assert.equal(b.c.syyCacheStats.byApi.getBrands.rpcCount,2);assert.equal(b.c.syyCacheStats.byApi.getBrands.errorCount,1);assert.equal(b.c.syyCacheStats.byApi.getBrands.totalMs,35);assert.equal(b.c.syyCacheStats.hits,1);
  b.read('getAllUsers');b.tick(3001);b.calls.at(-1).ok([]);assert.equal(b.c.syyCacheStats.byApi.getAllUsers.slowCount,1);
 });
@@ -248,10 +248,10 @@ test('failed manual refresh preserves previous cache and late ordinary replies c
  const last=b.read('getBrands');b.flush();assert.equal(last.value[0].Name,'Latest');
 });
 
-test('manual refresh sanitizes only freshness controls, reuses product snapshot keys and never stores unbounded catalogs on disk',()=>{
+test('manual refresh sanitizes only freshness controls, reuses product snapshot keys and only stores validated bounded catalog data on disk',()=>{
  const b=browser(),args=[{paged:true,cursorMode:true,page:1,pageSize:50,search:'',filters:{},includeMasters:false}];b.read('getAllProducts',args);b.complete({catalogPage:true,products:[],page:1});
  b.read('getAllProducts',[{...args[0],refreshSnapshot:true}],{manual:true,fresh:true});assert.equal(b.calls.at(-1).transport.version,'v1');assert.equal(b.calls.at(-1).transport.refresh,false);
- assert.equal(b.c.syyDiskCache.eligible('getAllProducts[{"compact":true}]'),false);assert.equal(b.c.syyDiskCache.eligible('getProductCatalogPage[{"cursorMode":true,"search":"Part"}]'),false);assert.equal(b.c.syyDiskCache.eligible('getProductById["P1"]'),false);
+ assert.equal(b.c.syyDiskCache.eligible('getAllProducts[{"compact":true}]'),true);assert.equal(b.c.syyDiskCache.eligible('getProductCatalogPage[{"cursorMode":true,"search":"Part"}]'),false);assert.equal(b.c.syyDiskCache.eligible('getProductById["P1"]'),false);
  const key='getProductCatalogPage'+JSON.stringify([{cursorMode:true,page:1,pageSize:50}]),page={catalogPage:true,cursorMode:true,products:[{id:'P1',productCode:'P1',productName:'Part',costPrice:10,currentStock:3}],page:1,pageSize:50,total:null,readTime:new Date().toISOString(),hasMore:false,nextCursor:''};
  assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify(page)),true);assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify({...page,products:[{...page.products[0],password:'secret'}]})),false);assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify({...page,customers:[]})),false);
  assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify({...page,masters:{vendors:[{id:'V1',Name:'Vendor (0800000000)'}]}})),false);
@@ -295,5 +295,11 @@ test('reading an unrelated dataset cannot clear another dataset dirty indicator'
 test('bootstrap page reuse never overwrites a newer ordinary page and section hints do not change query identity',()=>{
  const b=browser(),a={paged:true,cursorMode:true,page:1,pageSize:50,includeMasters:true},p={...a,includeMasters:false};b.read('getAllProducts',[a]);const old=b.calls.at(-1);b.read('getProductCatalogPage',[p]);b.complete({catalogPage:true,page:1,products:[{id:'NEW'}]},'v2');old.ok({__syyCache:1,version:'v1',data:{catalogPage:true,page:1,products:[{id:'OLD'}],masters:{}}});const newer=b.read('getProductCatalogPage',[p]);b.flush();assert.equal(newer.value.products[0].id,'NEW');
  const first=b.c.syyReadArgs('getQuotationPageData',[2569,{compactCatalog:true,sectionVersions:{},search:{number:'QT1'}}]),same=b.c.syyReadArgs('getQuotationPageData',[2569,{compactCatalog:true,sectionVersions:{products:{version:'v1'}},search:{number:'QT1'}}]),different=b.c.syyReadArgs('getQuotationPageData',[2569,{compactCatalog:true,sectionVersions:{},search:{number:'QT2'}}]);assert.deepEqual(plain(first),plain(same));assert.notDeepEqual(plain(first),plain(different));
+});
+test('compact catalog disk cache strictly bounds columns, cardinality and values and isolates image-free API dependencies',()=>{
+ const b=browser(),s=setup(),key='getAllProducts[{"compact":true}]';s.seed();const packed=plain(s.c.packProductCatalog_(s.c.getAllProducts_({omitImages:true}))),raw=JSON.stringify(packed);assert(b.c.syyDiskCache.eligible(key,raw));
+ for(const bad of [{...packed,customers:[]},{...packed,fields:['password',...packed.fields.slice(1)]},{...packed,rows:Array(10001).fill(packed.rows[0])},{...packed,rows:[packed.rows[0].map((v,i)=>i===16?null:v)]}])assert.equal(b.c.syyDiskCache.eligible(key,JSON.stringify(bad)),false);
+ assert(!b.c.syyReadPolicy('getAllProducts',[{compact:true}]).scopes.includes('Product_Images'));assert(!b.c.syyReadPolicy('getProductCatalogPage',[{includeImages:false}]).scopes.includes('Product_Images'));assert(b.c.syyReadPolicy('getProductCatalogPage',[{}]).scopes.includes('Product_Images'));
+ assert.deepEqual(plain(b.c.syyReadPolicy('getTaxInvoicePageData',[2569,{deferSections:true}]).scopes),['Master_Tax_Invoice']);assert.deepEqual(plain(b.c.syyReadPolicy('getPurchaseOrderPageData',[{section:'history'}]).scopes),['Purchase_Orders','Master_Vendors']);
 });
 

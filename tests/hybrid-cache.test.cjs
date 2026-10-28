@@ -9,6 +9,23 @@ function fixture(n=10000){
  s.count=()=>returned;return s;
 }
 function page(s,options={}){return s.c.getProductCatalogPage_({cursorMode:true,pageSize:50,...options});}
+test('image-free browse, full-catalog filters and legacy image-enabled responses use separate contexts',()=>{
+ const s=fixture(121);for(let i=0;i<121;i++)s.put('Product_Images/P'+String(i).padStart(5,'0'),{Image_Url:'https://example.invalid/test.jpg'});
+ let r=page(s,{includeImages:false,pageSize:25});assert.equal(r.products.length,25);assert(r.products.every(p=>p.imageDataLoaded===false));assert(!s.calls.some(c=>(c.options.payload||'').includes('/Product_Images/')||c.url.includes('/Product_Images?')));
+ assert.throws(()=>page(s,{includeImages:true,pageSize:25,cursor:r.nextCursor||r.pageInfo?.nextCursor}));
+ const search=s.c.getProductCatalogPage_({search:'Part 120',pageSize:50,includeImages:false});assert.equal(search.products.length,1);assert.equal(search.products[0].productCode,'P00120');assert(!s.calls.some(c=>(c.options.payload||'').includes('/Product_Images/')||c.url.includes('/Product_Images?')));
+ const legacy=page(s,{includeImages:true});assert.equal(legacy.products[0].imageDataLoaded,true);assert.match(legacy.products[0].imageUrl,/test.jpg/);assert.throws(()=>page(s,{includeImages:'false'}));
+});
+test('oversized server results compress, preserve source age and recover from corrupt/missing chunks',()=>{
+ const s=setup(),scopes=['Stock_Movements'],key='dashboard-large-fixture',version=s.c.readCacheVersion_(scopes),created=Date.now(),value={rows:Array.from({length:10000},(_,i)=>({id:'M'+i,note:'รายงาน '.repeat(25)}))};
+ assert(JSON.stringify(value).length>960000);s.c.writeResultCache_(key,scopes,value,60000,version,created);const base=s.c.readCacheKey_(key),m=JSON.parse(s.cache.get(base));assert.equal(m.encoding,'gzip');assert.equal(m.createdAt,created);assert.deepEqual(plain(s.c.readResultCache_(key,scopes,60000)),value);s.cache.delete(base+'_'+m.id+'_0');assert.equal(s.c.readResultCache_(key,scopes,60000),null);s.cache.set(base+'_'+m.id+'_0','corrupt');assert.equal(s.c.readResultCache_(key,scopes,60000),null);assert.equal(s.commits.length,0);
+});
+test('image-only mutation does not invalidate image-free browse cache, rebase its anchor or break filtered continuation',()=>{
+ const s=fixture(121),first=page(s,{includeImages:false,pageSize:25}),reads=s.count(),filtered=s.c.getProductCatalogPage_({includeImages:false,search:'Part',pageSize:25});
+ s.c.clearCollectionCache_('Product_Images');const before=s.count(),warm=page(s,{includeImages:false,pageSize:25});assert.equal(s.count(),before);assert.deepEqual(plain(warm.products),plain(first.products));const next=page(s,{includeImages:false,pageSize:25,page:2,cursor:first.nextCursor});assert.equal(next.snapshotRebased,false);assert.equal(next.products[0].productCode,'P00025');
+ assert.equal(s.c.getProductCatalogPage_({includeImages:false,search:'Part',pageSize:25,cursor:filtered.nextCursor}).products[0].productCode,'P00025');assert(reads<=26);assert.equal(s.commits.length,0);
+ const legacy=s.c.getAllProducts_({includeImages:false});assert(legacy.every(p=>p.imageDataLoaded===false));assert.throws(()=>s.c.getAllProducts_({includeImages:'false'}));
+});
 test('10,000-record cold browse reads 51 product docs instead of 10,000; repeated page is zero additional product reads',()=>{
  const old=fixture(),s=fixture();old.c.getProductCatalogPage_({pageSize:50});const before=old.count(),r=page(s);
  assert.equal(r.products.length,50);assert.equal(r.total,null);assert.equal(r.cursorMode,true);assert.equal(r.products[0].brandName,'Brand');assert.equal(r.products[0].carModel,'Car Model');assert.equal(s.count(),51);page(s);assert.equal(s.count(),51);

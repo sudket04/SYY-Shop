@@ -68,7 +68,7 @@ test('committed sale invalidates compact catalog while retaining atomic writes a
 });
 test('live producer cannot cause duplicate full scans after 900ms; released/failed leases recover and owner cleanup is scoped',()=>{
  const s=fixture(10),key=s.c.readCacheKey_('lease:test'),lease={owner:'other',until:Date.now()+30000};s.cache.set(key,JSON.stringify(lease));let slept=0,work=0;
- s.c.Utilities.sleep=()=>{slept++;};assert.throws(()=>s.c.withReadLease_('test',()=>null,()=>++work),/รอสักครู่/);assert.equal(work,0);assert.equal(slept,20);assert.equal(JSON.parse(s.cache.get(key)).owner,'other');
+ s.c.Utilities.sleep=()=>{slept++;};assert.throws(()=>s.c.withReadLease_('test',()=>null,()=>++work),/รอสักครู่/);assert.equal(work,0);assert.equal(slept,8);assert.equal(JSON.parse(s.cache.get(key)).owner,'other');
  s.c.Utilities.sleep=()=>s.cache.delete(key);assert.equal(s.c.withReadLease_('test',()=>null,()=>++work),1);assert(!s.cache.has(key));
  assert.throws(()=>s.c.withReadLease_('test',()=>null,()=>{throw Error('failed');}),/failed/);assert(!s.cache.has(key));
  s.c.CacheService.getScriptCache=()=>{throw Error('unavailable');};assert.equal(s.c.withReadLease_('test',()=>null,()=>42),42);

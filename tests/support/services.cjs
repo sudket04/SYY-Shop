@@ -108,7 +108,7 @@ function setup(options={}){
   }
   const c=vm.createContext({console:{error(){},warn(){},log(){}},
     Utilities:{getUuid:()=>crypto.randomUUID(),formatDate:(_d,_z,format)=>format==='yyyy-MM-dd'?'2026-10-11':format==='u'?'7':format==='HH-mm-ss'?'12-00-00':'2026-10-11_12-00-00',sleep(){},
-      base64Encode:x=>(typeof x==='string'?Buffer.from(x):Buffer.from(Uint8Array.from(x))).toString('base64'),base64Decode:x=>Array.from(Buffer.from(x,'base64')),newBlob:blob,DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'UTF8'},
+      base64Encode:x=>(typeof x==='string'?Buffer.from(x):Buffer.from(Uint8Array.from(x))).toString('base64'),base64Decode:x=>Array.from(Buffer.from(x,'base64')),gzip:b=>blob(require('node:zlib').gzipSync(Buffer.from(b.getBytes()))),ungzip:b=>blob(require('node:zlib').gunzipSync(Buffer.from(b.getBytes()))),newBlob:blob,DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'UTF8'},
       MacAlgorithm:{HMAC_SHA_1:'sha1'},computeHmacSignature:(algo,data,key)=>Array.from(crypto.createHmac(algo,Buffer.from(Uint8Array.from(key))).update(Buffer.from(Uint8Array.from(data))).digest()),
       computeHmacSha256Signature:(data,key)=>Array.from(crypto.createHmac('sha256',String(key)).update(String(data)).digest()),
       computeDigest:(algo,input)=>Array.from(crypto.createHash('sha256').update(typeof input==='string'?input:Buffer.from(Uint8Array.from(input))).digest())},

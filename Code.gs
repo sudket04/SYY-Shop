@@ -606,20 +606,24 @@ function readResultCache_(key,scopes,maxAge){
   if(!raw)return null;var m=JSON.parse(raw);if(m.version!==version||m.expiresAt<=Date.now()||Date.now()-m.createdAt>=maxAge||m.count<1||m.count>(key==='product-catalog-v1'?200:60))return null;
   var keys=[];for(var i=0;i<m.count;i++)keys.push(base+'_'+m.id+'_'+i);var parts=cache.getAll(keys),text='';
   for(var j=0;j<keys.length;j++){if(typeof parts[keys[j]]!=='string')return null;text+=parts[keys[j]];}
+  if(m.encoding==='gzip')text=Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(text))).getDataAsString();
+  else if(m.encoding) return null;
   return readCacheVersion_(scopes)===version?JSON.parse(text):null;
  }catch(e){return null;}
 }
 function writeResultCache_(key,scopes,value,maxAge,version,createdAt){
  try{
   if(readCacheVersion_(scopes)!==version)return;
-  var text=JSON.stringify(value),count=Math.ceil(text.length/16000);if(count>(key==='product-catalog-v1'?200:60))return;
+  var text=JSON.stringify(value),encoding='',limit=key==='product-catalog-v1'?200:60;
+  if(text.length>16000*limit){text=Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(text)).getBytes());encoding='gzip';}
+  var count=Math.ceil(text.length/16000);if(count>limit)return;
   var cache=CacheService.getScriptCache(),base=readCacheKey_(key),id=Utilities.getUuid(),parts={},expiresAt=createdAt+maxAge;
   var sourceKeys=scopes.filter(function(s){return CACHEABLE_COLLECTIONS.indexOf(s)>=0;}).map(function(s){return collectionCacheBaseKey_(s)+'__manifest';}),sources=cache.getAll(sourceKeys);
   sourceKeys.forEach(function(k){if(sources[k]){var source=JSON.parse(sources[k]);if(Number.isFinite(source.expiresAt))expiresAt=Math.min(expiresAt,source.expiresAt);}});
   var ttl=Math.floor((expiresAt-Date.now())/1000);if(ttl<1)return;
   for(var i=0;i<count;i++)parts[base+'_'+id+'_'+i]=text.slice(i*16000,(i+1)*16000);
   cache.putAll(parts,ttl);if(readCacheVersion_(scopes)!==version)return;
-  cache.put(base,JSON.stringify({version:version,id:id,count:count,createdAt:createdAt,expiresAt:expiresAt}),ttl);
+  cache.put(base,JSON.stringify({version:version,id:id,count:count,encoding:encoding,createdAt:createdAt,expiresAt:expiresAt}),ttl);
  }catch(e){} // An unavailable/evicted cache must not fail a successful read.
 }
 function withReadLease_(key,read,worker){
@@ -629,11 +633,11 @@ function withReadLease_(key,read,worker){
  try{
   // Wait for a live producer instead of starting another full scan after 900 ms.
   // Bounded waiting releases the execution with a retryable error, never partial data.
-  for(var attempt=0;attempt<20;attempt++){
+  for(var attempt=0;attempt<8;attempt++){
    try{claimed=claim();}catch(e){return worker();} // Cache outage: preserve availability.
    cached=read();if(cached!==null)return cached;
    if(claimed)return worker();
-   Utilities.sleep(500);
+   Utilities.sleep(250);
   }
   throw new Error('กำลังเตรียมข้อมูลสินค้า กรุณารอสักครู่แล้วลองใหม่');
  }finally{
@@ -1074,6 +1078,7 @@ function buildCarMapFromDocs_(docs) {
 // 10. ★ getAllProducts
 // ==========================================
 function getAllProducts_(options) {
+  if(options&&options.includeImages!=null&&typeof options.includeImages!=='boolean')throw Error('ตัวเลือกรูปสินค้าไม่ถูกต้อง');
   if(options && options.paged) {
     var page=getProductCatalogPage_(options);
     if(options.includeMasters)page.masters=getAllMasterDropdowns_();
@@ -1085,9 +1090,10 @@ function getAllProducts_(options) {
     var masters = fetchCollectionsParallel_(
       ["Master_Brands", "Master_Categories", "Master_Vendors", "Master_Zones", "Master_Cars"]
     );
-    var imageMap = options && options.omitImages ? {} : getProductImageUrlMap_();
+    var imageMap = options && (options.omitImages||options.includeImages===false) ? {} : getProductImageUrlMap_();
     var productDocs = fetchCollectionDocsCached_("Master_Products");
     products=mapProductPageDocs_(productDocs,masters,imageMap);
+    if(options&&options.includeImages===false)products.forEach(function(row){row.imageDataLoaded=false;});
   } catch (e) { console.error("getAllProducts_ read failed", e); throw e; }
   return options && options.includeMasters ? {products:products,masters:getAllMasterDropdowns_(masters)} : products;
 }
@@ -1123,7 +1129,8 @@ function productCatalogSpec_(options){
     if(PRODUCT_FILTER_FIELDS.indexOf(key)<0||!Array.isArray(values)||values.length>20000||values.some(function(v){return typeof v!=='string'||v.length>2000;}))throw new Error('ตัวกรองสินค้าไม่ถูกต้อง');
     if(values.length)normalized[key]=Array.from(new Set(values)).sort();
   });
-  return {search:search.trim().toLowerCase(),filters:normalized,sortCol:sort,sortAsc:options.sortAsc!==false};
+  if(options.includeImages!=null&&typeof options.includeImages!=='boolean')throw new Error('ตัวเลือกรูปสินค้าไม่ถูกต้อง');
+  return {search:search.trim().toLowerCase(),filters:normalized,sortCol:sort,sortAsc:options.sortAsc!==false,includeImages:options.includeImages!==false};
 }
 function filterProductCatalog_(rows,spec,except){
   var sets=Object.create(null);Object.keys(spec.filters).forEach(function(k){if(k!==except)sets[k]=new Set(spec.filters[k]);});
@@ -1139,13 +1146,14 @@ function filterProductCatalog_(rows,spec,except){
   return result;
 }
 function productCatalogCursor_(value){var encoded=Utilities.base64Encode(JSON.stringify(value));return encoded+'.'+movementCursorSignature_('catalog-v1:'+encoded);}
+function productListScopes_(spec){return PRODUCT_CATALOG_SCOPES.concat(spec.includeImages?[PRODUCT_IMAGES_COLLECTION]:[]);}
 function getProductCatalogPage_(options){
   options=options||{};var spec=productCatalogSpec_(options),size=options.pageSize==null?50:Number(options.pageSize),page=options.page==null?1:Number(options.page);
   if(!Number.isInteger(size)||size<1||size>200||!Number.isInteger(page)||page<1||page>100000)throw new Error('ขนาดหน้าสินค้าไม่ถูกต้อง');
   // Opt-in wire format for new clients. Complex substring/XLFilter queries keep
   // their complete-dataset semantics; ordinary browsing never scans the catalog.
   if(options.cursorMode===true&&!spec.search&&!Object.keys(spec.filters).length&&(!spec.sortCol||spec.sortCol==='productCode'))return getProductBrowsePage_(options,spec,size,page);
-  var version=PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|'),offset=(page-1)*size,query=readCacheKey_(JSON.stringify(spec)),issuedAt=Date.now();
+  var version=productListScopes_(spec).map(collectionGeneration_).join('|'),offset=(page-1)*size,query=readCacheKey_(JSON.stringify(spec)),issuedAt=Date.now();
   if(options.cursor){try{
     if(typeof options.cursor!=='string'||options.cursor.length>4096)throw Error('invalid');
     var parts=options.cursor.split('.');if(parts.length!==2||movementCursorSignature_('catalog-v1:'+parts[0])!==parts[1])throw Error('invalid');
@@ -1159,9 +1167,9 @@ function getProductCatalogPage_(options){
   if(options.cursor&&cursor.snapshot!==all.catalogSnapshot)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาเริ่ม Export ใหม่');
   if(options.cursor&&offset>=total)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
   if(!options.cursor)offset=Math.min(offset,Math.max(0,(Math.ceil(total/size)-1)*size));
-  var selected=codes.slice(offset,offset+size).map(function(code){return Object.assign({},byCode[code]);}),images=getProductImageBatch_(codes.slice(offset,offset+size));
-  selected.forEach(function(row){Object.assign(row,images[row.productCode]);});
-  if(PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|')!==version)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
+  var selected=codes.slice(offset,offset+size).map(function(code){return Object.assign({},byCode[code]);}),images=spec.includeImages?getProductImageBatch_(codes.slice(offset,offset+size)):{};
+  selected.forEach(function(row){Object.assign(row,images[row.productCode]);row.imageDataLoaded=spec.includeImages;});
+  if(productListScopes_(spec).map(collectionGeneration_).join('|')!==version)throw new Error('รายการสินค้าเปลี่ยนแปลง กรุณาโหลดใหม่');
   var more=offset+selected.length<total;
   var response={products:selected,catalogPage:true,total:total,unfilteredTotal:all.length,page:Math.floor(offset/size)+1,pageSize:size,nextCursor:more?productCatalogCursor_({query:query,version:version,snapshot:all.catalogSnapshot,offset:offset+selected.length,at:issuedAt}):'',hasMore:more};
   // Seed only small, unfiltered facets from the catalog already in memory.
@@ -1177,7 +1185,7 @@ function getProductCatalogPage_(options){
 // manual reads must apply the same owner/spec/age checks as ordinary browsing.
 function productBrowseContext_(options,spec,size,page){
   if(!Number.isInteger(size)||size<1||size>200||!Number.isInteger(page)||page<1||page>100000)throw new Error('ขนาดหน้าสินค้าไม่ถูกต้อง');
-  var version=PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|'),scope=validatedGatewaySession_&&validatedGatewaySession_.session;
+  var version=productListScopes_(spec).map(collectionGeneration_).join('|'),scope=validatedGatewaySession_&&validatedGatewaySession_.session;
   var owner=scope?scope.username+':'+scope.role:'internal',query=readCacheKey_(JSON.stringify([spec,size,owner])),cursor=null;
   if(options.cursor){try{
     if(typeof options.cursor!=='string'||options.cursor.length>4096)throw Error('cursor');
@@ -1197,7 +1205,7 @@ function getProductBrowsePage_(options,spec,size,page){
   // Shared rows contain no caller-specific data. Sign continuation per caller
   // after cache reuse, so five authorized users share the same initial query.
   var key='product-browse-v1:'+readCacheKey_(JSON.stringify([spec,size,cursor&&cursor.last,snapshotTime]));
-  var response=cachedReadResult_(key,PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]),30000,function(){
+  var response=cachedReadResult_(key,productListScopes_(spec),30000,function(){
     var fields=['Product_Name','Part_Type','Part_Number','Barcode','Barcode_Generated','Brand_ID','Category_ID','Default_Vendor_ID','Zone_ID','Car_IDs','Car_ID','Cost_Price','Selling_Price','Current_Stock','Min_Stock','Status'];
     var q={from:[{collectionId:'Master_Products'}],select:{fields:fields.map(function(f){return {fieldPath:f};})},orderBy:[{field:{fieldPath:'__name__'},direction:spec.sortAsc?'ASCENDING':'DESCENDING'}],limit:size+1};
     if(cursor)q.startAt={values:[{referenceValue:fsDocPath_('Master_Products',cursor.last)}],before:false};
@@ -1210,9 +1218,9 @@ function getProductBrowsePage_(options,spec,size,page){
     var more=docs.length>size;docs=docs.slice(0,size);
     var refs={Master_Brands:[],Master_Categories:[],Master_Vendors:[],Master_Zones:[],Master_Cars:[]};
     docs.forEach(function(d){var f=d.fields;[['Master_Brands','Brand_ID'],['Master_Categories','Category_ID'],['Master_Vendors','Default_Vendor_ID'],['Master_Zones','Zone_ID']].forEach(function(pair){var id=parseFirestoreValue_(f[pair[1]]);if(id&&id!=='PENDING')refs[pair[0]].push(id);});var cars=parseFirestoreValue_(f.Car_IDs);if(!cars||!cars.length)cars=[parseFirestoreValue_(f.Car_ID)];if(!Array.isArray(cars))cars=[cars];refs.Master_Cars=refs.Master_Cars.concat(cars.filter(Boolean));});
-    var masters=readProductReferenceDocs_(refs,true),rows=mapProductPageDocs_(docs,masters),images=getProductImageBatch_(docs.map(function(d){return d.id;}));
-    rows.forEach(function(row){Object.assign(row,images[row.id]);});
-    if(PRODUCT_CATALOG_SCOPES.concat([PRODUCT_IMAGES_COLLECTION]).map(collectionGeneration_).join('|')!==version)productBrowseRestart_();
+    var masters=readProductReferenceDocs_(refs,true),rows=mapProductPageDocs_(docs,masters),images=spec.includeImages?getProductImageBatch_(docs.map(function(d){return d.id;})):{};
+    rows.forEach(function(row){Object.assign(row,images[row.id]);row.imageDataLoaded=spec.includeImages;});
+    if(productListScopes_(spec).map(collectionGeneration_).join('|')!==version)productBrowseRestart_();
     return {catalogPage:true,cursorMode:true,products:rows,page:page,pageSize:size,total:null,unfilteredTotal:null,readTime:readTime,hasMore:more,createdAt:Date.now(),last:docs.length?docs[docs.length-1].id:''};
   });
   response=Object.assign({},response);response.page=page;
@@ -2113,7 +2121,8 @@ function getTaxInvoiceList_(){var out=[],cursor='';do{var p=getTaxInvoiceListDat
 
 function getTaxInvoiceListData_(yearFilter,options){var page=queryDocumentPage_('Master_Tax_Invoice','Invoice_Date',yearFilter,options);return {invoices:page.docs.map(function(doc){return mapTaxInvoiceQueryDoc_(doc);}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getTaxInvoiceAvailableYears_()};}
 
-function getTaxInvoicePageData_(yearFilter,options){var result=getTaxInvoiceListData_(yearFilter,options);documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;return result;}
+function getTaxInvoicePageData_(yearFilter,options){options=options||{};validateDocumentSections_(options);var result=options.editorOnly?{}:getTaxInvoiceListData_(yearFilter,options);if(!options.deferSections)documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;return result;}
+function validateDocumentSections_(options){['editorOnly','deferSections'].forEach(function(k){if(options[k]!=null&&typeof options[k]!=='boolean')throw Error('ตัวเลือกโหลดเอกสารไม่ถูกต้อง');});if(options.editorOnly&&options.deferSections)throw Error('ตัวเลือกโหลดเอกสารขัดแย้งกัน');}
 
 // Reuse only sections actually held by this caller, with a hard age that validation cannot extend.
 function clientSectionReusable_(prior,version,scopes,age){
@@ -2440,7 +2449,7 @@ function seedQuotationYearsMeta_() {
 //   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
 function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(function(doc){return mapQuotationDoc_({id:doc.name.split('/').pop(),fields:doc.fields||{}});}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getQuotationAvailableYears_()};}
 
-function getQuotationPageData_(yearFilter,options){var result=getQuotationListData_(yearFilter,options);documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
+function getQuotationPageData_(yearFilter,options){options=options||{};validateDocumentSections_(options);var result=options.editorOnly?{}:getQuotationListData_(yearFilter,options);if(!options.deferSections)documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
 
 function updateQuotationStatus_(docId, status) {
   if (QUOTATION_STATUSES.indexOf(status) === -1) {
@@ -3209,16 +3218,19 @@ function buildPurchaseOrderList_(vendorMap){var out=[],cursor='';do{var page=que
 
 function getPurchaseOrderPageData_(options){
   options=options||{};if(options.poId)return {po:getPurchaseOrderById_(options.poId)};
+  if(options.section!=null&&['create','history'].indexOf(options.section)<0)throw Error('ส่วนข้อมูลใบสั่งซื้อไม่ถูกต้อง');
+  if(options.section==='create')return cachedReadResult_('po-create-v1',PRODUCT_CATALOG_SCOPES.concat(['Purchase_Orders']),60000,function(){return {lowStockItems:buildLowStockList_(buildVendorMap_()),pendingSummary:getPendingPurchaseOrderSummary_(),snapshotLoadedAt:Date.now()};},options.force===true);
+  if(options.section==='history'&&!options.cursor&&!options.search)return cachedReadResult_('po-history-v1:'+Number(options.pageSize||50),['Purchase_Orders','Master_Vendors'],60000,function(){return getPurchaseOrderPageUncached_(options);},options.force===true);
   if(!options.cursor&&!options.search)return cachedReadResult_('po-bootstrap:'+Number(options.pageSize||50),['Purchase_Orders','Master_Products','Product_Images','Master_Vendors','Master_Brands','Master_Categories','Master_Zones','Master_Cars'],60000,function(){return getPurchaseOrderPageUncached_(options);},options.force===true);
   return getPurchaseOrderPageUncached_(options);
 }
 function getPurchaseOrderPageUncached_(options){
   var page=queryDocumentPage_('Purchase_Orders','Order_Date','all',options),vendors={};
-  if(options.cursor||options.search){var ids=[];page.docs.forEach(function(doc){var id=parseFirestoreValue_((doc.fields||{}).Vendor_ID);if(id&&ids.indexOf(id)<0)ids.push(id);});
+  if(options.section==='history'||options.cursor||options.search){var ids=[];page.docs.forEach(function(doc){var id=parseFirestoreValue_((doc.fields||{}).Vendor_ID);if(id&&ids.indexOf(id)<0)ids.push(id);});
     readProductReferenceDocs_({Master_Vendors:ids}).Master_Vendors.forEach(function(doc){var vendor={};Object.keys(doc.fields||{}).forEach(function(key){vendor[key]=parseFirestoreValue_(doc.fields[key]);});vendors[doc.id]=vendor;});
   }else vendors=buildVendorMap_();
   var result={purchaseOrders:page.docs.map(function(doc){return purchaseOrderDto_({id:doc.name.split('/').pop(),fields:doc.fields},vendors);}),pageInfo:page.pageInfo};
-  if(!options.cursor&&!options.search){result.lowStockItems=buildLowStockList_(vendors);result.pendingSummary=getPendingPurchaseOrderSummary_(page.pageInfo.readTime);result.snapshotLoadedAt=Date.parse(page.pageInfo.readTime)||Date.now();}return result;
+  if(!options.cursor&&!options.search){if(options.section!=='history')result.lowStockItems=buildLowStockList_(vendors);result.pendingSummary=getPendingPurchaseOrderSummary_(page.pageInfo.readTime);result.snapshotLoadedAt=Date.parse(page.pageInfo.readTime)||Date.now();}return result;
 }
 
 function updatePurchaseOrderStatus_(docId, newStatus) {
@@ -3859,6 +3871,9 @@ var API_REGISTRY = {
   getStockMovements        : "viewer",
   getStockMovementPage        : "viewer",
   getStockMovementDetail   : "staff",
+  getStockIssueCorrectionHistory: "staff",
+  getStockIssueCorrectionPreview: "admin",
+  correctStockIssue: "admin",
   getDashboardBootstrap    : "viewer",
   getDashboardDelta        : "viewer",
 
@@ -3950,6 +3965,9 @@ var API_FUNCTIONS = {
   getStockMovements         : getStockMovements_,
   getStockMovementPage      : getStockMovementPage_,
   getStockMovementDetail    : getStockMovementDetail_,
+  getStockIssueCorrectionHistory: getStockIssueCorrectionHistory_,
+  getStockIssueCorrectionPreview: getStockIssueCorrectionPreview_,
+  correctStockIssue: correctStockIssue_,
   getDashboardBootstrap     : getDashboardBootstrap_,
   getDashboardDelta         : getDashboardDelta_,
   saveTaxInvoice            : saveTaxInvoice_,
@@ -4062,7 +4080,7 @@ function logActivity_(username, fnName, args, result) {
 
 // Optional transport metadata preserves the legacy API result shape. Versions
 // use existing Script Properties only; no Firestore revision documents/writes.
-function clientReadScopes_(name){
+function clientReadScopes_(name,args){
   var masters=['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'];
   var catalog=['Master_Products'].concat(masters),images=catalog.concat(['Product_Images']);
   var scopes={getBrands:['Master_Brands'],getCategories:['Master_Categories'],getVendorsFull:['Master_Vendors'],getZonesFull:['Master_Zones'],getCarsFull:['Master_Cars'],getCustomersFull:['Master_Customers'],
@@ -4071,13 +4089,15 @@ function clientReadScopes_(name){
     getStockMovementPage:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovements:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovementDetail:catalog.concat(['Stock_Movements','Purchase_Orders']),
     getPurchaseOrderPageData:images.concat(['Purchase_Orders']),getQuotationPageData:images.concat(['Master_Customers','Quotations']),getQuotationListData:['Quotations'],
     getTaxInvoicePageData:images.concat(['Master_Customers','Master_Tax_Invoice']),getTaxInvoiceListData:['Master_Tax_Invoice']};
-  return scopes[name]||null;
+  var result=scopes[name]||null,o=args&&args[0];if(result&&['getAllProducts','getProductCatalogPage'].indexOf(name)>=0&&o&&(o.compact||o.includeImages===false))result=result.filter(function(x){return x!=='Product_Images';});
+  if(['getQuotationPageData','getTaxInvoicePageData'].indexOf(name)>=0){o=args&&args[1]||{};validateDocumentSections_(o);if(o.deferSections)result=[name==='getQuotationPageData'?'Quotations':'Master_Tax_Invoice'];else if(o.editorOnly)result=(o.compactCatalog?catalog:images).concat(['Master_Customers']);else if(o.compactCatalog)result=result.filter(function(x){return x!=='Product_Images';});}
+  if(name==='getPurchaseOrderPageData'&&o&&o.section)result=o.section==='history'?['Purchase_Orders','Master_Vendors']:catalog.concat(['Purchase_Orders']);return result;
 }
 function clientReadVersion_(scopes){
   var keys=scopes.map(function(name){return collectionCacheBaseKey_(name)+'__disabled';}),disabled=CacheService.getScriptCache().getAll(keys);
   if(keys.some(function(key){return disabled[key];}))throw new Error('Cache bypass');
   var props=PropertiesService.getScriptProperties().getProperties();
-  return (scopes.indexOf('Stock_Movements')>=0||scopes.indexOf('Quotations')>=0?'sales-bill-v1|':'')+scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
+  return (scopes.indexOf('Stock_Movements')>=0||scopes.indexOf('Quotations')>=0?'stock-correction-v1|':'')+scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
 }
 function clientReadExpiry_(scopes,maxAge){
   var expiry=Date.now()+maxAge;
@@ -4093,7 +4113,7 @@ function clientConditionalCursorAllowed_(name,args){
 }
 function apiGateway(token, fnName, args, userAgent, clientCache) {
   try {
-    var session = getSession_(token, userAgent);
+    var timingStarted=Date.now(),session = getSession_(token, userAgent),authMs=Date.now()-timingStarted;
     if (!session) {
       return { __authError: true, success: false, message: "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่" };
     }
@@ -4123,7 +4143,8 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     }
 
     var identityPositions = {resetUserPassword:1, toggleUserStatus:2, updateUserAccount:4,
-      issueStock:1, receiveGoods:1, saveQuotation:1, markQuotationStockIssued:2};
+      issueStock:1, receiveGoods:1, saveQuotation:1, markQuotationStockIssued:2,
+      getStockIssueCorrectionPreview:1,correctStockIssue:1};
     a = a.slice();
     if (Object.prototype.hasOwnProperty.call(identityPositions, fnName)) {
       var identityIndex = identityPositions[fnName];
@@ -4138,7 +4159,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
       console.error("apiGateway: ไม่พบฟังก์ชันจริงสำหรับ", fnName, "(อยู่ใน API_REGISTRY แต่ไม่มีใน API_FUNCTIONS — ตรวจ Code.gs)");
       return { success: false, message: "เกิดข้อผิดพลาดภายในระบบ กรุณาแจ้งผู้ดูแลระบบ" };
     }
-    var cacheScopes=clientCache&&clientCache.protocol===1?clientReadScopes_(fnName):null,cacheVersion=null;
+    var cacheScopes=clientCache&&clientCache.protocol===1?clientReadScopes_(fnName,a):null,cacheVersion=null;
     var authoritative=!!(cacheScopes&&clientCache.refresh===true),manual=!!(cacheScopes&&clientCache.manual===true&&!authoritative);
     if(authoritative){
       if(a.some(function(x){return x&&typeof x==='object'&&x.cursor;}))return {success:false,message:'กรุณาเริ่มรีเฟรชจากหน้าแรก เพื่อไม่เปลี่ยน snapshot ระหว่างแบ่งหน้า'};
@@ -4153,16 +4174,16 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     var maxClientAge=cacheScopes&&cacheScopes.every(function(x){return ['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers'].indexOf(x)>=0;})?300000:120000;
     var dataExpiry=cacheScopes?clientReadExpiry_(cacheScopes,maxClientAge):0;
     if(cacheVersion!==null&&!force&&dataExpiry>Date.now()&&(!manual||Number.isFinite(clientCache.expiresAt)&&clientCache.expiresAt>Date.now())&&clientCache.version===cacheVersion&&Number.isFinite(clientCache.loadedAt)&&clientCache.loadedAt<=Date.now()&&Date.now()-clientCache.loadedAt<maxClientAge){
-      return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes,expiresAt:dataExpiry};
+      return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes,expiresAt:dataExpiry,timings:{authMs:authMs,operationMs:0,serverMs:Date.now()-timingStarted}};
     }
     var referenceOperations=['saveProduct','saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveMasterData','savePurchaseOrder','saveQuotation',
       'deleteProduct','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone','deleteCar','deletePurchaseOrder'];
-    var result = referenceOperations.indexOf(fnName)>=0 ? withReferenceMutationLock_(function(){return fn.apply(null,a);}) : fn.apply(null,a);
+    var operationStarted=Date.now(),result = referenceOperations.indexOf(fnName)>=0 ? withReferenceMutationLock_(function(){return fn.apply(null,a);}) : fn.apply(null,a),operationMs=Date.now()-operationStarted;
 
     logActivity_(session.username, fnName, a, result);
 
     if(cacheVersion!==null&&!(result&&result.success===false))try{
-      if(clientReadVersion_(cacheScopes)===cacheVersion){var responseExpiry=clientReadExpiry_(cacheScopes,maxClientAge);if(result&&result.cursorMode===true&&Number.isFinite(result.cacheExpiresAt))responseExpiry=Math.min(responseExpiry,result.cacheExpiresAt);return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:responseExpiry};}
+      if(clientReadVersion_(cacheScopes)===cacheVersion){var responseExpiry=clientReadExpiry_(cacheScopes,maxClientAge);if(result&&result.cursorMode===true&&Number.isFinite(result.cacheExpiresAt))responseExpiry=Math.min(responseExpiry,result.cacheExpiresAt);return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:responseExpiry,timings:{authMs:authMs,operationMs:operationMs,serverMs:Date.now()-timingStarted}};}
     }catch(ignored){}
     return result;
 
@@ -4175,7 +4196,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
 // Server-side cost protection for authenticated read routes. It adds no DB writes
 // and never rate-limits stock commits, permissions checks, or document saves.
 function allowReadRequest_(name,username){
- var limits={authoritativeRefresh:3,getProductById:120,getProductCatalogPage:120,getProductCatalogFacets:120,getProductImageBatch:120,getDashboardBootstrap:30,getDashboardDelta:120,getStockMovementPage:120,getStockMovements:60,getStockMovementDetail:120,getPurchaseOrderPageData:120,getAllProducts:60};
+ var limits={authoritativeRefresh:3,getProductById:120,getProductCatalogPage:120,getProductCatalogFacets:120,getProductImageBatch:120,getDashboardBootstrap:30,getDashboardDelta:120,getStockMovementPage:120,getStockMovements:60,getStockMovementDetail:120,getStockIssueCorrectionHistory:60,getStockIssueCorrectionPreview:30,getPurchaseOrderPageData:120,getAllProducts:60};
  if(!limits[name])return true;
  var key='read_rate_'+readCacheKey_(name+':'+username),lock=LockService.getScriptLock();if(!lock.tryLock(250))return false;
  try{var props=PropertiesService.getScriptProperties(),raw=props.getProperty(key),state=raw?JSON.parse(raw):null,now=Date.now();
@@ -4845,7 +4866,7 @@ function fsCommit_(writes) {
   if (res.getResponseCode() === 200) {invalidateCommittedReadScopes_(writes,false);return { ok: true };}
   if (res.getResponseCode() >= 500) invalidateCommittedReadScopes_(writes,true);
   console.error("fsCommit_ HTTP " + res.getResponseCode() + ": " + res.getContentText());
-  return { ok: false, message: res.getContentText() };
+  return { ok: false, status:res.getResponseCode(), message: res.getContentText() };
 }
 
 function invalidateCommittedReadScopes_(writes,uncertain){
@@ -5109,6 +5130,14 @@ function stockMovementDto_(document) {
     id          : document.name.split("/").pop(),
     docNo       : parseFirestoreValue_(f.Doc_No),
     billNo      : parseFirestoreValue_(f.Bill_No) || "",
+    issueStatus : parseFirestoreValue_(f.Issue_Status) || "active",
+    issueRevision: Number(parseFirestoreValue_(f.Issue_Revision)) || 0,
+    reversal    : parseFirestoreValue_(f.Is_Reversal) === "true",
+    replacedBy  : parseFirestoreValue_(f.Replaced_By) || "",
+    correctionId: parseFirestoreValue_(f.Correction_Id) || "",
+    reversesDoc : parseFirestoreValue_(f.Reverses_Doc) || "",
+    replacesDoc : parseFirestoreValue_(f.Replaces_Doc) || "",
+    billCountDelta: Number(parseFirestoreValue_(f.Bill_Count_Delta)) || 0,
     type        : parseFirestoreValue_(f.Type) || "OUT",
     productCode : parseFirestoreValue_(f.Product_Code),
     productName : parseFirestoreValue_(f.Product_Name),
@@ -5144,12 +5173,15 @@ function getStockMovementDetail_(docNo) {
   if (res.getResponseCode() !== 200) throw new Error("โหลดรายละเอียดไม่สำเร็จ (" + res.getResponseCode() + ")");
   var rows = (JSON.parse(res.getContentText()) || []).filter(function(row) { return !!row.document; });
   if (!rows.length) throw new Error("ไม่พบเลขรายการนี้ กรุณารีเฟรชประวัติแล้วลองอีกครั้ง");
-  return {
+  var detail={
     docNo: docNo, billNo:parseFirestoreValue_((rows[0].document.fields||{}).Bill_No)||"", complete: rows.length <= 1000,
     movements: rows.slice(0, 1000).map(function(row) { return stockMovementDto_(row.document); }).sort(function(a,b) {
       return a.id.localeCompare(b.id, "en", { numeric: true });
     })
   };
+  var correctionId=detail.movements[0].correctionId;
+  if(correctionId)try{var audit=readExistingDocument_(DOC_NO_RESERVATION_COLLECTION,correctionId).fields||{},before=JSON.parse(parseFirestoreValue_(audit.Before_JSON)||'[]');detail.correction={action:parseFirestoreValue_(audit.Correction_Action),reason:parseFirestoreValue_(audit.Correction_Reason),user:parseFirestoreValue_(audit.User),timestamp:parseFirestoreValue_(audit.Timestamp),previousNote:before[0]&&before[0].note||'',previousRefNo:before[0]&&before[0].refNo||''};}catch(e){detail.auditWarning='ไม่สามารถโหลดประวัติแก้ไข กรุณาลองใหม่';}
+  return detail;
 }
 
 /** Recent history, newest first; productCode optionally narrows the query. */
@@ -5265,6 +5297,9 @@ function mapDashboardMovementRow_(row) {
     id          : row.document.name.split('/').pop(),
     docNo       : parseFirestoreValue_(f.Doc_No) || "",
     billNo      : parseFirestoreValue_(f.Bill_No) || "",
+    issueStatus : parseFirestoreValue_(f.Issue_Status) || "active",
+    reversal    : parseFirestoreValue_(f.Is_Reversal) === "true",
+    billCountDelta: Number(parseFirestoreValue_(f.Bill_Count_Delta)) || 0,
     type        : parseFirestoreValue_(f.Type) || "OUT",
     productCode : parseFirestoreValue_(f.Product_Code) || "",
     productName : parseFirestoreValue_(f.Product_Name) || "",
@@ -5324,6 +5359,10 @@ function buildPoVendorMapForMovements_(movements) {
   return out;
 }
 
+function packDashboardMovements_(movements){
+  var fields=['id','docNo','billNo','issueStatus','reversal','billCountDelta','type','productCode','productName','qty','stockAfter','unitPrice','costPrice','committedAt','reason','refNo','note','user','timestamp'];
+  return {movementFormat:1,fields:fields,rows:movements.map(function(m){return fields.map(function(k){return m[k];});})};
+}
 function dashboardCatalogVersion_(){
   try{if(CacheService.getScriptCache().get(collectionCacheBaseKey_('Master_Products')+'__disabled'))return null;
     return readCacheVersion_(PRODUCT_CATALOG_SCOPES.slice(1))+'|'+(PropertiesService.getScriptProperties().getProperty('cache_structure_products')||'0');
@@ -5333,7 +5372,7 @@ function getDashboardBootstrap_(options){
   options=options||{};var now=new Date(),current=Number(businessDate_().slice(0,4)),year=Number(options.year)||current;
   if(!Number.isInteger(year)||year<current-4||year>current)throw new Error('ปีไม่ถูกต้อง');
   var start=dashboardRangeStart_(year),healthStart=dashboardRangeStart_(current),end=year===current?now.toISOString():new Date(Date.UTC(year+1,0,1)-7*3600000-1).toISOString();
-  var snapshot=cachedReadResult_('dashboard-bill-v1:'+current+':'+year,[STOCK_MOVEMENT_COLLECTION],60000,function(){
+  var snapshot=cachedReadResult_('dashboard-correction-v1:'+current+':'+year,[STOCK_MOVEMENT_COLLECTION],60000,function(){
     var ranges=[{start:start,end:end}];
     if(year<current){if(Date.parse(end)+1>=Date.parse(healthStart))ranges[0].end=now.toISOString();else ranges.push({start:healthStart,end:now.toISOString()});}
     var movements=[],readTime='';ranges.forEach(function(range){var rows=queryDashboardMovementsRange_(range.start,range.end,false,readTime);readTime=readTime||rows.readTime;movements=movements.concat(rows);});
@@ -5345,19 +5384,20 @@ function getDashboardBootstrap_(options){
   if(catalogVersion!==null&&catalogVersion!==dashboardCatalogVersion_())throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
   if(dataVersion!==null&&dataVersion!==readCacheVersion_(PRODUCT_CATALOG_SCOPES))throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
   var catalogExpiry=clientReadExpiry_(PRODUCT_CATALOG_SCOPES,300000),section=reuse?options.catalogSection:dataVersion===null?undefined:{version:dataVersion,loadedAt:Math.min(Date.now(),catalogExpiry-300000)};
-  return {products:products,catalogSection:section,catalogVersion:catalogVersion,catalogExpiresAt:catalogExpiry,movements:snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
+  return {products:products,catalogSection:section,catalogVersion:catalogVersion,catalogExpiresAt:catalogExpiry,movements:options.compactMovements?packDashboardMovements_(snapshot.movements):snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
 }
 
 function getDashboardDelta_(sinceIso,options) {
   var since=String(sinceIso||'').trim(),time=Date.parse(since);
   if(!since||since.length>64||isNaN(time)||time>Date.now()+60000||Date.now()-time>900000)return {success:false,fullRefresh:true,message:'กรุณาโหลดข้อมูลล่าสุดเพื่อเริ่มซิงก์ใหม่'};
   options=options||{};
-  return cachedReadResult_('dashboard-delta-bill-v1:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
+  return cachedReadResult_('dashboard-delta-correction-v1:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
 }
 function getDashboardDeltaUncached_(since,time,options){
   options=options||{};var page=queryMovementPage_('Committed_At',new Date(time-60000).toISOString(),{pageSize:200,cursor:options.cursor},null);
   var movements=page.docs.map(function(doc){return mapDashboardMovementRow_({document:doc});}).filter(Boolean),codes=[],seen={};
   movements.forEach(function(m){if(m.productCode&&!seen[m.productCode]){seen[m.productCode]=true;codes.push(m.productCode);}});
+  if(movements.some(function(m){return m.reversal;}))return {success:true,fullRefresh:true,message:'มีการแก้บิล ต้องตรวจยอดและสถานะทั้งช่วงใหม่'};
   var stocks=getProductStockMap_(codes),productStocks=[];
   Object.keys(stocks).forEach(function(code){var x=stocks[code];productStocks.push({productCode:code,currentStock:x.stock,minStock:x.minStock,costPrice:x.costPrice,sellingPrice:x.sellingPrice});});
   var result={success:true,movements:movements,productStocks:productStocks,poVendorMap:buildPoVendorMapForMovements_(movements),serverTime:page.pageInfo.readTime,nextCursor:page.pageInfo.nextCursor,hasMore:page.pageInfo.hasMore};
@@ -5517,6 +5557,145 @@ function applySalesBillBackfill_(day,approvedPlanHash) {
   if(attempted){clearCollectionCache_(STOCK_MOVEMENT_COLLECTION);clearCollectionCache_(QUOTATION_COLLECTION);}
   return {complete:!problem&&plan.remaining===0,completed:completed,remaining:plan.remaining+plan.entries.length-completed.length,message:problem||'',requiresNewPlan:!!problem||plan.remaining>0};
 }
+// Correction audit/receipts reuse the existing reservation collection. No read
+// path or deployment runs this worker. Original quantities, prices and IDs stay.
+function stockCorrectionDraft_(input,user) {
+  var session=validatedGatewaySession_&&validatedGatewaySession_.session;
+  if(!session||session.role!=='admin'||session.username!==user)throw Error('อนุญาตเฉพาะ Admin');
+  input=input||{};
+  if(typeof input.docNo!=='string'||!input.docNo||input.docNo.length>160||/[\x00-\x1f\x7f]/.test(input.docNo))throw Error('เลขรายการไม่ถูกต้อง');
+  if(!/^[A-Za-z0-9-]{8,80}$/.test(String(input.requestId||'')))throw Error('รหัสคำขอไม่ถูกต้อง');
+  if(['amend','replace','cancel'].indexOf(input.action)<0)throw Error('เลือกการแก้ไขที่ถูกต้อง');
+  if(!Number.isInteger(input.revision)||input.revision<0)throw Error('รุ่นรายการไม่ถูกต้อง');
+  var reason=String(input.correctionReason||'').trim();
+  if(reason.length<5||reason.length>1000)throw Error('ระบุเหตุผลการแก้ไขอย่างน้อย 5 ตัวอักษร');
+  var draft={docNo:input.docNo,requestId:String(input.requestId),revision:input.revision,action:input.action,correctionReason:reason,
+    refNo:String(input.refNo||''),note:String(input.note||''),reason:String(input.reason||''),items:[]};
+  if(draft.refNo.length>500||draft.note.length>4000)throw Error('ข้อความยาวเกินขอบเขต');
+  if(draft.action==='replace'){
+    if(ISSUE_REASONS.indexOf(draft.reason)<0||!Array.isArray(input.items)||!input.items.length||input.items.length>200)throw Error('ตรวจเหตุผลและรายการสินค้าทดแทน');
+    var seen=Object.create(null);
+    draft.items=input.items.map(function(item){
+      if(!item||!validDocumentId_(item.productCode)||seen[item.productCode]||!validBusinessNumber_(item.qty,0,true)||!validBusinessNumber_(item.unitPrice,0,false))throw Error('รหัสสินค้าซ้ำ จำนวนหรือราคาไม่ถูกต้อง');
+      seen[item.productCode]=true;return {productCode:item.productCode,qty:Number(item.qty),unitPrice:Number(item.unitPrice)};
+    }).sort(function(a,b){return a.productCode.localeCompare(b.productCode);});
+  }
+  return draft;
+}
+function stockCorrectionReceipt_(draft,user) {
+  var id='SC_'+draft.requestId,fingerprint=movementCursorSignature_('stock-correction:'+user+':'+JSON.stringify(draft));
+  var url='https://firestore.googleapis.com/v1/'+fsDocPath_(DOC_NO_RESERVATION_COLLECTION,id);
+  var res=UrlFetchApp.fetch(url,{method:'get',headers:getAuthHeader_(),muteHttpExceptions:true});
+  if(res.getResponseCode()===404)return {id:id,fingerprint:fingerprint};
+  if(res.getResponseCode()!==200)throw Error('ตรวจผลคำขอแก้ไขเดิมไม่สำเร็จ');
+  var f=JSON.parse(res.getContentText()).fields||{};
+  if(parseFirestoreValue_(f.Request_Fingerprint)!==fingerprint)throw Error('รหัสคำขอนี้ใช้กับการแก้ไขอื่นแล้ว');
+  var result=JSON.parse(parseFirestoreValue_(f.Request_Result_JSON));result.replayed=true;
+  try{var stocks=getProductStockMap_((result.productStocks||[]).map(function(p){return p.productCode;}));result.productStocks=Object.keys(stocks).map(function(code){return {productCode:code,currentStock:stocks[code].stock};});}catch(e){result.refreshWarning='บันทึกแล้ว แต่ตรวจยอดล่าสุดไม่สำเร็จ';result.productStocks=[];}
+  return {id:id,fingerprint:fingerprint,result:result};
+}
+function buildStockCorrection_(draft,user) {
+  var docs=queryByEqualityField_(STOCK_MOVEMENT_COLLECTION,'Doc_No',draft.docNo,201);
+  if(!docs.length||docs.length>200)throw Error('ไม่พบบิลหรือเกิน 200 บรรทัด กรุณาตรวจข้อมูลกับผู้ดูแล');
+  docs.sort(function(a,b){return a.id.localeCompare(b.id,'en',{numeric:true});});
+  var original=docs.map(function(doc){return stockMovementDto_({name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,doc.id),fields:doc.fields});});
+  var revision=original[0].issueRevision;
+  if(revision!==draft.revision)throw Error('บิลเปลี่ยนแปลงแล้ว กรุณาเปิดรายละเอียดใหม่');
+  if(original.some(function(m){return m.type!=='OUT'||m.reversal||m.issueStatus!=='active'||m.issueRevision!==revision||!validBusinessNumber_(m.qty,0,true)||!validDocumentId_(m.productCode)||m.reason!==original[0].reason||ISSUE_REASONS.indexOf(m.reason)<0;})||docs.some(function(d){return !d.updateTime;}))throw Error('รายการนี้ถูกยกเลิก/แทนที่ หรือข้อมูลเดิมไม่ครบ');
+  if(original.some(function(m,i){var raw=parseFirestoreValue_(docs[i].fields.Qty);return !validBusinessNumber_(raw,0,true)||Number(raw)!==m.qty;}))throw Error('จำนวนสินค้าเดิมไม่ถูกต้อง ต้องตรวจข้อมูลก่อนแก้ไข');
+  if(draft.action!=='amend'&&original.some(function(m,i){var f=docs[i].fields,price=parseFirestoreValue_(f.Unit_Price),cost=parseFirestoreValue_(f.Cost_Price);return !m.hasUnitPrice||!validBusinessNumber_(price,0,false)||Number(price)!==m.unitPrice||!validBusinessNumber_(cost,0,false)||Number(cost)!==m.costPrice;}))throw Error('ข้อมูลราคาหรือทุนเดิมไม่ครบ ต้องตรวจข้อมูลก่อนย้อนรายการ');
+  var codes=original.map(function(m){return m.productCode;}).concat(draft.items.map(function(m){return m.productCode;}));
+  codes=Array.from(new Set(codes));var stocks=draft.action==='amend'?{}:getProductStockMap_(codes),changes=[];
+  if(draft.action!=='amend')codes.forEach(function(code){
+    var p=stocks[code];if(!p||!p.updateTime)throw Error('ไม่พบสินค้า '+code);
+    var returned=original.filter(function(m){return m.productCode===code;}).reduce(function(n,m){return n+m.qty;},0),next=draft.items.find(function(m){return m.productCode===code;}),delta=returned-(next?next.qty:0),after=p.stock+delta;
+    if(!validBusinessNumber_(p.stock,-Number.MAX_SAFE_INTEGER,false)||!Number.isFinite(delta)||Math.abs(after)>Number.MAX_SAFE_INTEGER)throw Error('ยอดสต๊อกไม่ถูกต้องสำหรับสินค้า '+code);
+    if(delta<0&&after<0)throw Error('สต๊อกไม่พอสำหรับสินค้า '+code);
+    changes.push({productCode:code,productName:p.name,before:p.stock,delta:delta,after:after,updateTime:p.updateTime});
+  });
+  if(draft.action!=='amend'){
+    [original,draft.items].forEach(function(items){var total=0;items.forEach(function(m){total+=m.qty*m.unitPrice;if(!Number.isFinite(total)||total>Number.MAX_SAFE_INTEGER)throw Error('มูลค่าบิลเกินขอบเขตที่รองรับ');});});
+    codes.forEach(function(code){var costs=original.filter(function(m){return m.productCode===code;}).map(function(m){return m.costPrice;});if(costs.some(function(cost){return cost!==costs[0];}))throw Error('สินค้าเดียวกันมีทุนเดิมหลายราคา ต้องตรวจข้อมูลก่อนแก้ไข');});
+  }
+  // Full reversal/replacement is intentionally bounded to one atomic commit.
+  var writeCount=docs.length+1+(draft.action==='amend'?0:original.length+changes.filter(function(x){return x.delta!==0;}).length+draft.items.length+(draft.action==='replace'?2:0));
+  if(writeCount+1>450)throw Error('บิลนี้ใหญ่เกินขอบเขตแก้ไขแบบ atomic กรุณาติดต่อผู้ดูแล');
+  var quoteIds=Array.from(new Set(original.map(function(m){return m.quoteId;}).filter(Boolean)));
+  if(quoteIds.length>1)throw Error('บิลเชื่อมหลายใบเสนอราคา ต้องตรวจด้วยมือ');
+  var quote=null;
+  if(quoteIds.length){var id=quoteIds[0],raw=readExistingDocument_(QUOTATION_COLLECTION,id);if(!raw.updateTime)throw Error('ไม่พบใบเสนอราคาอ้างอิง');quote={id:id,doc:raw};}
+  var token=movementCursorSignature_('correction-preview:'+user+':'+JSON.stringify([draft,docs.map(function(d){return [d.id,d.updateTime];}),changes,quote&&quote.doc.updateTime]));
+  return {docs:docs,original:original,revision:revision,stocks:stocks,changes:changes,quote:quote,previewToken:token};
+}
+function getStockIssueCorrectionPreview_(input,user) {
+  var draft=stockCorrectionDraft_(input,user),plan=buildStockCorrection_(draft,user);
+  return {success:true,previewToken:plan.previewToken,billNo:plan.original[0].billNo||draft.docNo,revision:plan.revision,changes:plan.changes,
+    oldAmount:plan.original.reduce(function(n,m){return n+m.qty*m.unitPrice;},0),newAmount:draft.items.reduce(function(n,m){return n+m.qty*m.unitPrice;},0),
+    warning:'ใบกำกับภาษีเป็นเอกสารอิสระ ต้องตรวจเอกสารที่เกี่ยวข้องแยกต่างหาก; ยอดปรับปรุงบันทึกในวันที่แก้จริง'};
+}
+// Explicit audit drilldown: at most five linked receipt reads per page. The
+// cursor is bound to the current bill revision; no history/collection scan.
+function getStockIssueCorrectionHistory_(docNo,options){
+  if(typeof docNo!=='string'||!docNo||docNo.length>160)throw Error('เลขรายการไม่ถูกต้อง');options=options||{};
+  var docs=queryByEqualityField_(STOCK_MOVEMENT_COLLECTION,'Doc_No',docNo,1),head=docs.length&&parseFirestoreValue_(docs[0].fields.Correction_Id)||'',next=head,seen=[],rows=[],expires=Date.now()+180000;
+  if(options.cursor)try{if(typeof options.cursor!=='string'||options.cursor.length>16384)throw Error('invalid');var packed=options.cursor.split('.');if(packed.length!==2||movementCursorSignature_('audit:'+packed[0])!==packed[1])throw Error('invalid');var c=JSON.parse(Utilities.newBlob(Utilities.base64Decode(packed[0])).getDataAsString());if(c.docNo!==docNo||c.head!==head||c.expires<=Date.now()||!Array.isArray(c.seen)||c.seen.length>100)throw Error('invalid');next=c.next;seen=c.seen;expires=c.expires;}catch(e){throw Error('ประวัติเปลี่ยนหรือหน้าหมดอายุ กรุณาเปิดรายละเอียดใหม่');}
+  for(var i=0;next&&i<5;i++){
+    if(!/^SC_[A-Za-z0-9-]{8,80}$/.test(next)||seen.indexOf(next)>=0||seen.length>=100)throw Error('สายประวัติไม่สมบูรณ์ กรุณาติดต่อผู้ดูแล');seen.push(next);
+    var f=readExistingDocument_(DOC_NO_RESERVATION_COLLECTION,next).fields||{},before=JSON.parse(parseFirestoreValue_(f.Before_JSON)||'[]'),after=JSON.parse(parseFirestoreValue_(f.After_JSON)||'{}'),result=JSON.parse(parseFirestoreValue_(f.Request_Result_JSON)||'{}');
+    rows.push({action:parseFirestoreValue_(f.Correction_Action),reason:parseFirestoreValue_(f.Correction_Reason),user:parseFirestoreValue_(f.User),timestamp:parseFirestoreValue_(f.Timestamp),sourceDocNo:parseFirestoreValue_(f.Doc_No),replacementDocNo:result.replacementDocNo||'',replacementBillNo:result.replacementBillNo||'',previousNote:before[0]&&before[0].note||'',previousRefNo:before[0]&&before[0].refNo||'',note:after.note||'',refNo:after.refNo||''});
+    next=before[0]&&before[0].docNo===docNo&&before[0].correctionId||'';
+  }
+  var cursor='';if(next){var payload=Utilities.base64Encode(Utilities.newBlob(JSON.stringify({docNo:docNo,head:head,next:next,seen:seen,expires:expires})).getBytes());cursor=payload+'.'+movementCursorSignature_('audit:'+payload);}
+  return {entries:rows,nextCursor:cursor};
+}
+function correctStockIssue_(input,user) {
+  var attempted=false;
+  try{
+    var draft=stockCorrectionDraft_(input,user),receipt=stockCorrectionReceipt_(draft,user);
+    if(receipt.result)return receipt.result;
+    var plan=buildStockCorrection_(draft,user);
+    if(!input.previewToken||input.previewToken!==plan.previewToken)throw Error('ข้อมูลหรือสต๊อกเปลี่ยน กรุณาตรวจตัวอย่างใหม่ก่อนยืนยัน');
+    var now=new Date().toISOString(),newNo=draft.action==='replace'?'SI-C'+draft.requestId:'',bill=draft.action==='replace'?prepareSalesBillNumber_(now,newNo):null;
+    var writes=bill?bill.writes.slice():[],status=draft.action==='amend'?'active':draft.action==='cancel'?'cancelled':'replaced',revision=plan.revision+1;
+    plan.docs.forEach(function(doc){
+      var fields={Issue_Revision:revision,Issue_Status:status,Correction_Id:receipt.id};
+      if(newNo)fields.Replaced_By=newNo;
+      if(draft.action==='amend'){fields.Ref_No=draft.refNo;fields.Note=draft.note;}
+      writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,doc.id),fields:mapToFirestoreFields_(fields)},updateMask:{fieldPaths:Object.keys(fields)},updateTransforms:[],currentDocument:{updateTime:doc.updateTime}});
+    });
+    if(draft.action!=='amend'){
+      plan.changes.filter(function(x){return x.delta!==0;}).forEach(function(x){writes.push({transform:{document:fsDocPath_('Master_Products',x.productCode),fieldTransforms:[{fieldPath:'Current_Stock',increment:{doubleValue:x.delta}}]},currentDocument:{updateTime:x.updateTime}});});
+      // Negative OUT is an accounting reversal, never a PO receipt. A distinct
+      // Doc_No preserves drilldown identity; Bill_Count_Delta nets the count.
+      plan.original.forEach(function(m,i){var x=plan.changes.find(function(c){return c.productCode===m.productCode;});
+        writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,receipt.id+'-'+(i+1)),fields:mapToFirestoreFields_({Doc_No:'SC-'+draft.requestId,Bill_No:m.billNo,Type:'OUT',Is_Reversal:'true',Reverses_Doc:draft.docNo,
+          Product_Code:m.productCode,Product_Name:m.productName,Qty:-m.qty,Unit_Price:m.unitPrice,Cost_Price:m.costPrice,Stock_Before:x.before,Stock_After:x.after,
+          Reason:m.reason,Ref_No:m.refNo,Note:draft.correctionReason,User:user,Timestamp:now,Correction_Id:receipt.id,Bill_Count_Delta:i===0?-1:0})},currentDocument:{exists:false}});
+      });
+      draft.items.forEach(function(item,i){var p=plan.stocks[item.productCode],old=plan.original.find(function(m){return m.productCode===item.productCode;}),x=plan.changes.find(function(c){return c.productCode===item.productCode;});
+        writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,newNo+'-'+(i+1)),fields:mapToFirestoreFields_({Doc_No:newNo,Bill_No:bill.billNo,Type:'OUT',Product_Code:item.productCode,Product_Name:p.name,Qty:item.qty,
+          Unit_Price:item.unitPrice,Cost_Price:old?old.costPrice:p.costPrice,Stock_Before:x.before,Stock_After:x.after,Reason:draft.reason,Ref_No:draft.refNo,Note:draft.note,Quote_Id:plan.quote?plan.quote.id:'',User:user,Timestamp:now,Replaces_Doc:draft.docNo,Correction_Id:receipt.id})},currentDocument:{exists:false}});
+      });
+    }
+    if(plan.quote&&draft.action!=='amend'){
+      var other=queryByEqualityField_(STOCK_MOVEMENT_COLLECTION,'Quote_Id',plan.quote.id,1001);
+      if(other.length>1000)throw Error('ประวัติใบเสนอราคายาวเกินขอบเขต กรุณาตรวจด้วยมือ');
+      var active=other.filter(function(d){var m=stockMovementDto_({name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,d.id),fields:d.fields});return m.docNo!==draft.docNo&&m.type==='OUT'&&!m.reversal&&m.issueStatus==='active';});
+      active.sort(function(a,b){return String(parseFirestoreValue_(a.fields.Timestamp)||'').localeCompare(String(parseFirestoreValue_(b.fields.Timestamp)||''))||a.id.localeCompare(b.id);});
+      var marker=parseFirestoreValue_(plan.quote.doc.fields.Stock_Issue_Doc),chosen=active.find(function(d){return parseFirestoreValue_(d.fields.Doc_No)===marker;})||active[active.length-1];
+      var target=newNo||chosen&&parseFirestoreValue_(chosen.fields.Doc_No)||'',label=bill?bill.billNo:chosen&&parseFirestoreValue_(chosen.fields.Bill_No)||'';
+      writes.push({update:{name:fsDocPath_(QUOTATION_COLLECTION,plan.quote.id),fields:mapToFirestoreFields_({Stock_Issued:target?'true':'false',Stock_Issue_Doc:target,Stock_Issue_Bill_No:label,Stock_Issued_By:user,Stock_Issued_At:now})},updateMask:{fieldPaths:['Stock_Issued','Stock_Issue_Doc','Stock_Issue_Bill_No','Stock_Issued_By','Stock_Issued_At']},currentDocument:{updateTime:plan.quote.doc.updateTime}});
+    }
+    var result={success:true,docNo:draft.docNo,action:draft.action,revision:revision,replacementDocNo:newNo,replacementBillNo:bill?bill.billNo:'',productStocks:plan.changes.map(function(x){return {productCode:x.productCode,currentStock:x.after};})};
+    writes.push({update:{name:fsDocPath_(DOC_NO_RESERVATION_COLLECTION,receipt.id),fields:mapToFirestoreFields_({Doc_No:draft.docNo,Correction_Action:draft.action,Correction_Reason:draft.correctionReason,User:user,Timestamp:now,
+      Before_JSON:JSON.stringify(plan.original),After_JSON:JSON.stringify(draft),Request_Fingerprint:receipt.fingerprint,Request_Result_JSON:JSON.stringify(result)})},currentDocument:{exists:false}});
+    if(writes.length>450||Utilities.newBlob(JSON.stringify(writes)).getBytes().length>8*1024*1024||writes.some(function(w){return w.update&&Utilities.newBlob(JSON.stringify(w.update)).getBytes().length>900000;}))throw Error('รายการใหญ่เกินขอบเขต atomic');
+    attempted=true;var commit=fsCommit_(writes);
+    if(!commit.ok){if(commit.status>=400&&commit.status<500)attempted=false;var replay=stockCorrectionReceipt_(draft,user);if(replay.result)return replay.result;throw Error('ข้อมูลเปลี่ยนระหว่างบันทึก กรุณาตรวจผลและตัวอย่างใหม่');}
+    if(plan.changes.length)refreshChangedProductsCache_(plan.changes.map(function(x){return x.productCode;}));
+    return result;
+  }catch(e){return {success:false,uncertain:attempted,message:e.message};}
+}
 function stockRequest_(kind, data, username) {
   var id = String(data.requestId || "");
   if (!/^[A-Za-z0-9-]{8,80}$/.test(id)) throw new Error("กรุณารีเฟรชหน้าเพื่อส่งรายการพร้อมรหัสคำขอ");
@@ -5531,6 +5710,7 @@ function replayStockRequest_(request) {
   if (parseFirestoreValue_(f.Request_Fingerprint) !== request.fingerprint) throw new Error("รหัสคำขอนี้ถูกใช้กับรายการอื่นแล้ว");
   var result = JSON.parse(parseFirestoreValue_(f.Request_Result_JSON));
   result.billNo = result.billNo || parseFirestoreValue_(f.Bill_No) || "";
+  result.issueStatus=parseFirestoreValue_(f.Issue_Status)||'active';if(result.issueStatus!=='active')result.refreshWarning='รายการเดิมถูกยกเลิกหรือแทนที่แล้ว ไม่มีการตัดสต๊อกซ้ำ';
   result.replayed = true;
   clearCollectionCache_("Master_Products");clearCollectionCache_("Purchase_Orders");clearCollectionCache_(STOCK_MOVEMENT_COLLECTION);
   try{

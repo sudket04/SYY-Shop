@@ -7,7 +7,6 @@
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <?!= include_('Styles'); ?>
   <style>
@@ -893,6 +892,7 @@
   }
 
   function dashLoad(force){
+    if(!DASH.loaded&&!DASH.catalogPrepared){DASH.catalogPrepareForce=DASH.catalogPrepareForce||force===true;if(DASH.catalogPreparing)return;DASH.catalogPreparing=true;syyRestoreCatalog(function(saved){DASH.catalogPreparing=false;DASH.catalogPrepared=true;if(saved){DASH.products=saved.products;DASH.restoredCatalogSection=saved.section;}dashLoad(!!DASH.catalogPrepareForce);});return;}
     if(DASH.loading){DASH.reloadRequested=true;DASH.forceReload=DASH.forceReload||force===true;return;}
     DASH.loading=true;DASH.nextReconcile=Date.now()+DASH_RECONCILE_MS;
     var btn=document.getElementById('btnRefresh');
@@ -901,9 +901,10 @@
     dashLoadingState(true);
     var started=performance.now(),hadData=DASH.loaded;
     var requestedYear=DASH.year;
-    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true,catalogSection:DASH.loaded?DASH.catalogSection:undefined}], function(data, readInfo){
+    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true,compactMovements:true,catalogSection:DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection}], function(data, readInfo){
       try{
-      if(!data||!Array.isArray(data.movements)||(!Array.isArray(data.products)&&!(DASH.loaded&&data.catalogSection))){syyInvalidateReadScopes(['Master_Products','Stock_Movements','Purchase_Orders'],false);throw Error('รูปแบบข้อมูล Dashboard ไม่ถูกต้อง กรุณาลองอีกครั้ง');}
+      var held=DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection;
+      if(!data||!Array.isArray(data.movements)||(!Array.isArray(data.products)&&!(Array.isArray(DASH.products)&&held&&data.catalogSection&&held.version===data.catalogSection.version&&held.loadedAt===data.catalogSection.loadedAt))){syyInvalidateReadScopes(['Master_Products','Stock_Movements','Purchase_Orders'],false);throw Error('รูปแบบข้อมูล Dashboard ไม่ถูกต้อง กรุณาลองอีกครั้ง');}
       btnDone(btn);
       DASH.loading=false;
       data = data||{};
@@ -1009,7 +1010,7 @@
   function dashNewBucket(){ return {salesQty:0,salesValue:0,salesBills:{},issueQty:0,issueValue:0,recvQty:0,recvValue:0,recvUnknown:0,recvDocs:{},rows:[]}; }
   function dashFinalize(b){
     b=b||dashNewBucket();
-    return {salesQty:b.salesQty,salesValue:b.salesValue,salesBills:Object.keys(b.salesBills).length,
+    return {salesQty:b.salesQty,salesValue:b.salesValue,salesBills:Object.keys(b.salesBills).reduce(function(n,k){return n+Number(b.salesBills[k]);},0),
       issueQty:b.issueQty,issueValue:b.issueValue,recvQty:b.recvQty,recvValue:b.recvValue,recvUnknown:b.recvUnknown,recvDocs:Object.keys(b.recvDocs).length,
       rows:b.rows};
   }
@@ -1030,7 +1031,7 @@
         b.rows.push(m);
         if(m.type==='OUT'){
           b.issueQty+=m.qty; b.issueValue+=m.qty*num(m.costPrice);
-          if((m.reason==='ขายหน้าร้าน'||m.reason==='ขาย Online')){ b.salesQty+=m.qty; b.salesValue+=m.qty*num(m.unitPrice); b.salesBills[m.docNo]=true; }
+          if((m.reason==='ขายหน้าร้าน'||m.reason==='ขาย Online')){ b.salesQty+=m.qty; b.salesValue+=m.qty*num(m.unitPrice); if(m.reversal)b.salesBills[m.docNo]=(b.salesBills[m.docNo]||0)+num(m.billCountDelta);else b.salesBills[m.docNo]=1; }
         } else if(m.type==='IN'){
           if(m.costPrice==null) b.recvUnknown++;
           b.recvQty+=m.qty; b.recvValue+=m.qty*num(m.costPrice); b.recvDocs[m.docNo]=true;
@@ -1553,9 +1554,9 @@
       docs.sort(function(a,b){return b.amtSell-a.amtSell;});
       return {icon:'฿', iconBg:'var(--primary-soft)', iconColor:'var(--primary)',
         title:'รายการบิลขาย (Sales Invoices)', subtitle:period.periodLabel+' · เรียงตามยอดมากไปน้อย',
-        summary:[{label:'จำนวนบิล',value:docs.length.toLocaleString()+' บิล'},
+        summary:[{label:'จำนวนบิลสุทธิ',value:period.cur.salesBills.toLocaleString()+' บิล'},
                  {label:'ยอดขายรวม',value:'฿'+Math.round(period.cur.salesValue).toLocaleString()},
-                 {label:'เฉลี่ยต่อบิล',value:'฿'+Math.round(docs.length?period.cur.salesValue/docs.length:0).toLocaleString()}],
+                 {label:'เฉลี่ยต่อบิล',value:'฿'+Math.round(period.cur.salesBills?period.cur.salesValue/period.cur.salesBills:0).toLocaleString()}],
         heads:[['เลขที่บิล','left'],['เวลา','left'],['หมายเหตุ/อ้างอิง','left'],['รายการ','right'],['ยอดรวม','right']],
         rows:docs.map(function(d){ return [
           {t:dashBillLink(d),s:cellM},{t:esc(d.ts.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}))+' น.',s:cellD},
@@ -1838,6 +1839,7 @@
 
   /* ═══ Export ═══ */
   function exportToExcel(){
+    if(typeof XLSX==='undefined'){syyLoadLibrary('xlsx').then(exportToExcel).catch(function(e){toast(e.message,'err');});return;}
     var list=DASH._sortedRows||[];
     if(!list.length){ toast('ไม่มีข้อมูลสำหรับ Export','warn'); return; }
     var rows=list.map(function(r,i){

@@ -7,6 +7,17 @@ function fresh(){const s=setup();s.c.readTime=new Date().toISOString();s.reads={
 function products(s,n=769){for(let i=0;i<n;i++)s.put('Master_Products/P'+i,{Product_Name:'Part '+i,Current_Stock:10,Min_Stock:2,Cost_Price:100,Selling_Price:200,Extra:'keep'});}
 const issue={requestId:'read-test-stock-0001',reason:'ขายหน้าร้าน',items:[{productCode:'P1',qty:2}]};
 const queries=s=>s.calls.filter(x=>x.url.endsWith(':runQuery')).map(x=>JSON.parse(x.options.payload));
+test('document lists defer all editor collections, editor-only loading does not query documents or years',()=>{
+ const s=fresh();products(s,2);s.put('Master_Customers/C1',{Customer_Name:'Buyer'});s.put('Meta_Counters/tax_invoice_years',{Years:[2569]});s.put('Meta_Counters/quotation_years',{Years:[2569]});
+ for(const [fn,col] of [['getTaxInvoicePageData_','Master_Tax_Invoice'],['getQuotationPageData_','Quotations']]){s.calls.length=0;const list=s.c[fn](2569,{deferSections:true});assert.equal(list.products,undefined);assert.equal(list.customers,undefined);assert(s.calls.every(c=>!/(Master_Products|Master_Customers)(?:\?|\/|\")/.test(c.url+' '+(c.options.payload||''))));
+  s.calls.length=0;const editor=s.c[fn](2569,{editorOnly:true,compactCatalog:true});assert.equal(editor.products.catalogFormat,1);assert.equal(editor.products.rows.length,2);assert.equal(editor.customers.length,1);assert(!s.calls.some(c=>(c.options.payload||'').includes('"collectionId":"'+col+'"')||c.url.includes('/Meta_Counters/')));
+ }assert.equal(s.commits.length,0);
+});
+test('PO history skips the catalog; create skips the history list and both retain the full pending summary',()=>{
+ const s=fresh();products(s,3);s.put('Purchase_Orders/PO1',{Status:'Pending',Order_Date:'2026-10-01',Items_JSON:'[{"productCode":"P1","qty":4}]',Receipts_JSON:'[]'});
+ const history=s.c.getPurchaseOrderPageData_({section:'history'});assert.equal(history.purchaseOrders.length,1);assert.equal(history.lowStockItems,undefined);assert.equal(history.pendingSummary.pendingCount,1);assert.equal(s.reads.Master_Products||0,0);
+ const before=s.calls.length,create=s.c.getPurchaseOrderPageData_({section:'create'});assert.equal(create.purchaseOrders,undefined);assert.equal(create.pendingSummary.pendingCount,1);assert(!s.calls.slice(before).some(c=>{const q=c.options.payload&&JSON.parse(c.options.payload).structuredQuery;return q&&q.from[0].collectionId==='Purchase_Orders'&&q.orderBy;}));assert.equal(s.commits.length,0);
+});
 
 test('10,000-product document refresh model measures section payload savings and reused year metadata without DB mutations',()=>{
  const s=fresh();products(s,10000);s.put('Master_Customers/C1',{Customer_Name:'Buyer'});s.put('Meta_Counters/quotation_years',{Years:[2569]});

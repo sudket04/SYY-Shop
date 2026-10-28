@@ -116,12 +116,12 @@
 
   var cache=[], editingId=null, deleteId=null, searchTimer=null,masterDataLoaded=false;
 
-  window.onload = function(){
+  document.addEventListener('DOMContentLoaded',function(){
     initDensity();
     document.getElementById('tbodyMain').innerHTML = skeletonRows(4,5);
     renderHead();
     loadTable();
-  };
+  });
 
   XLF.bindHeaderClicks('#theadMain', function(){ return cache; }, renderRows);
 

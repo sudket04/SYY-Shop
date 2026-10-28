@@ -421,7 +421,7 @@ function syyDocumentPager(options){
   form.onsubmit=function(event){event.preventDefault();search();};form.querySelector('button[type="button"]').onclick=function(){form.reset();search();};buttons[0].onclick=function(){next(false);};buttons[1].onclick=function(){next(true);};
   buttons[2].onclick=function(){if(viewPage>1){viewPage--;options.render();}};buttons[3].onclick=function(){if(viewPage<Math.ceil(viewTotal/viewSize)){viewPage++;options.render();}};
   var saved=syyLocalGet('view',options.key),restored=false;if(saved&&saved.search)Object.keys(saved.search).forEach(function(k){if(form.elements[k])form.elements[k].value=saved.search[k];});
-  return {reset:function(value){generation++;busy=false;info=value||{hasMore:false,nextCursor:''};criteria=info.search||{};appliedCriteria=Object.assign({},criteria);Object.keys({number:'',from:'',to:''}).forEach(function(k){form.elements[k].value=criteria[k]||'';});viewPage=1;render();if(!restored){restored=true;if(saved&&saved.search&&(saved.search.number||saved.search.from||saved.search.to))setTimeout(function(){Object.keys(saved.search).forEach(function(k){if(form.elements[k])form.elements[k].value=saved.search[k]||'';});search();},0);}},render:render,hasMore:function(){return !!info.hasMore;},filtered:filtered,searchOptions:function(){return Object.assign({},criteria);},busy:function(){return busy;},canRefresh:function(){return !busy&&viewPage===1&&options.rows().length<=viewSize;},cancel:function(){generation++;busy=false;render();},beginRefresh:function(){generation++;busy=true;render();},next:next,
+  return {reset:function(value,preservePage){generation++;busy=false;info=value||{hasMore:false,nextCursor:''};criteria=info.search||{};appliedCriteria=Object.assign({},criteria);Object.keys({number:'',from:'',to:''}).forEach(function(k){form.elements[k].value=criteria[k]||'';});if(!preservePage)viewPage=1;render();if(!restored){restored=true;if(saved&&saved.search&&(saved.search.number||saved.search.from||saved.search.to))setTimeout(function(){Object.keys(saved.search).forEach(function(k){if(form.elements[k])form.elements[k].value=saved.search[k]||'';});search();},0);}},render:render,hasMore:function(){return !!info.hasMore;},filtered:filtered,searchOptions:function(){return Object.assign({},criteria);},busy:function(){return busy;},canRefresh:function(){return !busy&&viewPage===1&&options.rows().length<=viewSize;},cancel:function(){generation++;busy=false;render();},beginRefresh:function(){generation++;busy=true;render();},next:next,
     window:function(rows,scope){var signature=String(scope||'');if(signature!==viewScope){viewPage=1;viewScope=signature;}viewTotal=rows.length;viewPage=Math.max(1,Math.min(viewPage,Math.ceil(viewTotal/viewSize)||1));render();return rows.slice((viewPage-1)*viewSize,viewPage*viewSize);},offset:function(){return (viewPage-1)*viewSize;}};
 }
 
@@ -440,13 +440,19 @@ function syyRecordViewTiming(name,started,renderStarted,rows){
 var syyReadLatest=new Map(),syyDirtyReadScopes=new Set(),syyReadSequence=0,syyLastCheckedAt=0,syyLastReadSource='',syyReadDirty=false;
 // Persistent cache is an optional acceleration only. Its contents never grant
 // access: every restored response is conditionally validated by apiGateway.
-// Persist only allowlisted references and bounded ordinary product pages.
+// Persist only allowlisted references, bounded product pages and the compact catalog.
 // Session/permission fingerprints isolate commercial values; never persist
-// credentials, contacts, documents, transaction lists or complete catalogs.
+// credentials, contacts, documents or transaction lists.
 var syyDiskCache=(function(){
  var opening=null,scopePromise=null,scopeIdentity='',scopeRun=0,activeScope='',channel=null,lookups=new Map(),enabled=typeof indexedDB!=='undefined'&&typeof crypto!=='undefined'&&crypto.subtle&&typeof TextEncoder!=='undefined'&&window.SYY_HYBRID_CACHE!==false;
  var stats={hits:0,misses:0,errors:0,writes:0,evictions:0,bytes:0,entries:0};
  function eligible(key,raw){
+   if(key==='getAllProducts[{"compact":true}]'){
+     if(raw===undefined)return true;
+     try{var c=JSON.parse(raw),fields=['productCode','productName','partType','partNumber','barcode','barcodeGenerated','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carIds','carModel','costPrice','sellingPrice','currentStock','minStock','status'];
+       return raw.length<=3000000&&c.catalogFormat===1&&Array.isArray(c.fields)&&JSON.stringify(c.fields)===JSON.stringify(fields)&&Object.keys(c).every(function(k){return ['catalogFormat','fields','rows'].includes(k);})&&Array.isArray(c.rows)&&c.rows.length<=10000&&c.rows.every(function(row){return Array.isArray(row)&&row.length===fields.length&&row.every(function(value,i){return i===5?typeof value==='boolean':i===14?Array.isArray(value)&&value.length<=100&&value.every(function(x){return typeof x==='string'&&x.length<=1000;}):i>=16&&i<=19?Number.isFinite(value):typeof value==='string'&&value.length<=12000;});});
+     }catch(e){return false;}
+   }
    var fields=key==='getBrands[]'||key==='getCategories[]'?['id','Name','name','updateTime']:null;
    function refs(rows){return Array.isArray(rows)&&rows.length<=10000&&rows.every(function(row){return row&&typeof row.id==='string'&&Object.keys(row).every(function(k){return ['id','Name','name','updateTime'].includes(k)&&typeof row[k]==='string'&&row[k].length<=4000;});});}
    if(fields){if(raw===undefined)return true;try{return raw.length<=250000&&refs(JSON.parse(raw));}catch(e){return false;}}
@@ -454,13 +460,13 @@ var syyDiskCache=(function(){
      var match=/^(getAllProducts|getProductCatalogPage)(\[.*\])$/.exec(key);if(!match)return false;
      var args=JSON.parse(match[2]),o=args[0];
      if(args.length!==1||!o||typeof o!=='object'||o.cursorMode!==true||match[1]==='getAllProducts'&&o.paged!==true||o.search||Object.keys(o.filters||{}).length||o.sortCol&&o.sortCol!=='productCode')return false;
-     if(Object.keys(o).some(function(k){return !['cursorMode','paged','includeMasters','search','filters','sortCol','sortAsc','page','pageSize','cursor'].includes(k);}))return false;
+     if(Object.keys(o).some(function(k){return !['cursorMode','paged','includeMasters','search','filters','sortCol','sortAsc','page','pageSize','cursor','includeImages'].includes(k);}))return false;
      if(raw===undefined)return true;
      var page=JSON.parse(raw),allowed=['catalogPage','cursorMode','products','page','pageSize','total','unfilteredTotal','readTime','hasMore','snapshotRebased','nextCursor','cacheExpiresAt','masters'];
      if(raw.length>1000000||!page||page.catalogPage!==true||page.cursorMode!==true||!Array.isArray(page.products)||page.products.length>200||Object.keys(page).some(function(k){return !allowed.includes(k);}))return false;
      var strings=['id','productCode','productName','partType','partNumber','barcode','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carModel','status','imageUrl','imageUpdateTime'];
      var numbers=['costPrice','sellingPrice','currentStock','minStock','primaryImageIndex'];
-     if(!page.products.every(function(row){return row&&typeof row.productCode==='string'&&Object.keys(row).every(function(k){var value=row[k];return strings.includes(k)?typeof value==='string'&&value.length<=12000:numbers.includes(k)?Number.isFinite(value):k==='barcodeGenerated'?typeof value==='boolean':['carIds','imageUrls'].includes(k)&&Array.isArray(value)&&value.length<=100&&value.every(function(x){return typeof x==='string'&&x.length<=12000;});});}))return false;
+     if(!page.products.every(function(row){return row&&typeof row.productCode==='string'&&Object.keys(row).every(function(k){var value=row[k];return strings.includes(k)?typeof value==='string'&&value.length<=12000:numbers.includes(k)?Number.isFinite(value):['barcodeGenerated','imageDataLoaded'].includes(k)?typeof value==='boolean':['carIds','imageUrls'].includes(k)&&Array.isArray(value)&&value.length<=100&&value.every(function(x){return typeof x==='string'&&x.length<=12000;});});}))return false;
      // Vendor dropdown labels contain phone numbers. Keep these bootstraps in
      // memory only; Viewer/ordinary pages without contact dropdowns can persist.
      if(page.masters&&((page.masters.vendors||[]).length||!Object.keys(page.masters).every(function(k){return ['brands','categories','vendors','zones','cars'].includes(k)&&refs(page.masters[k]);})))return false;
@@ -490,7 +496,7 @@ var syyDiskCache=(function(){
    try{tx=db.transaction(['records','meta'],mode);tx.oncomplete=function(){finish(result);};tx.onerror=tx.onabort=function(){stats.errors++;finish(null);};worker(tx,function(value){result=value;});}catch(e){stats.errors++;finish(null);}
  });});}
  function protect(tx,fn){return function(){try{return fn.apply(this,arguments);}catch(e){stats.errors++;try{tx.abort();}catch(ignored){}}};}
- function dependencies(key){var match=/^(\w+)\[/.exec(key),policy=match&&syyReadPolicy(match[1]);return policy?policy.scopes:[];}
+ function dependencies(key){var match=/^(\w+)(\[.*\])$/.exec(key),policy=match&&syyReadPolicy(match[1],JSON.parse(match[2]));return policy?policy.scopes:[];}
  function revisions(tx,owner,scopes,done){var pending=scopes.length+1,values={};[owner].concat(scopes.map(function(s){return owner+':'+s;})).forEach(function(id){var r=tx.objectStore('meta').get(id);r.onsuccess=protect(tx,function(){values[id]=r.result?r.result.revision:0;if(!--pending)done(values);});});}
  function lookup(key){
    var lookupKey=syyCacheIdentity+':'+key;if(lookups.has(lookupKey))return lookups.get(lookupKey);
@@ -502,8 +508,8 @@ var syyDiskCache=(function(){
      records.put(Object.assign({},record,{schema:2,id:stamp.scope+':'+key,scope:stamp.scope,revision:stamp.revision,epochs:epochs,syncedAt:Date.now()}));
      var scan=records.openCursor(),items=[];scan.onsuccess=protect(tx,function(){var cursor=scan.result;if(cursor){var value=cursor.value;if(typeof value.raw!=='string'||!eligible(value.key,value.raw)||!Number.isFinite(value.expiresAt)||value.expiresAt<=Date.now()||!Number.isFinite(value.checkedAt)){cursor.delete();stats.evictions++;}else items.push({id:value.id,scope:value.scope,at:value.checkedAt,bytes:value.raw.length*2});cursor.continue();return;}
        items.sort(function(a,b){return a.at-b.at;});var local=items.filter(function(x){return x.scope===stamp.scope;}),localBytes=local.reduce(function(n,x){return n+x.bytes;},0),removed=new Set();
-       while(local.length>40||localBytes>2000000){var first=local.shift();records.delete(first.id);removed.add(first.id);localBytes-=first.bytes;stats.evictions++;}
-       items=items.filter(function(x){return !removed.has(x.id);});var bytes=items.reduce(function(n,x){return n+x.bytes;},0);while(items.length>80||bytes>8000000){var first=items.shift();records.delete(first.id);bytes-=first.bytes;stats.evictions++;}stats.bytes=bytes;stats.entries=items.length;stats.writes++;set(true);
+       while(local.length>40||localBytes>8000000){var first=local.shift();records.delete(first.id);removed.add(first.id);localBytes-=first.bytes;stats.evictions++;}
+       items=items.filter(function(x){return !removed.has(x.id);});var bytes=items.reduce(function(n,x){return n+x.bytes;},0);while(items.length>80||bytes>16000000){var first=items.shift();records.delete(first.id);bytes-=first.bytes;stats.evictions++;}stats.bytes=bytes;stats.entries=items.length;stats.writes++;set(true);
      });
    });});
  }
@@ -513,13 +519,16 @@ var syyDiskCache=(function(){
  return {enabled:!!enabled,eligible:eligible,lookup:lookup,put:put,invalidate:invalidate,clear:clear,connect:scope,stats:stats};
 })();
 syyCacheStats.disk=syyDiskCache.stats;
-function syyReadPolicy(name){
+function syyReadPolicy(name,args){
  var masters=['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'],catalog=['Master_Products'].concat(masters),images=catalog.concat(['Product_Images']);
  var scopes={getBrands:['Master_Brands'],getCategories:['Master_Categories'],getVendorsFull:['Master_Vendors'],getZonesFull:['Master_Zones'],getCarsFull:['Master_Cars'],getCustomersFull:['Master_Customers'],
   getAllMasterDropdowns:masters,getAllProducts:images,getProductCatalogPage:images,getProductCatalogFacets:catalog,getProductImageBatch:['Product_Images'],
   getDashboardBootstrap:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovementPage:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovements:catalog.concat(['Stock_Movements','Purchase_Orders']),getStockMovementDetail:catalog.concat(['Stock_Movements','Purchase_Orders']),
   getPurchaseOrderPageData:images.concat(['Purchase_Orders']),getQuotationPageData:images.concat(['Master_Customers','Quotations']),getQuotationListData:['Quotations'],getTaxInvoicePageData:images.concat(['Master_Customers','Master_Tax_Invoice']),getTaxInvoiceListData:['Master_Tax_Invoice']};
  if(!Object.prototype.hasOwnProperty.call(scopes,name))return null;
+ var o=args&&args[0];if(['getAllProducts','getProductCatalogPage'].includes(name)&&o&&(o.compact||o.includeImages===false))scopes[name]=catalog;
+ if(['getQuotationPageData','getTaxInvoicePageData'].includes(name)){o=args&&args[1]||{};if(o.deferSections)scopes[name]=[name==='getQuotationPageData'?'Quotations':'Master_Tax_Invoice'];else if(o.editorOnly)scopes[name]=(o.compactCatalog?catalog:images).concat(['Master_Customers']);else if(o.compactCatalog)scopes[name]=scopes[name].filter(function(x){return x!=='Product_Images';});}
+ if(name==='getPurchaseOrderPageData'&&o&&o.section)scopes[name]=o.section==='history'?['Purchase_Orders','Master_Vendors']:catalog.concat(['Purchase_Orders']);
  var stable=scopes[name].every(function(x){return masters.indexOf(x)>=0||x==='Master_Customers';});
  return {scopes:scopes[name],ttl:stable?120000:30000,maxAge:stable?300000:120000,persist:stable||name==='getProductCatalogFacets'};
 }
@@ -550,6 +559,7 @@ function syyInvalidateReadScopes(scopes,notify,preserveRevision){
  if(notify){var message={action:'CACHE_INVALIDATED',scopes:scopes};syyPostParent(message);document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,message);});}
 }
 function syyWriteScopes(name,args){
+ if(name==='correctStockIssue')return ['Master_Products','Stock_Movements','Quotations'];
  var mapping={saveBrand:['Master_Brands'],deleteBrand:['Master_Brands'],saveCategory:['Master_Categories'],deleteCategory:['Master_Categories'],saveVendor:['Master_Vendors'],deleteVendor:['Master_Vendors'],saveZone:['Master_Zones'],deleteZone:['Master_Zones'],saveCar:['Master_Cars'],deleteCar:['Master_Cars'],saveCustomer:['Master_Customers'],deleteCustomer:['Master_Customers'],
   saveProduct:['Master_Products'],deleteProduct:['Master_Products','Product_Images'],generateProductBarcode:['Master_Products'],uploadProductImage:['Product_Images'],deleteProductImage:['Product_Images'],setPrimaryProductImage:['Product_Images'],moveProductImage:['Product_Images'],commitProductImageDraft:['Product_Images'],
   savePurchaseOrder:['Purchase_Orders'],updatePurchaseOrderStatus:['Purchase_Orders'],deletePurchaseOrder:['Purchase_Orders'],receiveGoods:['Master_Products','Stock_Movements','Purchase_Orders'],issueStock:['Master_Products','Stock_Movements','Quotations'],
@@ -593,10 +603,25 @@ function syyUnpackCatalog(data){
  if(!Array.isArray(data.fields)||!Array.isArray(data.rows)||data.fields.some(function(key){return typeof key!=='string';})||data.rows.some(function(row){return !Array.isArray(row)||row.length!==data.fields.length;}))throw Error('ข้อมูลสินค้าไม่ครบ กรุณาลองใหม่');
  return data.rows.map(function(values){var row={imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:''};data.fields.forEach(function(key,i){if(key!=='__proto__'&&key!=='constructor'&&key!=='prototype')row[key]=values[i];});row.id=row.productCode;return row;});
 }
-function syyDecodeRead(data){data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);return data;}
+function syyDecodeRead(data){data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);if(data&&data.movements&&data.movements.movementFormat===1){var packed=data.movements,allowed=['id','docNo','billNo','issueStatus','reversal','billCountDelta','type','productCode','productName','qty','stockAfter','unitPrice','costPrice','reason','refNo','note','user','timestamp','committedAt'];if(!Array.isArray(packed.fields)||packed.fields.some(function(k){return !allowed.includes(k);})||!Array.isArray(packed.rows)||packed.rows.some(function(r){return !Array.isArray(r)||r.length!==packed.fields.length;}))throw Error('ข้อมูลประวัติไม่ครบ');data.movements=packed.rows.map(function(r){var m={};packed.fields.forEach(function(k,i){m[k]=r[i];});return m;});}return data;}
+// Disk snapshots only prepare a bootstrap. The authenticated server must
+// validate owner/session/version/age before the page displays these products.
+function syyRestoreCatalog(done){
+ var key='getAllProducts[{"compact":true}]';if(!syyEnsureCacheIdentity()){done(null);return;}
+ var owner=syyCacheIdentity,policy=syyReadPolicy('getAllProducts',[{compact:true}]),record=syyCacheRecord(key,policy);
+ function finish(r){try{if(owner!==syyCacheIdentity||!r||typeof r.version!=='string'){done(null);return;}var packed=JSON.parse(r.raw);if(!syyDiskCache.eligible(key,r.raw)){done(null);return;}done({products:syyUnpackCatalog(packed),section:{version:r.version,loadedAt:r.loadedAt},expiresAt:r.expiresAt});}catch(e){done(null);}}
+ if(record){finish(record);return;}syyDiskCache.lookup(key).then(function(stamp){finish(stamp&&stamp.record);}).catch(function(){done(null);});
+}
+function syySeedCatalog(packed,section,identity,sourceScopes,epoch){
+ if(!packed||!section||typeof section.version!=='string'||!Number.isFinite(section.loadedAt))return;
+ var key='getAllProducts[{"compact":true}]',policy=syyReadPolicy('getAllProducts',[{compact:true}]),raw=JSON.stringify(packed);
+ if(!syyDiskCache.eligible(key,raw)||Date.now()-section.loadedAt>=policy.maxAge)return;
+ syyStoreRead(key,policy,packed,section.version,{loadedAt:section.loadedAt},raw,section.loadedAt+policy.maxAge);
+ var record=syyReadCache.get(key);if(record)syyDiskCache.lookup(key).then(function(stamp){if(identity===syyCacheIdentity&&epoch===syyCacheEpoch(sourceScopes))return syyDiskCache.put(key,record,stamp);});
+}
 function callApi(fnName,args,onSuccess,onFailure,options){
  if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,function(data){if(data&&data.success!==false)syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onSuccess)onSuccess(data);},function(error){syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onFailure)onFailure(error);else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));});
- options=options||{};var policy=syyReadPolicy(fnName),canCache=syyEnsureCacheIdentity(),manual=options.manual===true||syyReadFresh,authoritative=options.authoritative===true;
+ options=options||{};var policy=syyReadPolicy(fnName,args),canCache=syyEnsureCacheIdentity(),manual=options.manual===true||syyReadFresh,authoritative=options.authoritative===true;
  if(manual&&!authoritative)args=(args||[]).map(function(x){if(x&&typeof x==='object'&&!Array.isArray(x)&&Object.prototype.hasOwnProperty.call(x,'force'))return Object.assign({},x,{force:false});return x;});
  var force=authoritative||!manual&&(options.fresh||(args||[]).some(function(x){return x&&typeof x==='object'&&(x.force||x.cursor&&x.cursorMode!==true);}));
  var canonical=syyReadArgs(fnName,args),key=fnName+JSON.stringify(canonical);
@@ -619,13 +644,14 @@ function callApi(fnName,args,onSuccess,onFailure,options){
  syyCacheStats.misses++;if(record)syyCacheStats.revalidations++;
  listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);var rpcStarted=Date.now(),measured=false,fenceKey=key+':'+identity,requestSequence=++syyReadSequence;
  syyReadLatest.delete(fenceKey);syyReadLatest.set(fenceKey,requestSequence);while(syyReadLatest.size>200)syyReadLatest.delete(syyReadLatest.keys().next().value);
- function measure(failed){if(measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0,slowCount:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.slowCount=(m.slowCount||0)+(m.lastMs>=3000?1:0);m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);}
+ var rpcTiming={};function measure(failed){if(measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0,slowCount:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.slowCount=(m.slowCount||0)+(m.lastMs>=3000?1:0);m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);m.samples=(m.samples||[]).concat([Object.assign({totalMs:m.lastMs,failed:!!failed},rpcTiming)]).slice(-20);var sorted=m.samples.map(function(x){return x.totalMs;}).sort(function(a,b){return a-b;});m.p50Ms=sorted[Math.ceil(sorted.length*.5)-1];m.p95Ms=sorted[Math.ceil(sorted.length*.95)-1];}
  function failed(error){measure(true);syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
  syyCallApiRaw(fnName,args,function(data){
    syyEnsureCacheIdentity();
    if(policy&&(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||syyReadLatest.get(fenceKey)!==requestSequence)){failed({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
-   var version=null,previous=null,expiresAt=null;if(data&&data.__syyCache===1){version=data.version;expiresAt=data.expiresAt;if(data.notModified){if(!record){failed({message:'แคชหมดอายุ กรุณาโหลดใหม่'});return;}previous=record;data=JSON.parse(record.raw);syyCacheStats.notModified++;}else data=data.data;}
-   var wireRaw;try{if(policy&&canCache&&version!==null)wireRaw=JSON.stringify(data);data=syyDecodeRead(data);}catch(error){failed(error);return;}
+   var version=null,previous=null,expiresAt=null;if(data&&data.__syyCache===1){if(data.timings)['authMs','operationMs','serverMs'].forEach(function(k){if(Number.isFinite(data.timings[k])&&data.timings[k]>=0)rpcTiming[k]=data.timings[k];});version=data.version;expiresAt=data.expiresAt;if(data.notModified){if(!record){failed({message:'แคชหมดอายุ กรุณาโหลดใหม่'});return;}previous=record;data=JSON.parse(record.raw);syyCacheStats.notModified++;}else data=data.data;}
+   var wireProducts=data&&data.products&&data.products.catalogFormat===1?data.products:null,catalogSection=data&&(data.catalogSection||data.sectionVersions&&data.sectionVersions.products);
+   var wireRaw,decodeStarted=Date.now();try{if(policy&&canCache&&version!==null)wireRaw=JSON.stringify(data);data=syyDecodeRead(data);}catch(error){failed(error);return;}rpcTiming.decodeMs=Math.max(0,Date.now()-decodeStarted);rpcTiming.wireChars=previous?0:wireRaw?wireRaw.length:undefined;rpcTiming.source=previous?'validated-cache':'server';
    if(policy&&manual&&!previous)syyInvalidateReadScopes(policy.scopes,true,true);
    syyLastReadAt=previous?previous.loadedAt:Date.now();syyUxLoaded=syyLastReadAt;syyLastCheckedAt=Date.now();syyLastReadSource=previous?'validated-cache':'server';if(policy)policy.scopes.forEach(function(s){syyDirtyReadScopes.delete(s);});syyReadDirty=syyDirtyReadScopes.size>0;
    // Only protocol-aware servers produce cacheable results. Old deployments
@@ -633,8 +659,9 @@ function callApi(fnName,args,onSuccess,onFailure,options){
    if(policy&&canCache&&version!==null){syyStoreRead(key,policy,data,version,previous,wireRaw,expiresAt);var stored=syyReadCache.get(key);if(stored&&syyDiskCache.eligible(key,stored.raw)){if(manual&&!previous)syyDiskCache.lookup(key).then(function(stamp){return syyDiskCache.put(key,stored,stamp);});else syyDiskCache.put(key,stored,options.diskStamp);}}
    // A bootstrap includes edit dropdowns; ordinary navigation needs the same
    // rows without them. Reuse that visited page without another request.
-   if(canCache&&version!==null&&fnName==='getAllProducts'&&args[0]&&args[0].paged&&data&&data.catalogPage){var pageArgs=JSON.parse(JSON.stringify(args));pageArgs[0].includeMasters=false;var pageData=Object.assign({},data),pageKey='getProductCatalogPage'+JSON.stringify(syyReadArgs('getProductCatalogPage',pageArgs));delete pageData.masters;if((syyReadLatest.get(pageKey+':'+identity)||0)<=requestSequence)syyStoreRead(pageKey,syyReadPolicy('getProductCatalogPage'),pageData,version,syyReadCache.get(key),undefined,expiresAt);}
+   if(canCache&&version!==null&&fnName==='getAllProducts'&&args[0]&&args[0].paged&&data&&data.catalogPage){var pageArgs=JSON.parse(JSON.stringify(args));pageArgs[0].includeMasters=false;var pageData=Object.assign({},data),pageKey='getProductCatalogPage'+JSON.stringify(syyReadArgs('getProductCatalogPage',pageArgs));delete pageData.masters;if((syyReadLatest.get(pageKey+':'+identity)||0)<=requestSequence)syyStoreRead(pageKey,syyReadPolicy('getProductCatalogPage',pageArgs),pageData,version,syyReadCache.get(key),undefined,expiresAt);}
    if(canCache&&data&&data.facets&&typeof data.facetVersion==='string')Object.keys(data.facets).forEach(function(column){var facet=data.facets[column];if(facet&&Array.isArray(facet.values))syyStoreRead('getProductCatalogFacets'+JSON.stringify(syyReadArgs('getProductCatalogFacets',[{},column])),syyReadPolicy('getProductCatalogFacets'),facet,data.facetVersion,previous,undefined,expiresAt);});
+   if(policy&&canCache&&version!==null&&wireProducts)syySeedCatalog(wireProducts,catalogSection,identity,policy.scopes,epoch);
    measure(false);syyPendingReads.delete(pendingKey);syyUxStatus();listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data,{notModified:!!previous,manual:manual});}catch(e){setTimeout(function(){throw e;},0);}});
  },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt,expiresAt:record&&record.expiresAt,manual:!!manual,refresh:!!authoritative}:undefined);
 }
@@ -777,17 +804,39 @@ document.addEventListener('DOMContentLoaded',function(){
     function field(label,value){return '<div><span class="label">'+esc(label)+'</span><div class="value">'+esc(value)+'</div></div>';}
     var totalQty=0,totalValue=0,priced=0;
     var lines=rows.map(function(m,i){
-      var qty=Math.abs(num(m.qty)),hasPrice=m.hasUnitPrice===true,value=hasPrice?num(m.unitPrice)*qty:null;
-      totalQty+=qty;if(hasPrice){priced++;totalValue+=value;}
+      var qty=Math.abs(num(m.qty)),hasPrice=m.hasUnitPrice===true,value=hasPrice?num(m.unitPrice)*num(m.qty):null;
+      totalQty+=num(m.qty);if(hasPrice){priced++;totalValue+=value;}
       function stock(v){return v==null||v===''?'—':esc(v);}
-      return '<tr><td class="rownum">'+(i+1)+'</td><td class="product-name-cell">'+esc(m.productName||'—')+'<div><span class="pn-badge">'+esc(m.productCode||'—')+'</span></div></td><td class="text-center">'+(m.type==='IN'?'+':'−')+qty+'</td><td class="text-right">'+(hasPrice?money(m.unitPrice):'<span class="cell-empty">ไม่ได้บันทึก</span>')+'</td><td class="text-right">'+(value==null?'—':money(value))+'</td><td class="text-center">'+stock(m.stockBefore)+'</td><td class="text-center">'+stock(m.stockAfter)+'</td></tr>';
+      return '<tr><td class="rownum">'+(i+1)+'</td><td class="product-name-cell">'+esc(m.productName||'—')+'<div><span class="pn-badge">'+esc(m.productCode||'—')+'</span></div></td><td class="text-center">'+(m.type==='IN'||m.reversal?'+':'−')+qty+'</td><td class="text-right">'+(hasPrice?money(m.unitPrice):'<span class="cell-empty">ไม่ได้บันทึก</span>')+'</td><td class="text-right">'+(value==null?'—':money(value))+'</td><td class="text-center">'+stock(m.stockBefore)+'</td><td class="text-center">'+stock(m.stockAfter)+'</td></tr>';
     }).join('');
     var summaryLabel=complete&&!data.legacy?'ยอดรวมรายการ':'ยอดรวมเฉพาะบรรทัดที่แสดง';
     var html='<div class="movement-meta">'+field('เลขที่บิล / รายการ',data.billNo||rows[0].billNo||data.docNo||'ไม่มีเลขรายการ (ข้อมูลเดิม)')+(data.billNo||rows[0].billNo?field('รหัสอ้างอิงระบบเดิม',data.docNo):'')+field('ประเภท',values('type',function(t){return t==='IN'?'รับสินค้าเข้า':'ตัดสต๊อก / ขายหน้าร้าน';}))+field('เวลาที่ทำรายการ',values('timestamp',formatTime||function(v){return thDate(v,true);}))+field('ผู้ทำรายการ',values('user'))+field('เหตุผล',values('reason'))+field('เลขอ้างอิง',values('refNo'))+field('ใบเสนอราคาที่เกี่ยวข้อง',values('quoteId'))+field('หมายเหตุ',values('note'))+'</div>';
+    if(rows[0].issueStatus&&rows[0].issueStatus!=='active')html+='<div class="alert alert-warn">สถานะ: '+esc(rows[0].issueStatus==='cancelled'?'ยกเลิกแล้ว':'มีบิลทดแทน')+(rows[0].replacedBy?' · รหัสบิลทดแทน '+esc(rows[0].replacedBy):'')+'</div>';
+    if(data.correction)html+='<div class="alert">แก้ไขโดย '+esc(data.correction.user)+' · '+esc(data.correction.reason)+'<br>หมายเหตุเดิม: '+esc(data.correction.previousNote||'—')+' · อ้างอิงเดิม: '+esc(data.correction.previousRefNo||'—')+'</div>';
+    if(rows.some(function(m){return m.reversal;}))html+='<div class="alert alert-warn">รายการย้อนผลบิล · มูลค่าหักจากยอดเดิม ยอดสต๊อกก่อน/หลังเป็นผลรวมของการแก้ไขทั้งชุด</div>';
+    var related=Array.from(new Set(rows.flatMap(function(m){return [m.replacedBy,m.reversesDoc,m.replacesDoc];}).filter(Boolean)));if(related.length)html+='<p>รายการที่เกี่ยวข้อง: '+related.map(function(doc){return '<button type="button" class="btn btn-ghost" data-related-doc="'+esc(doc)+'">'+esc(doc)+'</button>';}).join(' ')+'</p>';
+    if(data.correction)html+='<div data-syy-audit><div class="syy-audit-rows"></div><p class="syy-audit-error" role="status"></p><button type="button" class="btn btn-ghost" data-audit-doc="'+esc(data.docNo)+'">ดูประวัติการแก้ไข</button></div>';
+    if(data.auditWarning)html+='<p role="status">'+esc(data.auditWarning)+'</p>';
     if(data.legacy)html+='<div class="alert alert-warn">ข้อมูลเดิมไม่มีเลขรายการ จึงแสดงรายละเอียดเฉพาะบรรทัดที่เลือก</div>';
     if(!complete)html+='<div class="alert alert-warn">รายการนี้มีมากกว่า 1,000 บรรทัด ข้อมูลที่แสดงยังไม่ครบ กรุณาติดต่อผู้ดูแล</div>';
     html+='<p class="movement-scroll-hint">เลื่อนตารางซ้าย–ขวาเพื่อดูราคาและสต๊อก</p><div class="table-wrap"><table><thead><tr><th>#</th><th>สินค้า</th><th>จำนวน</th><th>ราคาต่อหน่วยที่บันทึก</th><th>มูลค่า</th><th>สต๊อกก่อนทำ</th><th>สต๊อกหลังทำ</th></tr></thead><tbody>'+lines+'</tbody></table></div>';
     html+='<div class="movement-summary"><span>'+summaryLabel+' · '+rows.length+' บรรทัด / '+totalQty.toLocaleString('th-TH')+' ชิ้น</span><b>'+(priced===rows.length?money(totalValue)+' บาท':priced?'มูลค่าเฉพาะ '+priced+' บรรทัดที่บันทึกราคา: '+money(totalValue)+' บาท':'ไม่ได้บันทึกมูลค่า')+'</b></div>';
     return html;
   }
+</script>
+
+<script>
+document.addEventListener('click',function(event){
+ var link=event.target.closest('[data-related-doc]');if(link){var doc=link.dataset.relatedDoc;if(typeof dashOpenBill==='function')dashOpenBill(doc);else if(typeof requestMovementDetail==='function'){movementDetailDocNo=doc;requestMovementDetail(doc);}return;}
+ var button=event.target.closest('[data-audit-doc]');if(!button||button.disabled)return;var box=button.closest('[data-syy-audit]');button.disabled=true;box.querySelector('.syy-audit-error').textContent='กำลังโหลดประวัติ…';
+ callApi('getStockIssueCorrectionHistory',[button.dataset.auditDoc,{cursor:button.dataset.auditCursor||''}],function(data){if(!button.isConnected)return;button.disabled=false;if(!data||!Array.isArray(data.entries)){box.querySelector('.syy-audit-error').textContent='โหลดประวัติไม่ครบ กรุณาลองใหม่';return;}
+  box.querySelector('.syy-audit-error').textContent=data.entries.length?'':'ไม่มีประวัติเพิ่มเติม';box.querySelector('.syy-audit-rows').insertAdjacentHTML('beforeend',data.entries.map(function(row){var labels={amend:'แก้หมายเหตุ/อ้างอิง',replace:'ออกบิลทดแทน',cancel:'ยกเลิกบิล'};return '<div class="alert"><b>'+esc(labels[row.action]||row.action)+'</b> · '+esc(thDate(row.timestamp,true))+' · '+esc(row.user)+'<br>'+esc(row.reason)+'<br>หมายเหตุ: '+esc(row.previousNote||'—')+' → '+esc(row.note||'—')+'<br>อ้างอิง: '+esc(row.previousRefNo||'—')+' → '+esc(row.refNo||'—')+(row.replacementBillNo?'<br>บิลทดแทน '+esc(row.replacementBillNo):'')+'</div>';}).join(''));button.dataset.auditCursor=data.nextCursor||'';button.textContent='ดูประวัติก่อนหน้า';button.hidden=!data.nextCursor;
+ },function(error){if(!button.isConnected)return;button.disabled=false;box.querySelector('.syy-audit-error').textContent=syyErrorMessage(error);});
+});
+var syyLibraries=Object.create(null);
+function syyLoadLibrary(name){
+ var urls={xlsx:"https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",barcode:"https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"};
+ if(!urls[name])return Promise.reject(Error("ไม่รู้จัก library"));if(syyLibraries[name])return syyLibraries[name];
+ syyLibraries[name]=new Promise(function(resolve,reject){var script=document.createElement("script"),done=false,timer=setTimeout(function(){finish(false);},10000);function finish(ok){if(done)return;done=true;clearTimeout(timer);if(ok)resolve();else{delete syyLibraries[name];script.remove();reject(Error("โหลดเครื่องมือไม่สำเร็จ กรุณาลองอีกครั้ง"));}}script.src=urls[name];script.onload=function(){finish(name==="xlsx"?typeof XLSX!=="undefined":typeof JsBarcode!=="undefined");};script.onerror=function(){finish(false);};document.head.appendChild(script);});return syyLibraries[name];
+}
 </script>

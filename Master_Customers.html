@@ -198,13 +198,13 @@
 
   var cache=[], editingId=null, deleteId=null, searchTimer=null,masterDataLoaded=false;
 
-  window.onload = function(){
+  document.addEventListener('DOMContentLoaded',function(){
     initDensity();
     document.getElementById('tbodyMain').innerHTML = skeletonRows(9,5);
     renderHead();
     loadTable();
     populateProvinceDropdown('f');
-  };
+  });
 
   XLF.bindHeaderClicks('#theadMain', function(){ return cache; }, renderRows);
 

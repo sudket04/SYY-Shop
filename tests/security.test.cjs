@@ -83,8 +83,8 @@ test('all V1 operations retain names, private dispatch, response and existing ro
     'updateQuotationStatus','authGetMyProfile','authChangePassword','authLogout'],
     staff:['saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveProduct','uploadProductImage',
     'deleteProductImage','setPrimaryProductImage','moveProductImage','commitProductImageDraft','generateProductBarcode',
-    'saveMasterData','savePurchaseOrder','receiveGoods','updatePurchaseOrderStatus','issueStock','getStockMovementDetail','markQuotationStockIssued'],
-    admin:['deleteTaxInvoice','deleteQuotation','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone',
+    'saveMasterData','savePurchaseOrder','receiveGoods','updatePurchaseOrderStatus','issueStock','getStockMovementDetail','getStockIssueCorrectionHistory','markQuotationStockIssued'],
+    admin:['getStockIssueCorrectionPreview','correctStockIssue','deleteTaxInvoice','deleteQuotation','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone',
     'deleteCar','deleteProduct','deletePurchaseOrder','backupNow','listBackupFiles','getBackupOverview','setupBackupSchedule','getActivityLog','getAllUsers',
     'createUserAccount','updateUserAccount','resetUserPassword','toggleUserStatus','authStartTotpSetup','authConfirmTotpSetup','authDisableTotp']};
   const expectedRegistry=Object.fromEntries(Object.entries(expected).flatMap(([role,names])=>names.map(name=>[name,role])));

@@ -717,7 +717,7 @@ var targetToggleDocId  = null;
 var targetToggleStatus = null;
 var targetResetDocId   = null;
 
-window.onload = function() { loadTable(); };
+document.addEventListener('DOMContentLoaded',function(){ loadTable(); });
 
 // ★ เรียกทุกฟังก์ชันผ่าน apiGateway เพราะต้องเช็ค role admin ที่ backend
 function manageErrorMessage(err){var message=err&&err.message||'';return message&&message.length<=250?message:'การเชื่อมต่อขัดข้อง กรุณาลองใหม่';}

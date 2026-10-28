@@ -25,6 +25,25 @@
   .movement-meta .label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
   .movement-meta .value{color:var(--ink);overflow-wrap:anywhere;white-space:pre-wrap}
   .movement-summary{margin-top:16px;padding:12px 14px;border:1px solid var(--primary-line);background:var(--primary-soft);border-radius:9px;display:flex;gap:14px;justify-content:space-between;flex-wrap:wrap}
+  #issueCorrectionModal .form-group{margin-bottom:14px}
+  #issueCorrectionModal .form-group>label{display:block;margin-bottom:6px}
+  #issueCorrectionModal input:not(.syy-select-search),#issueCorrectionModal textarea{width:100%;min-width:0;min-height:42px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);font:inherit;box-sizing:border-box}
+  #issueCorrectionModal textarea{min-height:76px;resize:vertical}
+  #issueCorrectionModal input:focus-visible,#issueCorrectionModal textarea:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+  #issueCorrectionModal table{width:100%;table-layout:fixed;min-width:560px}
+  #issueCorrectionModal th:first-child{width:34%}
+  #issueCorrectionModal th:last-child{width:64px}
+  #issueCorrectionModal .modal-body p{margin:12px 0;line-height:1.7}
+  @media(max-width:767px){
+    #issueCorrectionModal table,#issueCorrectionModal tbody{display:block;width:100%;min-width:0}
+    #issueCorrectionModal thead{display:none}
+    #issueCorrectionModal tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:12px;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:10px}
+    #issueCorrectionModal tbody td{display:block;padding:0;border:0;min-width:0}
+    #issueCorrectionModal tbody td:first-child{grid-column:1/-1}
+    #issueCorrectionModal tbody td::before{content:attr(data-label);display:block;margin-bottom:6px;color:var(--muted);font-size:12px}
+    #issueCorrectionModal tbody td:last-child{grid-column:1/-1;text-align:right}
+    #issueCorrectionModal tbody td:last-child::before{display:none}
+  }
   #movementDetailBody .table-wrap{max-height:360px}
   #movementDetailBody .product-name-cell{min-width:180px;max-width:320px;white-space:normal}
   .movement-scroll-hint{display:none}
@@ -307,6 +326,7 @@
 <?!= include_('Shared'); ?>
 <script>
   var AUTH_TOKEN = "<?= authToken ?>";
+  var WEB_APP_URL = "<?= webAppUrl ?>";
   var USER_NAME  = "<?= userName ?>";
   var USER_ROLE  = "<?= userRole ?>";
 
@@ -335,12 +355,12 @@
     searchInputEl.select();
   }
 
-  window.onload = function () {
+  document.addEventListener('DOMContentLoaded',function(){
     initDensity();
     restorePendingIssue();
     loadProducts();
     focusScanInput();
-  };
+  });
 
   // ★ รับรายการจากใบเสนอราคา (ผ่านเชลล์ index.html ที่ forward ต่อมา) มาเติมตะกร้าอัตโนมัติ
   window.addEventListener('message', function (e) {
@@ -1007,13 +1027,13 @@
     tbody.innerHTML = rows.map(function (m) {
       var isIn = m.type === 'IN';
       // Show recorded prices only; a missing legacy/receipt price is not a zero price.
-      var value = m.hasUnitPrice ? num(m.unitPrice) * Math.abs(num(m.qty)) : null;
+      var value = m.hasUnitPrice ? num(m.unitPrice) * num(m.qty) : null;
       return '<tr>' +
         '<td><button type="button" class="movement-link" data-movement-id="' + esc(m.id) + '" title="ดูรายละเอียดรายการ">' + esc(m.billNo || m.docNo || 'ดูบรรทัดนี้ · ไม่มีเลขรายการ') + '</button></td>' +
         '<td style="white-space:nowrap">' + esc(fmtTime(m.timestamp)) + '</td>' +
-        '<td><span class="' + (isIn ? 'mv-in' : 'mv-out') + '">' + (isIn ? '📥 เข้า' : '📤 ออก') + '</span></td>' +
+        '<td><span class="' + (isIn ? 'mv-in' : 'mv-out') + '">' + (m.reversal?'↩ ย้อนรายการ':isIn ? '📥 เข้า' : '📤 ออก') + '</span></td>' +
         '<td>' + esc(m.productName) + ' <span class="pn-badge">' + esc(m.productCode) + '</span></td>' +
-        '<td class="text-center" style="font-weight:600;color:' + (isIn ? 'var(--ok)' : 'var(--danger-dark)') + '">' + (isIn ? '+' : '−') + Math.abs(num(m.qty)) + '</td>' +
+        '<td class="text-center" style="font-weight:600;color:' + (isIn ? 'var(--ok)' : 'var(--danger-dark)') + '">' + (isIn||m.reversal ? '+' : '−') + Math.abs(num(m.qty)) + '</td>' +
         '<td class="text-center">' + esc(m.stockAfter === '' || m.stockAfter == null ? '-' : m.stockAfter) + '</td>' +
         '<td class="text-right mono">' + (value == null ? '<span class="cell-empty">—</span>' : money(value)) + '</td>' +
         '<td>' + esc(m.reason || '-') + (m.refNo ? ' · <span class="mono" style="font-size:11.5px">' + esc(m.refNo) + '</span>' : '') + '</td>' +
@@ -1058,7 +1078,58 @@
     if(movementDetailDocNo!==docNo||!document.getElementById('movementDetailModal').classList.contains('active'))return;
     document.getElementById('movementDetailBody').innerHTML='<div class="empty-state"><b>โหลดรายละเอียดไม่สำเร็จ</b><p>'+esc(message)+'</p><button type="button" class="btn btn-primary" onclick="retryMovementDetail()">ลองอีกครั้ง</button></div>';
   }
-  function renderMovementDetail(data){document.getElementById('movementDetailBody').innerHTML=syyMovementDetailHtml(data,fmtTime);}
+  var correctionSource=null,correctionPayload=null,correctionBusy=false,correctionUncertain=false;
+  var correctionStore=syyStorageKey('draft','stockCorrection');
+  function renderMovementDetail(data){
+    correctionSource=data;document.getElementById('movementDetailBody').innerHTML=syyMovementDetailHtml(data,fmtTime);
+    if(USER_ROLE==='admin'&&data.complete!==false&&data.movements.length&&data.movements.every(function(m){return m.type==='OUT'&&!m.reversal&&(!m.issueStatus||m.issueStatus==='active');}))
+      document.getElementById('movementDetailBody').insertAdjacentHTML('beforeend','<p><button type="button" class="btn btn-primary" onclick="openIssueCorrection()">แก้ไข / ยกเลิกบิลนี้</button></p>');
+  }
+  function correctionModal(){
+    var modal=document.getElementById('issueCorrectionModal');if(modal)return modal;
+    modal=document.createElement('div');modal.id='issueCorrectionModal';modal.className='modal-overlay';
+    modal.innerHTML='<div class="modal-box" style="width:900px"><div class="modal-header"><span class="modal-title">แก้ไขบิลตัดสต๊อก · Admin</span><button type="button" class="modal-close" aria-label="ปิดการแก้ไขบิล" onclick="closeIssueCorrection()">×</button></div><div class="modal-body"><div id="correctionForm"><p id="correctionBill"></p><div class="form-group"><label for="correctionAction">การดำเนินการ</label><select id="correctionAction"><option value="amend">แก้หมายเหตุ / อ้างอิง</option><option value="replace">ย้อนผลเดิมและออกบิลทดแทน</option><option value="cancel">ยกเลิกบิลและคืนสต๊อก</option></select></div><div class="form-group"><label for="correctionReason">เหตุผลการแก้ไข *</label><textarea id="correctionReason" maxlength="1000" minlength="5" required></textarea></div><div class="form-group"><label for="correctionIssueReason">เหตุผลของบิลทดแทน</label><select id="correctionIssueReason"></select></div><div class="form-group"><label for="correctionRef">เลขอ้างอิง</label><input id="correctionRef" maxlength="500"></div><div class="form-group"><label for="correctionNote">หมายเหตุ</label><textarea id="correctionNote" maxlength="4000"></textarea></div><p>รายการทดแทน: รหัสสินค้า / จำนวน / ราคาขายต่อหน่วย · ลบรายการที่ไม่ใช้ได้ (ราคาตรวจและบันทึกโดย Admin)</p><div class="table-wrap"><table><thead><tr><th>รหัสสินค้า</th><th>จำนวน</th><th>ราคา</th><th>ลบ</th></tr></thead><tbody id="correctionLines"></tbody></table></div><button type="button" class="btn btn-ghost" id="correctionAdd">+ เพิ่มบรรทัด</button></div><div id="correctionPreview" role="status" aria-live="polite"></div></div><div class="modal-footer"><button type="button" class="btn btn-ghost" onclick="closeIssueCorrection()">ปิด</button><button type="button" class="btn btn-ghost" id="correctionPreviewButton">ตรวจผลก่อนบันทึก</button><button type="button" class="btn btn-primary" id="correctionConfirm" disabled>ยืนยันแก้ไข</button></div></div>';
+    document.body.appendChild(modal);
+    modal.querySelector('#correctionAdd').onclick=function(){addCorrectionLine({});correctionChanged();};
+    modal.querySelector('#correctionPreviewButton').onclick=previewIssueCorrection;modal.querySelector('#correctionConfirm').onclick=commitIssueCorrection;
+    modal.querySelector('#correctionForm').addEventListener('input',correctionChanged);modal.querySelector('#correctionForm').addEventListener('change',correctionChanged);
+    return modal;
+  }
+  function addCorrectionLine(item){var tr=document.createElement('tr');tr.innerHTML='<td><input aria-label="รหัสสินค้า" class="correction-code" value="'+esc(item.productCode||'')+'"></td><td><input aria-label="จำนวนทดแทน" class="correction-qty" type="number" min="0" step="any" value="'+esc(item.qty==null?'':item.qty)+'"></td><td><input aria-label="ราคาทดแทน" class="correction-price" type="number" min="0" step="any" value="'+esc(item.unitPrice==null?'':item.unitPrice)+'"></td><td><button type="button" class="btn btn-ghost" aria-label="ลบบรรทัด">×</button></td>';Array.from(tr.cells).forEach(function(cell,i){cell.dataset.label=['รหัสสินค้า','จำนวน','ราคาต่อหน่วย',''][i];});tr.querySelector('button').onclick=function(){tr.remove();correctionChanged();};document.getElementById('correctionLines').appendChild(tr);}
+  function lockCorrection(locked){document.querySelectorAll('#correctionForm input,#correctionForm textarea,#correctionForm select,#correctionForm button').forEach(function(el){el.disabled=locked;});document.getElementById('correctionPreviewButton').disabled=locked;}
+  function correctionMode(){var action=document.getElementById('correctionAction').value,table=document.getElementById('correctionLines').closest('.table-wrap');table.style.display=action==='replace'?'':'none';table.previousElementSibling.style.display=table.style.display;document.getElementById('correctionAdd').style.display=table.style.display;document.getElementById('correctionIssueReason').closest('.form-group').style.display=table.style.display;['correctionRef','correctionNote'].forEach(function(id){document.getElementById(id).closest('.form-group').style.display=action==='cancel'?'none':'';});}
+  function correctionChanged(){if(correctionBusy||correctionUncertain)return;correctionMode();correctionPayload=null;document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionConfirm').textContent='ยืนยันแก้ไข';document.getElementById('correctionPreview').textContent='ข้อมูลเปลี่ยน กรุณาตรวจผลก่อนบันทึก';}
+  function openIssueCorrection(){
+    if(USER_ROLE!=='admin'||!correctionSource)return;correctionModal();if(correctionUncertain){openModal('issueCorrectionModal');return;}
+    var first=correctionSource.movements[0];document.getElementById('correctionBill').textContent='เลขที่บิล '+(correctionSource.billNo||correctionSource.docNo);
+    document.getElementById('correctionIssueReason').innerHTML=document.getElementById('inpReason').innerHTML;
+    document.getElementById('correctionIssueReason').value=first.reason||'ขายหน้าร้าน';document.getElementById('correctionRef').value=first.refNo||'';document.getElementById('correctionNote').value=first.note||'';
+    document.getElementById('correctionLines').innerHTML='';correctionSource.movements.forEach(addCorrectionLine);document.getElementById('correctionReason').value='';document.getElementById('correctionAction').value='amend';lockCorrection(false);correctionChanged();openModal('issueCorrectionModal');
+  }
+  function closeIssueCorrection(){if(correctionBusy){toast('กำลังตรวจผลการบันทึก กรุณารอ','warn');return;}closeModal('issueCorrectionModal');}
+  function previewIssueCorrection(){
+    if(correctionBusy||correctionUncertain||!correctionSource)return;
+    var action=document.getElementById('correctionAction').value;
+    var items=action==='replace'?Array.from(document.querySelectorAll('#correctionLines tr')).map(function(row){return {productCode:row.querySelector('.correction-code').value.trim(),qty:row.querySelector('.correction-qty').value,unitPrice:row.querySelector('.correction-price').value};}):[];
+    var payload={requestId:crypto.randomUUID(),docNo:correctionSource.docNo,revision:Number(correctionSource.movements[0].issueRevision)||0,action:action,correctionReason:document.getElementById('correctionReason').value,reason:document.getElementById('correctionIssueReason').value,refNo:document.getElementById('correctionRef').value,note:document.getElementById('correctionNote').value,items:items};
+    correctionPayload=null;document.getElementById('correctionConfirm').disabled=true;correctionBusy=true;lockCorrection(true);document.getElementById('correctionPreview').textContent='กำลังตรวจบิลและสต๊อกปัจจุบัน…';
+    callApi('getStockIssueCorrectionPreview',[payload],function(data){correctionBusy=false;lockCorrection(false);if(!data||!data.previewToken){document.getElementById('correctionPreview').textContent='ผลตรวจไม่ครบ กรุณาลองใหม่';return;}
+      correctionPayload=Object.assign(payload,{previewToken:data.previewToken});document.getElementById('correctionPreview').innerHTML='<div class="alert alert-warn">'+esc(data.warning)+'</div><p>มูลค่าเดิม '+money(data.oldAmount)+' · '+(action==='amend'?'ไม่เปลี่ยนมูลค่า':'มูลค่าทดแทน '+money(data.newAmount))+'</p>'+data.changes.map(function(x){return '<p>'+esc(x.productCode)+' · '+esc(x.productName||'')+' · สต๊อกปัจจุบัน '+esc(x.before)+' → '+esc(x.after)+' ('+(x.delta>=0?'+':'')+esc(x.delta)+')</p>';}).join('');document.getElementById('correctionConfirm').disabled=false;
+    },function(error){correctionBusy=false;lockCorrection(false);document.getElementById('correctionPreview').textContent=syyErrorMessage(error);});
+  }
+  function commitIssueCorrection(){
+    if(correctionBusy||!correctionPayload)return;correctionBusy=true;lockCorrection(true);document.getElementById('correctionConfirm').disabled=true;
+    try{sessionStorage.setItem(correctionStore,JSON.stringify({url:WEB_APP_URL,payload:correctionPayload}));}catch(e){}
+    callApi('correctStockIssue',[correctionPayload],function(result){correctionBusy=false;
+      if(!result||!result.success){correctionFailed(result&&result.message||'ยังไม่ยืนยันผล',!result||!!result.uncertain);return;}
+      correctionUncertain=false;correctionPayload=null;try{sessionStorage.removeItem(correctionStore);}catch(e){}closeModal('issueCorrectionModal');closeMovementDetail();movementDetailCache=Object.create(null);movementDetailPending=Object.create(null);movementDetailGeneration++;
+      syyApplyStockRows(products,result.productStocks||[]);reconcileStockBasket();loadMovements();try{syyPostParent({action:'STOCK_DELTA',productStocks:result.productStocks||[]});syyPostParent({action:'REFRESH_STOCK_FULL'});}catch(e){}
+      swySuccess('บันทึกการแก้ไขแล้ว',result.replacementBillNo?'บิลทดแทน '+esc(result.replacementBillNo):'เก็บประวัติและผลสต๊อกเรียบร้อย');
+    },function(error){correctionBusy=false;correctionFailed(syyErrorMessage(error),true);});
+  }
+  function correctionFailed(message,uncertain){correctionUncertain=uncertain;lockCorrection(uncertain);document.getElementById('correctionPreview').textContent=message+(uncertain?' · กดยืนยันตรวจคำขอเดิม ห้ามสร้างรายการใหม่':' · ตรวจรายละเอียดและตัวอย่างใหม่');document.getElementById('correctionConfirm').disabled=!uncertain;document.getElementById('correctionConfirm').textContent=uncertain?'ตรวจผลคำขอเดิม':'ยืนยันแก้ไข';if(!uncertain){correctionPayload=null;try{sessionStorage.removeItem(correctionStore);}catch(e){}}}
+  document.addEventListener('DOMContentLoaded',function(){if(USER_ROLE!=='admin')return;try{var saved=JSON.parse(sessionStorage.getItem(correctionStore)||'null');if(saved&&saved.url===WEB_APP_URL&&saved.payload&&saved.payload.requestId){correctionModal();correctionPayload=saved.payload;document.getElementById('correctionBill').textContent='คำขอเดิม: '+correctionPayload.docNo;document.getElementById('correctionAction').value=correctionPayload.action;document.getElementById('correctionReason').value=correctionPayload.correctionReason;document.getElementById('correctionRef').value=correctionPayload.refNo;document.getElementById('correctionNote').value=correctionPayload.note;(correctionPayload.items||[]).forEach(addCorrectionLine);correctionMode();correctionUncertain=true;correctionFailed('มีคำขอแก้ไขที่ยังไม่ยืนยันผล',true);openModal('issueCorrectionModal');}}catch(e){}});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('issueCorrectionModal')?.classList.contains('active')){e.preventDefault();e.stopImmediatePropagation();closeIssueCorrection();}},true);
 </script>
 <script>
 function reconcileStockBasket(){basket.forEach(function(line){var product=products.find(function(p){return p.productCode===line.productCode;});if(product){line.stock=num(product.currentStock);line.productName=product.productName;line.minStock=num(product.minStock);}});updateCounts();renderResults();renderBasket();}
@@ -1066,14 +1137,14 @@ syyRegisterFreshness({reload:loadProducts,canRefresh:function(){return !issueBus
   stock:function(stocks){syyApplyStockRows(products,stocks);reconcileStockBasket();},product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();reconcileStockBasket();}});
 </script>
 <script>
-window.addEventListener('load',function(){syyDraftRegister('stockissue',{
+document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('stockissue',{
  blocked:function(){return issueBusy||issueUncertain();},
  capture:function(){return {reason:document.getElementById('inpReason').value,refNo:document.getElementById('inpRefNo').value,note:document.getElementById('inpNote').value,basket:basket.map(function(b){var copy=Object.assign({},b);delete copy.stock;return copy;}),quoteId:pendingQuoteId};},
  restore:function(d){if(issueBusy||issueUncertain()||!d||!Array.isArray(d.basket)||d.basket.length>200)return;basket=d.basket.map(function(b){var p=products.find(function(x){return x.productCode===b.productCode;});return Object.assign({},b,{stock:p?num(p.currentStock):0});});pendingQuoteId=d.quoteId||null;document.getElementById('inpRefNo').value=d.refNo||'';document.getElementById('inpNote').value=d.note||'';renderBasket();}
 });});
 </script>
 <script>
-window.addEventListener('load',function(){syyViewRegister('stockissue',function(){return {search:searchInputEl.value,category:document.getElementById('filterCategory').value,stockFilter:stockFilter,mvFilter:mvFilter,tab:document.getElementById('panelHistory').classList.contains('active')?'history':'issue',scroll:window.scrollY};},function(v){searchInputEl.value=v.search||'';document.getElementById('filterCategory').value=v.category||'';stockFilter=v.stockFilter||'all';mvFilter=v.mvFilter||'all';renderResults();switchTab(v.tab==='history'?'history':'issue');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
+document.addEventListener('DOMContentLoaded',function(){syyViewRegister('stockissue',function(){return {search:searchInputEl.value,category:document.getElementById('filterCategory').value,stockFilter:stockFilter,mvFilter:mvFilter,tab:document.getElementById('panelHistory').classList.contains('active')?'history':'issue',scroll:window.scrollY};},function(v){searchInputEl.value=v.search||'';document.getElementById('filterCategory').value=v.category||'';stockFilter=v.stockFilter||'all';mvFilter=v.mvFilter||'all';renderResults();switchTab(v.tab==='history'?'history':'issue');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

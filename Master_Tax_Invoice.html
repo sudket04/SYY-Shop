@@ -539,7 +539,7 @@ var itemRowSeq     = 0;
 var invoicePdfBusy=false;
 var currentPrintInvoice = null;   // ใบที่กำลังเปิดดู/พิมพ์อยู่ (ใช้ตอนดาวน์โหลดไฟล์)
 
-window.onload = function() { loadAll(); populateProvinceDropdown('qc'); };
+document.addEventListener('DOMContentLoaded',function(){ loadAll(); populateProvinceDropdown('qc'); });
 
 /* ══════════════════════════════════════════════════════════════
    ★ ที่อยู่แบบ Cascading Dropdown — จังหวัด → อำเภอ → ตำบล → รหัสไปรษณีย์
@@ -662,8 +662,19 @@ function switchTab(which) {
 /* ═══ โหลดข้อมูล ═══ */
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
 var documentPager;
-window.addEventListener('load',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},invalidate:function(){invoiceLoadGeneration++;},render:function(){renderRows();renderDashboard();}});});
-var invoiceLoadGeneration=0,invoiceSectionVersions={};
+document.addEventListener('DOMContentLoaded',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},invalidate:function(){invoiceLoadGeneration++;},render:function(){renderRows();renderDashboard();}});});
+var invoiceLoadGeneration=0,invoiceSectionVersions={},invoiceEditorReady=false,invoiceEditorLoading=false,invoiceEditorWaiters=[],invoiceDraftRestore=null;
+function ensureInvoiceEditor(resume){
+  if(invoiceEditorReady)return true;invoiceEditorWaiters.push(resume);if(invoiceEditorLoading)return false;invoiceEditorLoading=true;
+  toast('กำลังเตรียมข้อมูลสำหรับแก้ไขเอกสาร…','warn');var revision=syyDataRevision();
+  syyRestoreCatalog(function(saved){var versions=Object.assign({},invoiceSectionVersions);if(saved)versions.products=saved.section;
+    callApi('getTaxInvoicePageData',[currentPageYear||'',{editorOnly:true,compactCatalog:true,sectionVersions:versions}],function(data){
+      invoiceEditorLoading=false;var section=data&&data.sectionVersions&&data.sectionVersions.products,rows=data&&data.products||saved&&section&&section.version===saved.section.version&&section.loadedAt===saved.section.loadedAt&&saved.products;
+      if(revision!==syyDataRevision()||!Array.isArray(rows)||!Array.isArray(data&&data.customers)){invoiceEditorWaiters=[];toast('ข้อมูลเปลี่ยนหรือไม่ครบ กรุณาเปิดฟอร์มใหม่','err');return;}
+      productsCache=rows;customersCache=data.customers;invoiceSectionVersions=data.sectionVersions||{};invoiceEditorReady=true;populateCustomerDropdown();var waiters=invoiceEditorWaiters.splice(0);waiters.forEach(function(fn){fn();});
+    },function(error){invoiceEditorLoading=false;invoiceEditorWaiters=[];toast(syyErrorMessage(error)+' · กดเปิดฟอร์มเพื่อลองใหม่','err');});
+  });return false;
+}
 function loadAll(yearParam, onDone, onError, forceFull) {
   var requestGeneration=++invoiceLoadGeneration,revision=syyDataStarted();
   var refreshButton=document.getElementById('btnInvoiceRefresh');btnBusy(refreshButton,'กำลังโหลด...');
@@ -677,7 +688,7 @@ function loadAll(yearParam, onDone, onError, forceFull) {
 
   var apiName = taxInvoiceBootstrapped && !forceFull ? 'getTaxInvoiceListData' : 'getTaxInvoicePageData';
   if(!taxInvoiceBootstrapped&&yearParam==null){var savedYear=syyLocalGet('view','invoice-year');if(savedYear)yearParam=savedYear;}
-  callApi(apiName, [yearParam || '',{compactCatalog:true,sectionVersions:invoiceSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function(data, readInfo) {
+  callApi(apiName, [yearParam || '',{deferSections:!invoiceEditorReady,compactCatalog:true,sectionVersions:invoiceSectionVersions,search:documentPager?documentPager.searchOptions():{}}], function(data, readInfo) {
       if(requestGeneration!==invoiceLoadGeneration)return;
       if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();btnDone(refreshButton);document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();return;}
       if(taxInvoiceBootstrapped&&readInfo&&readInfo.manual&&readInfo.notModified){if(documentPager)documentPager.cancel();syyDataLoaded();btnDone(refreshButton);document.getElementById('pageYearLoadingBadge').style.display='none';renderRows();if(typeof onDone==='function')onDone();return;}
@@ -685,10 +696,11 @@ function loadAll(yearParam, onDone, onError, forceFull) {
         failedLoad({message:data && data.message || 'ข้อมูลใบกำกับภาษีไม่ถูกต้อง'}); return;
       }
       invoicesCache = (data && data.invoices) || [];
-    if(documentPager)documentPager.reset(data.pageInfo);
+    if(documentPager)documentPager.reset(data.pageInfo,readInfo&&readInfo.manual);
       if (data && data.seller) sellerInfo = data.seller;
       if (data && data.customers) customersCache = data.customers;
       if (data && data.products) productsCache = data.products;
+      if(data&&Array.isArray(data.products)&&Array.isArray(data.customers))invoiceEditorReady=true;
       if(data.sectionVersions)invoiceSectionVersions=data.sectionVersions;
       if(Array.isArray(data.availableYears))availableYearsCache=data.availableYears;else if(!availableYearsCache.length)availableYearsCache=[new Date().getFullYear()+543];
       taxInvoiceBootstrapped = true;
@@ -1167,6 +1179,7 @@ window.addEventListener('message', function (e) {
 });
 
 function applyInvoicePrefill(d,discard) {
+  if(!ensureInvoiceEditor(function(){applyInvoicePrefill(d,discard);}))return;
   if(!discard&&syyGuardDraft(function(){applyInvoicePrefill(d,true);},'invoice'))return;
   openAddModal(true);
   var items = Array.isArray(d.items) ? d.items : [];
@@ -1181,6 +1194,7 @@ function applyInvoicePrefill(d,discard) {
 
 function openAddModal(discard) {
   if (invoiceSaving) return;
+  if(!ensureInvoiceEditor(function(){openAddModal(discard);}))return;
   if(!discard&&syyGuardDraft(function(){openAddModal(true);},'invoice'))return;
   editingDocId = null;
   document.getElementById('modalDocId').value = '';
@@ -1204,6 +1218,7 @@ function openAddModal(discard) {
 
 function openEditModal(docId,discard) {
   if (invoiceSaving) return;
+  if(!ensureInvoiceEditor(function(){openEditModal(docId,discard);}))return;
   if(!discard&&syyGuardDraft(function(){openEditModal(docId,true);},'invoice'))return;
   var item = invoicesCache.find(function(x) { return x.id === docId; });
   if (!item) { toast('ไม่พบข้อมูลใบกำกับภาษีนี้','err'); return; }
@@ -1740,13 +1755,13 @@ syyRegisterFreshness({reload:function(){loadAll(currentPageYear,null,null,true);
   stock:function(stocks){syyApplyStockRows(productsCache,stocks);},product:function(product,deleted){syyApplyProductRows(productsCache,product,deleted);}});
 </script>
 <script>
-window.addEventListener('load',function(){syyDraftRegister('invoice',{
- capture:function(){if(!document.getElementById('invoiceModal').classList.contains('active'))return null;return {fields:syyReadFields('#invoiceModal'),items:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {name:row.querySelector('.item-name').value,qty:row.querySelector('.item-qty').value,unit:row.querySelector('.item-unit').value,unitPrice:row.querySelector('.item-price').value};}),editingDocId:editingDocId,unknown:!!syyUnknownWrites.saveTaxInvoice};},
- restore:function(d){if(!d||!Array.isArray(d.items)||d.items.length>200)return;openAddModal(true);editingDocId=d.editingDocId||null;document.getElementById('itemBasket').innerHTML='';d.items.forEach(addItemRow);syyWriteFields(d.fields);recalcTotals();if(d.unknown){syyUnknownWrites.saveTaxInvoice=true;syyLockUnknownWrite('saveTaxInvoice');}}
+document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('invoice',{
+ capture:function(){if(invoiceDraftRestore)return invoiceDraftRestore;if(!document.getElementById('invoiceModal').classList.contains('active'))return null;return {fields:syyReadFields('#invoiceModal'),items:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {name:row.querySelector('.item-name').value,qty:row.querySelector('.item-qty').value,unit:row.querySelector('.item-unit').value,unitPrice:row.querySelector('.item-price').value};}),editingDocId:editingDocId,unknown:!!syyUnknownWrites.saveTaxInvoice};},
+ restore:function(d){if(!d||!Array.isArray(d.items)||d.items.length>200)return;invoiceDraftRestore=d;if(!ensureInvoiceEditor(function(){syyDrafts.invoice.adapter.restore(d);}))return;openAddModal(true);editingDocId=d.editingDocId||null;document.getElementById('itemBasket').innerHTML='';d.items.forEach(addItemRow);syyWriteFields(d.fields);recalcTotals();invoiceDraftRestore=null;if(d.unknown){syyUnknownWrites.saveTaxInvoice=true;syyLockUnknownWrite('saveTaxInvoice');}}
 });});
 </script>
 <script>
-window.addEventListener('load',function(){syyViewRegister('invoice',function(){return {tab:document.getElementById('panelDash').classList.contains('active')?'dash':'list',scroll:document.querySelector('#panelList .table-wrap')?.scrollTop||window.scrollY};},function(v){switchTab(v.tab==='dash'?'dash':'list');requestAnimationFrame(function(){var wrap=document.querySelector('#panelList .table-wrap');if(wrap)wrap.scrollTop=v.scroll||0;});});});
+document.addEventListener('DOMContentLoaded',function(){syyViewRegister('invoice',function(){return {tab:document.getElementById('panelDash').classList.contains('active')?'dash':'list',scroll:document.querySelector('#panelList .table-wrap')?.scrollTop||window.scrollY};},function(v){switchTab(v.tab==='dash'?'dash':'list');requestAnimationFrame(function(){var wrap=document.querySelector('#panelList .table-wrap');if(wrap)wrap.scrollTop=v.scroll||0;});});});
 </script>
 </body>
 </html>

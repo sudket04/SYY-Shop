@@ -1,6 +1,6 @@
 <script>
 // Every routed page announces readiness, including pages without Shared.html.
-window.addEventListener('load',function(){
+document.addEventListener('DOMContentLoaded',function(){
   if(typeof syyPostParent==='function'){syyPostParent({action:'PAGE_READY'});return;}
   var meta=document.querySelector('meta[name="syy-frame-channel"]'),channel=meta&&meta.content;
   if(!channel||window.parent===window)return;
@@ -159,7 +159,7 @@ window.addEventListener('load',function(){
   }
   window.addEventListener('resize',schedule);
   if(window.visualViewport)window.visualViewport.addEventListener('resize',schedule);
-  window.addEventListener('load',schedule);
+  document.addEventListener('DOMContentLoaded',schedule);
   if(document.fonts)document.fonts.ready.then(schedule);
   if(typeof ResizeObserver==='function')new ResizeObserver(schedule).observe(document.body);
   new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','hidden','style']});

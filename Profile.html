@@ -282,7 +282,7 @@ var myProfile = null;
 var activityLogCache = [];
 var activityLogLoadedAt = 0, activityLogLoading = false;
 
-window.onload = function () {
+document.addEventListener('DOMContentLoaded',function(){
   if (!AUTH_TOKEN) {
     // ★ ไม่มี token เลย (เปิดหน้านี้ตรงๆ โดยไม่ผ่าน login) — เด้งกลับหน้า login ทันที
     //   หน้านี้ต้องรู้ว่าเป็นใครถึงจะแสดงข้อมูลได้ ต่างจาก Master pages ที่ยัง fallback ได้
@@ -290,7 +290,7 @@ window.onload = function () {
     return;
   }
   loadProfile();
-};
+});
 
 function goHome() { window.top.location.href = WEB_APP_URL + '?page=home&token=' + encodeURIComponent(AUTH_TOKEN); }
 
