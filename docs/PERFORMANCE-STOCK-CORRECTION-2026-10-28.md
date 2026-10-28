@@ -2,6 +2,8 @@
 
 รับช่วงจาก [handoff](CODEX-HANDOFF-2026-10-28.md) บน `main` baseline `3d2de33992cf68e8ec9a83dcba1bd8110e66f682` เอกสารนี้รายงาน Source และผลทดสอบ local ไม่ใช่รายงานว่าเปิดใช้บน Production แล้ว
 
+**ผลรอบต่อจาก b6609c2:** ดู [read-only audit / Backup / initial cached POS](READONLY-AUDIT-BACKUP-2026-10-28.md) มีหลักฐาน Backup จริง timeout, แพตช์พักงาน และ browser/backend integration 10,000 สินค้าเพิ่ม ขอบเขตล่าสุดคือไม่มี Staging และอ่านระบบจริงได้เท่านั้น; ไม่ได้ Sync/Deploy หรือเขียน DB จริง ตัวเลข tests/แบบจำลองในเนื้อหาด้านล่างเป็นผลของชุดแรก ไม่ใช่ผลรวมรอบล่าสุด
+
 ## สถานะและข้อจำกัด
 
 - ลง Source และทดสอบชุดถอดรูปตาราง, DOM-ready, shared compact catalog, cache compression, แยกโหลดเอกสาร/PO และ workflow แก้/ยกเลิกบิลแล้ว

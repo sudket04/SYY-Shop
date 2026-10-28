@@ -2736,30 +2736,37 @@ function backupState_() {
   var state=JSON.parse(raw);if(state.projectId!==PROJECT_ID||typeof state.lastFolderId!=='string'||typeof state.projectFolderId!=='string')throw new Error('Backup state ไม่ถูกต้อง');return state;
 }
 function backupCheckDeadline_(start) {if(Date.now()-start>BACKUP_MAX_RUNTIME_MS)throw new Error('Backup เกินเวลาที่ปลอดภัย ไม่เผยแพร่ชุดข้อมูลที่อ่านไม่ครบ');}
+function backupDiscoveryBatch_(pending,readTime,start){
+  backupCheckDeadline_(start);var part=pending.slice(0,20),result=[],remaining=pending.slice(part.length);
+  if(!part.length)return {paths:result,pending:remaining};
+  var responses=UrlFetchApp.fetchAll(part.map(function(item){return {url:backupEndpoint_()+(item.path?'/'+item.path.split('/').map(encodeURIComponent).join('/'):'')+':listCollectionIds',method:'post',headers:getAuthHeader_(),contentType:'application/json',payload:JSON.stringify({pageSize:100,readTime:readTime,pageToken:item.token}),muteHttpExceptions:true};}));
+  responses.forEach(function(response,i){
+    if(response.getResponseCode()!==200)throw new Error('ค้นหา Collection สำหรับ Backup ไม่สำเร็จ');
+    var body=JSON.parse(response.getContentText()),item=part[i],seen=Object.assign(Object.create(null),item.seen);
+    (body.collectionIds||[]).forEach(function(id){var path=(item.path?item.path+'/':'')+id;if(!backupPathValid_(path,false))throw new Error('Collection path ไม่ถูกต้อง');result.push(path);});
+    if(body.nextPageToken){if(seen[body.nextPageToken])throw new Error('Collection pagination วนซ้ำ');seen[body.nextPageToken]=true;remaining.push({path:item.path,token:body.nextPageToken,seen:seen});}
+  });
+  return {paths:result,pending:remaining};
+}
 function backupCollectionIds_(parents,readTime,start) {
   var result=[],pending=parents.map(function(path){return {path:path,token:'',seen:Object.create(null)};});
   while(pending.length){
-    backupCheckDeadline_(start);var part=pending.splice(0,20);
-    var responses=UrlFetchApp.fetchAll(part.map(function(item){return {url:backupEndpoint_()+(item.path?'/'+item.path.split('/').map(encodeURIComponent).join('/'):'')+':listCollectionIds',method:'post',headers:getAuthHeader_(),contentType:'application/json',payload:JSON.stringify({pageSize:100,readTime:readTime,pageToken:item.token}),muteHttpExceptions:true};}));
-    responses.forEach(function(response,i){
-      if(response.getResponseCode()!==200)throw new Error('ค้นหา Collection สำหรับ Backup ไม่สำเร็จ');
-      var body=JSON.parse(response.getContentText()),item=part[i];
-      (body.collectionIds||[]).forEach(function(id){var path=(item.path?item.path+'/':'')+id;if(!backupPathValid_(path,false))throw new Error('Collection path ไม่ถูกต้อง');result.push(path);});
-      if(body.nextPageToken){if(item.seen[body.nextPageToken])throw new Error('Collection pagination วนซ้ำ');item.seen[body.nextPageToken]=true;item.token=body.nextPageToken;pending.push(item);}
-    });
+    var batch=backupDiscoveryBatch_(pending,readTime,start);result=result.concat(batch.paths);pending=batch.pending;
   }
   return result;
 }
 function backupCapture_(run,priorIndex,readTime,start,checkpoint) {
-  var state=checkpoint&&checkpoint.phase?checkpoint:{phase:'capture',known:Object.create(null),queue:backupCollectionIds_([''],readTime,start),index:{documents:Object.create(null)},collections:[],parts:[],collectionFolders:Object.create(null),written:0,deleted:0,read:0,requiresAuthKey:false,current:null};
+  var state=checkpoint&&checkpoint.phase?checkpoint:{phase:'capture',known:Object.create(null),queue:[],discovery:[{path:'',token:'',seen:Object.create(null)}],index:{documents:Object.create(null)},collections:[],parts:[],collectionFolders:Object.create(null),written:0,deleted:0,read:0,requiresAuthKey:false,current:null};
+  state.discovery=state.discovery||[]; // Older v1 checkpoints already completed their pending discovery.
   function pause(){backupCheckDeadline_(start);return checkpoint&&Date.now()-start>=BACKUP_SLICE_MS;}
   function writePart(path,upserts,removals){
     if(!upserts.length&&!removals.length)return;
     var folder=Object.prototype.hasOwnProperty.call(state.collectionFolders,path)?DriveApp.getFolderById(state.collectionFolders[path]):null;if(!folder){folder=run.createFolder(path.indexOf('/')<0?path:path.split('/').pop()+'__'+backupJsonDigest_(path).slice(0,12));assertPrivateBackupFolder_(folder);state.collectionFolders[path]=folder.getId();}
     var descriptor=backupWriteJson_(folder,'part-'+String(state.parts.length+1)+'.json',{collection:path,upserts:upserts,deleted:removals});descriptor.folderId=folder.getId();descriptor.collection=path;state.parts.push(descriptor);state.written+=upserts.length;state.deleted+=removals.length;
   }
-  while(state.phase==='capture'&&(state.queue.length||state.current)){
+  while(state.phase==='capture'&&(state.queue.length||state.current||state.discovery.length)){
       if(pause())return {pending:true,state:state};
+      if(state.discovery.length){var discovered=backupDiscoveryBatch_(state.discovery,readTime,start);state.queue=state.queue.concat(discovered.paths);state.discovery=discovered.pending;continue;}
       if(!state.current){var next=state.queue.shift();if(Object.prototype.hasOwnProperty.call(state.known,next))continue;state.known[next]=true;state.current={path:next,token:'',seen:Object.create(null),count:0};}
       var current=state.current,path=current.path;
       var url=backupEndpoint_()+'/'+path.split('/').map(encodeURIComponent).join('/')+'?pageSize=100&showMissing=true&readTime='+encodeURIComponent(readTime)+(current.token?'&pageToken='+encodeURIComponent(current.token):'');
@@ -2779,7 +2786,7 @@ function backupCapture_(run,priorIndex,readTime,start,checkpoint) {
         if(!priorIndex||priorIndex.documents[docPath]!==hash)upserts.push(item);
       });
       writePart(path,upserts,[]);
-      if(parents.length)state.queue=state.queue.concat(backupCollectionIds_(parents,readTime,start));
+      state.discovery=parents.map(function(parent){return {path:parent,token:'',seen:Object.create(null)};});
       current.token=body.nextPageToken||'';if(current.token&&Object.prototype.hasOwnProperty.call(current.seen,current.token))throw new Error('Backup pagination วนซ้ำ');if(current.token)current.seen[current.token]=true;
       if(!current.token){state.collections.push({path:path,count:current.count});state.current=null;}
   }
@@ -2787,25 +2794,75 @@ function backupCapture_(run,priorIndex,readTime,start,checkpoint) {
   while(state.removalPaths.length){if(pause())return {pending:true,state:state};var removedPath=state.removalPaths.shift();writePart(removedPath,[],state.removals[removedPath]);}
   state.collections.sort(function(a,b){return a.path.localeCompare(b.path);});return state;
 }
+// Verify every source part before starting a new DB snapshot. Keep digests,
+// not a second in-memory copy of every business row, in the private checkpoint.
+function backupVerifyBase_(folderId,sourceProjectId,start,checkpoint){
+  var state=checkpoint||{phase:'chain',next:folderId,seen:Object.create(null),base:'',projectFolderId:'',chain:[],version:0,part:0,lastTime:0,documents:Object.create(null),authUsers:Object.create(null),changes:Object.create(null)};
+  function pause(){backupCheckDeadline_(start);return Date.now()-start>=BACKUP_SLICE_MS;}
+  while(state.phase==='chain'&&state.next){
+    if(pause())return {pending:true,state:state};
+    var id=state.next;if(Object.prototype.hasOwnProperty.call(state.seen,id))throw new Error('Incremental chain วนซ้ำ');
+    var folder=DriveApp.getFolderById(id),m=backupManifest_(folder,sourceProjectId),date=backupParentFolder_(folder),project=m.kind==='full'?backupParentFolder_(backupParentFolder_(date)):backupParentFolder_(backupParentFolder_(backupParentFolder_(date)));
+    state.base=state.base||m.baseFullId;state.projectFolderId=state.projectFolderId||project.getId();
+    if(m.baseFullId!==state.base||project.getId()!==state.projectFolderId)throw new Error('Incremental chain ข้ามรุ่น Full หรือโฟลเดอร์');
+    state.seen[id]=true;state.chain.push(m);state.next=m.previousId;
+  }
+  if(state.phase==='chain'){
+    state.chain.reverse();if(!state.chain.length||state.chain[0].kind!=='full'||state.chain[0].folderId!==state.base)throw new Error('Incremental ไม่มี Full ต้นทาง');state.phase='parts';
+  }
+  while(state.version<state.chain.length){
+    if(pause())return {pending:true,state:state};
+    var manifest=state.chain[state.version],run=DriveApp.getFolderById(manifest.folderId),time=Date.parse(manifest.readTime);
+    // A manifest must still be the same version when a paused validator resumes.
+    if(backupManifest_(run,sourceProjectId).digest!==manifest.digest)throw new Error('Backup manifest checksum เปลี่ยนระหว่างตรวจ');
+    if(time<state.lastTime)throw new Error('Incremental chain มีเวลาย้อนกลับ');
+    while(state.part<manifest.parts.length){
+      if(pause())return {pending:true,state:state};
+      var part=manifest.parts[state.part],partFolder=DriveApp.getFolderById(part.folderId);assertPrivateBackupFolder_(partFolder);backupFileInFolder_(partFolder,run);
+      var payload=backupReadJson_(part,partFolder);
+      if(!backupPathValid_(payload.collection,false)||payload.collection!==part.collection||!Array.isArray(payload.upserts)||!Array.isArray(payload.deleted))throw new Error('Backup part ไม่ถูกต้อง');
+      payload.upserts.forEach(function(doc){
+        if(!doc||!backupPathValid_(doc.path,true)||doc.path.slice(0,doc.path.lastIndexOf('/'))!==payload.collection||!doc.fields||typeof doc.fields!=='object'||Array.isArray(doc.fields)||typeof doc.updateTime!=='string'||typeof doc.createTime!=='string'||Object.prototype.hasOwnProperty.call(state.changes,doc.path))throw new Error('Backup document ไม่ถูกต้องหรือซ้ำ');
+        state.changes[doc.path]=true;state.documents[doc.path]=backupJsonDigest_(doc);
+        if(doc.path.split('/')[0]==='Master_Users')state.authUsers[doc.path]=String(parseFirestoreValue_(doc.fields.Totp_Enabled))==='true';
+      });
+      payload.deleted.forEach(function(path){
+        if(manifest.kind==='full'||!backupPathValid_(path,true)||path.slice(0,path.lastIndexOf('/'))!==payload.collection||Object.prototype.hasOwnProperty.call(state.changes,path)||!Object.prototype.hasOwnProperty.call(state.documents,path))throw new Error('Backup deletion ไม่ถูกต้อง');
+        state.changes[path]=true;delete state.documents[path];delete state.authUsers[path];
+      });
+      state.part++;
+    }
+    if(pause())return {pending:true,state:state};
+    var index=backupIndex_(run,manifest),paths=Object.keys(state.documents);
+    if(paths.length!==Object.keys(index.documents).length||paths.some(function(path){return state.documents[path]!==index.documents[path];}))throw new Error('Backup chain มีข้อมูลไม่ครบหรือ checksum ไม่ตรง');
+    var counts=Object.create(null);paths.forEach(function(path){var collection=path.slice(0,path.lastIndexOf('/'));counts[collection]=(counts[collection]||0)+1;});
+    manifest.collections.forEach(function(collection){if((counts[collection.path]||0)!==collection.count)throw new Error('Backup document count ไม่ตรง');delete counts[collection.path];});if(Object.keys(counts).length)throw new Error('Backup ไม่ได้ระบุ Collection ครบ');
+    var properties=backupReadJson_(manifest.scriptProperties,run);if(!properties||typeof properties!=='object'||Array.isArray(properties))throw new Error('Backup Properties ไม่ถูกต้อง');
+    state.properties=properties;state.lastTime=time;state.version++;state.part=0;state.changes=Object.create(null);
+  }
+  if(Object.keys(state.authUsers).some(function(path){return state.authUsers[path];})&&!state.properties.AUTH_MASTER_KEY)throw new Error('Backup ไม่มีคีย์สำหรับกู้คืน TOTP');
+  return {manifest:state.chain[state.chain.length-1],index:{documents:state.documents},properties:state.properties};
+}
 function backupPendingJob_(){
   var raw=PropertiesService.getScriptProperties().getProperty(BACKUP_JOB_KEY);if(!raw)return null;
   var job=JSON.parse(raw);if(job.projectId!==PROJECT_ID||typeof job.folderId!=='string'||!job.checkpoint||!Number.isFinite(job.startedAt))throw new Error('Checkpoint ของ Backup ไม่ถูกต้อง กรุณาตรวจสอบก่อนเริ่มใหม่');return job;
 }
-function backupPendingResult_(job){return {success:true,pending:true,kind:job.kind,folderId:job.folderId,readDocuments:job.readDocuments||0,startedAt:job.startedAt,message:'กำลังสำรองข้อมูลเป็นช่วง ระบบจะทำต่ออัตโนมัติ'};}
+function backupPendingResult_(job){return {success:true,pending:true,kind:job.kind,phase:job.phase||'capture',folderId:job.folderId,readDocuments:job.readDocuments||0,startedAt:job.startedAt,message:job.phase==='verify'?'กำลังตรวจ checksum ของ Backup ต้นทาง ระบบจะทำต่ออัตโนมัติ':'กำลังสำรองข้อมูลเป็นช่วง ระบบจะทำต่ออัตโนมัติ'};}
+function backupMarkScheduled_(result,marker){if(result.pending){var job=backupPendingJob_();if(!job)throw new Error('ไม่มี Checkpoint ของ Backup ตามตาราง');job.scheduledMarker=marker;PropertiesService.getScriptProperties().setProperty(BACKUP_JOB_KEY,JSON.stringify(job));}return result;}
 function backupContinuationTriggers_(keep){
   if(!ScriptApp.getProjectTriggers)return;ScriptApp.getProjectTriggers().forEach(function(t){if(t.getHandlerFunction()==='continueBackupJob_'&&t.getUniqueId()!==keep)try{ScriptApp.deleteTrigger(t);}catch(e){console.error('Backup continuation cleanup',e.message);}});
 }
 function backupSaveJob_(run,context,capture,priorIndex,oldJob){
   var descriptor=backupWriteJson_(run,'checkpoint-'+Utilities.getUuid()+'.json',{schemaVersion:1,context:context,capture:capture,priorIndex:priorIndex});
   var trigger=ScriptApp.newTrigger('continueBackupJob_').timeBased().after(60000).create();
-  var job={projectId:PROJECT_ID,folderId:run.getId(),checkpoint:descriptor,kind:context.kind,startedAt:context.startedAt,readDocuments:capture.read,scheduledMarker:oldJob&&oldJob.scheduledMarker||'',triggerId:trigger.getUniqueId()};
+  var job={projectId:PROJECT_ID,folderId:run.getId(),checkpoint:descriptor,kind:context.kind,phase:capture.phase==='verify-base'?'verify':'capture',startedAt:context.startedAt,readDocuments:capture.read,scheduledMarker:oldJob&&oldJob.scheduledMarker||'',triggerId:trigger.getUniqueId()};
   try{PropertiesService.getScriptProperties().setProperty(BACKUP_JOB_KEY,JSON.stringify(job));}catch(e){try{ScriptApp.deleteTrigger(trigger);}catch(ignored){}throw e;}
   backupContinuationTriggers_(job.triggerId);return backupPendingResult_(job);
 }
 function backupResume_(job){
-  var start=Date.now(),result=backupAllDataToBackup_(job?job.kind:'full',false,start,true);
+  var start=Date.now(),result=backupAllDataToBackup_(job?job.kind:'full',false,start,true,{deferRetention:!!(job&&job.scheduledMarker)});
   if(result.success&&!result.pending&&job&&job.scheduledMarker){
-    if(result.kind==='full'){var delta=backupAllDataToBackup_('incremental',true,start);if(!delta.success)return {success:false,errors:['Full สำเร็จ แต่ Daily Incremental ไม่สำเร็จ: '+delta.errors.join('; ')],full:result};}
+    if(result.kind==='full'){var delta=backupAllDataToBackup_('incremental',true,start,false,{cleanupAfter:true});if(!delta.success)return {success:false,errors:['Full สำเร็จ แต่ Daily Incremental ไม่สำเร็จ: '+delta.errors.join('; ')],full:result};if(delta.pending)return backupMarkScheduled_(delta,job.scheduledMarker);if(delta.warnings&&delta.warnings.length)result.warnings=(result.warnings||[]).concat(delta.warnings);}
     PropertiesService.getScriptProperties().setProperty('SYY_BACKUP_LAST_DAY',job.scheduledMarker);
   }
   return result;
@@ -2814,17 +2871,18 @@ function continueBackupJob_(){
   var job=backupPendingJob_();if(!job){backupContinuationTriggers_('');return {success:true,skipped:true};}
   var result=backupResume_(job);if(!result.success)throw new Error('Backup ต่อไม่สำเร็จ: '+result.errors.join('; '));return result;
 }
-function backupAllDataToBackup_(kind,reuseSnapshot,jobStart,resume) {
+function backupAllDataToBackup_(kind,reuseSnapshot,jobStart,resume,workflow) {
   kind=kind||'full';var result={success:false,collections:{},errors:[]},run=null,published=false,lock=LockService.getUserLock(),start=jobStart===undefined?Date.now():jobStart;
   if(!lock.tryLock(100)){result.errors.push('มี Backup อีกงานกำลังทำงานอยู่');return result;}
   try{
-    var pending=backupPendingJob_(),context=null,captureState={},priorIndex=null,properties,readTime,project,previous=null,previousFolder=null,baseFullId='',group=null,day;
+    var pending=backupPendingJob_(),context=null,captureState={},priorIndex=null,properties,readTime,project,previous=null,previousFolder=null,baseFullId='',group=null,day,probeReads=0;workflow=workflow||{};
     if(pending&&!resume)return backupPendingResult_(pending);
     if(pending){
       run=DriveApp.getFolderById(pending.folderId);assertPrivateBackupFolder_(run);
       var saved=backupReadJson_(pending.checkpoint,run);context=saved.context;
-      if(saved.schemaVersion!==1||!context||context.projectId!==PROJECT_ID||context.folderId!==run.getId()||context.startedAt!==pending.startedAt||['full','incremental'].indexOf(context.kind)<0||!isFinite(Date.parse(context.readTime))||!saved.capture||!Array.isArray(saved.capture.queue))throw new Error('Checkpoint ของ Backup ไม่ครบถ้วน');
-      if(Date.now()-Date.parse(context.readTime)>BACKUP_SNAPSHOT_MAX_AGE_MS)throw new Error('Snapshot ของ Backup หมดเวลา กรุณาเริ่ม Backup ใหม่');
+      var verifying=saved.capture&&saved.capture.phase==='verify-base';
+      if(saved.schemaVersion!==1||!context||context.projectId!==PROJECT_ID||context.folderId!==run.getId()||context.startedAt!==pending.startedAt||['full','incremental'].indexOf(context.kind)<0||!verifying&&!isFinite(Date.parse(context.readTime))||!saved.capture||!Array.isArray(saved.capture.queue))throw new Error('Checkpoint ของ Backup ไม่ครบถ้วน');
+      if(!verifying&&Date.now()-Date.parse(context.readTime)>BACKUP_SNAPSHOT_MAX_AGE_MS)throw new Error('Snapshot ของ Backup หมดเวลา กรุณาเริ่ม Backup ใหม่');
       project=backupProjectFolder_();if(project.getId()!==context.projectFolderId)throw new Error('โฟลเดอร์ปลายทางเปลี่ยนระหว่าง Backup');
       var dateParent=backupParentFolder_(run),typeParent=backupParentFolder_(dateParent),runProject;
       if(dateParent.getName()!==context.day)throw new Error('Checkpoint ของ Backup อยู่ผิดวันที่');
@@ -2832,22 +2890,30 @@ function backupAllDataToBackup_(kind,reuseSnapshot,jobStart,resume) {
       else{if(typeParent.getId()!==context.groupId||typeParent.getName()!==context.baseFullId)throw new Error('Checkpoint ของ Incremental Backup อยู่ผิดรุ่น');var incrementalParent=backupParentFolder_(typeParent);if(incrementalParent.getName()!=='Incremental')throw new Error('Checkpoint ของ Backup อยู่ผิดโฟลเดอร์');runProject=backupParentFolder_(incrementalParent);}
       if(runProject.getId()!==project.getId())throw new Error('Checkpoint ของ Backup อยู่ผิดโปรเจกต์');
       kind=context.kind;properties=context.properties;readTime=context.readTime;priorIndex=saved.priorIndex;captureState=saved.capture;previous=context.previous;baseFullId=context.baseFullId;group=context.groupId?DriveApp.getFolderById(context.groupId):null;day=context.day;
+      reuseSnapshot=!!context.reuseSnapshot;
     }else{
     if(['full','incremental'].indexOf(kind)<0)throw new Error('ชนิด Backup ไม่ถูกต้อง');
     project=backupProjectFolder_();var state=kind==='incremental'?backupState_():null;
     if(state&&state.projectFolderId!==project.getId())state=null;
-    if(state){previousFolder=DriveApp.getFolderById(state.lastFolderId);var checked=readFolderBackup_(state.lastFolderId,PROJECT_ID,start);previous=checked.manifest;priorIndex=checked.index;if(previous.projectFolderId!==project.getId())throw new Error('Backup ต้นทางอยู่ผิดปลายทาง');}
+    if(state){previousFolder=DriveApp.getFolderById(state.lastFolderId);previous=backupManifest_(previousFolder);if(previous.projectFolderId!==project.getId())throw new Error('Backup ต้นทางอยู่ผิดปลายทาง');captureState={phase:'verify-base',queue:[],verification:null,read:0};}
     else if(kind==='incremental'){kind='full';result.bootstrap=true;}
-    properties=reuseSnapshot&&previous?backupReadJson_(previous.scriptProperties,previousFolder):backupScriptProperties_();
-    readTime=reuseSnapshot&&previous?previous.readTime:backupReadTime_();
-    if(previous&&Date.parse(readTime)<Date.parse(previous.readTime))throw new Error('เวลา Backup ย้อนกลับจากรุ่นก่อนหน้า');
+    properties=previous?null:backupScriptProperties_();readTime=previous?'':backupReadTime_();if(!previous)probeReads++;
     day=Utilities.formatDate(new Date(),BACKUP_TIMEZONE,'yyyy-MM-dd');var suffix=Utilities.formatDate(new Date(),BACKUP_TIMEZONE,'HH-mm-ss')+'_'+Utilities.getUuid();
     if(kind==='full'){run=backupChildFolder_(backupChildFolder_(project,'Full'),day).createFolder('full_'+suffix);baseFullId=run.getId();}
     else{baseFullId=previous.baseFullId;group=backupChildFolder_(backupChildFolder_(project,'Incremental'),baseFullId);run=backupChildFolder_(group,day).createFolder('incremental_'+suffix);}
     assertPrivateBackupFolder_(run);
-    context={projectId:PROJECT_ID,projectFolderId:project.getId(),folderId:run.getId(),kind:kind,readTime:readTime,startedAt:Date.now(),properties:properties,previous:previous,baseFullId:baseFullId,groupId:group?group.getId():'',day:day};
+    context={projectId:PROJECT_ID,projectFolderId:project.getId(),folderId:run.getId(),kind:kind,readTime:readTime,startedAt:Date.now(),properties:properties,previous:previous,baseFullId:baseFullId,groupId:group?group.getId():'',day:day,reuseSnapshot:!!reuseSnapshot,deferRetention:!!workflow.deferRetention,cleanupAfter:!!workflow.cleanupAfter};
     }
-    var capture=reuseSnapshot&&previous&&!pending?{index:priorIndex,collections:previous.collections,parts:[],written:0,deleted:0,read:0}:backupCapture_(run,priorIndex,readTime,start,captureState);
+    if(captureState.phase==='verify-base'){
+      if(!previous)throw new Error('Checkpoint ไม่มี Backup ต้นทาง');
+      var checked=backupVerifyBase_(previous.folderId,PROJECT_ID,start,captureState.verification);
+      if(checked.pending){captureState.verification=checked.state;return backupSaveJob_(run,context,captureState,null,pending);}
+      if(checked.manifest.digest!==previous.digest)throw new Error('Backup ต้นทาง checksum เปลี่ยน');
+      priorIndex=checked.index;properties=reuseSnapshot?checked.properties:backupScriptProperties_();readTime=reuseSnapshot?previous.readTime:backupReadTime_();if(!reuseSnapshot)probeReads++;
+      if(Date.parse(readTime)<Date.parse(previous.readTime))throw new Error('เวลา Backup ย้อนกลับจากรุ่นก่อนหน้า');
+      context.properties=properties;context.readTime=readTime;captureState={};
+    }
+    var capture=reuseSnapshot&&previous?{index:priorIndex,collections:previous.collections,parts:[],written:0,deleted:0,read:0}:backupCapture_(run,priorIndex,readTime,start,captureState);
     if(capture.pending)return backupSaveJob_(run,context,capture.state,priorIndex,pending);
     if(capture.requiresAuthKey&&!properties.AUTH_MASTER_KEY)throw new Error('Backup ไม่มีคีย์สำหรับกู้คืน TOTP');
     if(backupJsonDigest_(properties)!==backupJsonDigest_(backupScriptProperties_()))throw new Error('Script Properties เปลี่ยนระหว่าง Backup กรุณาลองใหม่');
@@ -2857,9 +2923,9 @@ function backupAllDataToBackup_(kind,reuseSnapshot,jobStart,resume) {
     m.digest=backupJsonDigest_(m);var descriptor=backupWriteJson_(run,'manifest.json',m);published=true;
     PropertiesService.getScriptProperties().setProperty(BACKUP_STATE_KEY,JSON.stringify({projectId:PROJECT_ID,projectFolderId:project.getId(),lastFolderId:run.getId(),baseFullId:baseFullId}));
     if(pending){PropertiesService.getScriptProperties().deleteProperty(BACKUP_JOB_KEY);backupContinuationTriggers_('');}
-    result.success=true;result.kind=kind;result.folderId=run.getId();result.fileId=descriptor.id;result.fileName=run.getName();result.url=run.getUrl();result.written=m.written;result.deleted=m.deleted;result.readDocuments=m.readDocuments;result.snapshotProbeReads=pending||reuseSnapshot?0:1;result.fileSizeKB=Math.round((m.parts.reduce(function(n,p){return n+p.bytes;},0)+m.index.bytes+m.scriptProperties.bytes+descriptor.bytes)/1024);
+    result.success=true;result.kind=kind;result.folderId=run.getId();result.fileId=descriptor.id;result.fileName=run.getName();result.url=run.getUrl();result.written=m.written;result.deleted=m.deleted;result.readDocuments=m.readDocuments;result.snapshotProbeReads=probeReads;result.fileSizeKB=Math.round((m.parts.reduce(function(n,p){return n+p.bytes;},0)+m.index.bytes+m.scriptProperties.bytes+descriptor.bytes)/1024);
     m.collections.forEach(function(c){result.collections[c.path]=c.count;});
-    if(kind==='full')result.warnings=cleanupOldBackups_(project,start);
+    if((kind==='full'&&!context.deferRetention)||(kind!=='full'&&context.cleanupAfter))result.warnings=cleanupOldBackups_(project,start);
   }catch(e){result.errors.push(e.message);
     var resumable=pending&&run&&!published&&!/Checkpoint|Snapshot.*หมดเวลา|โฟลเดอร์ปลายทางเปลี่ยน|checksum|Script Properties เปลี่ยน|ส่วนตัว|ผิดโปรเจกต์/.test(e.message);
     if(resumable){result.pending=true;result.needsResume=true;result.folderId=run.getId();pending.lastError=String(e.message).slice(0,250);try{PropertiesService.getScriptProperties().setProperty(BACKUP_JOB_KEY,JSON.stringify(pending));}catch(ignored){}}
@@ -2867,8 +2933,8 @@ function backupAllDataToBackup_(kind,reuseSnapshot,jobStart,resume) {
   }
   finally{lock.releaseLock();}return result;
 }
-function backupAssertTreePrivate_(folder) {
-  assertPrivateBackupFolder_(folder);var files=folder.getFiles();while(files.hasNext())assertPrivateBackupItem_(files.next());var children=folder.getFolders();while(children.hasNext())backupAssertTreePrivate_(children.next());
+function backupAssertTreePrivate_(folder,start) {
+  start=start===undefined?Date.now():start;backupCheckDeadline_(start);assertPrivateBackupFolder_(folder);var files=folder.getFiles();while(files.hasNext()){backupCheckDeadline_(start);assertPrivateBackupItem_(files.next());}var children=folder.getFolders();while(children.hasNext())backupAssertTreePrivate_(children.next(),start);
 }
 function backupDateRunFolders_(typeFolder) {
   var result=[],dates=typeFolder.getFolders();while(dates.hasNext()){var date=dates.next();if(!/^\d{4}-\d{2}-\d{2}$/.test(date.getName()))continue;assertPrivateBackupFolder_(date);var runs=date.getFolders();while(runs.hasNext())result.push(runs.next());}return result;
@@ -2878,11 +2944,11 @@ function cleanupOldBackups_(project,start) {
   try{
     var full=backupChildFolder_(project,'Full'),list=[];
     backupDateRunFolders_(full).forEach(function(folder){backupCheckDeadline_(start);if(folder.getName().indexOf('full_')!==0)return;try{var m=readFolderBackup_(folder.getId(),PROJECT_ID,start).manifest;if(m.kind==='full')list.push({folder:folder,m:m});}catch(ignore){}});
-    list.sort(function(a,b){return Date.parse(b.m.backupDate)-Date.parse(a.m.backupDate);});
+    backupCheckDeadline_(start);list.sort(function(a,b){return Date.parse(b.m.backupDate)-Date.parse(a.m.backupDate);});
     var increments=backupChildFolder_(project,'Incremental');
     list.slice(BACKUP_KEEP_COUNT).forEach(function(item){
       backupCheckDeadline_(start);
-      backupAssertTreePrivate_(item.folder);var groups=increments.getFoldersByName(item.folder.getId()),owned=[];while(groups.hasNext()){var group=groups.next();backupAssertTreePrivate_(group);owned.push(group);}
+      backupAssertTreePrivate_(item.folder,start);var groups=increments.getFoldersByName(item.folder.getId()),owned=[];while(groups.hasNext()){var group=groups.next();backupAssertTreePrivate_(group,start);owned.push(group);}
       owned.forEach(function(group){group.setTrashed(true);});var date=backupParentFolder_(item.folder);item.folder.setTrashed(true);if(!date.getFolders().hasNext()&&!date.getFiles().hasNext())date.setTrashed(true);
     });
     return [];
@@ -2902,10 +2968,10 @@ function dailyBackupJob_() {
     if(resumed.pending||resumed.success&&pending.scheduledMarker===marker)return resumed;
   }
   var sunday=Utilities.formatDate(new Date(),BACKUP_TIMEZONE,'u')==='7';
-  var result=backupAllDataToBackup_(sunday?'full':'incremental',false,start);if(!result.success)throw new Error('Backup ไม่สำเร็จ: '+result.errors.join('; '));
-  if(result.pending){var job=backupPendingJob_();job.scheduledMarker=marker;properties.setProperty(BACKUP_JOB_KEY,JSON.stringify(job));return result;}
+  var result=backupAllDataToBackup_(sunday?'full':'incremental',false,start,false,{deferRetention:true});if(!result.success)throw new Error('Backup ไม่สำเร็จ: '+result.errors.join('; '));
+  if(result.pending)return backupMarkScheduled_(result,marker);
   // Sunday and first-run bootstrap share the Full snapshot: daily delta is a valid empty delta, with no second scan.
-  if(result.kind==='full'){var delta=backupAllDataToBackup_('incremental',true,start);if(!delta.success)throw new Error('Daily Incremental ไม่สำเร็จ: '+delta.errors.join('; '));properties.setProperty('SYY_BACKUP_LAST_DAY',marker);return {full:result,incremental:delta};}properties.setProperty('SYY_BACKUP_LAST_DAY',marker);return result;
+  if(result.kind==='full'){var delta=backupAllDataToBackup_('incremental',true,start,false,{cleanupAfter:true});if(!delta.success)throw new Error('Daily Incremental ไม่สำเร็จ: '+delta.errors.join('; '));if(delta.pending)return backupMarkScheduled_(delta,marker);properties.setProperty('SYY_BACKUP_LAST_DAY',marker);return {full:result,incremental:delta};}properties.setProperty('SYY_BACKUP_LAST_DAY',marker);return result;
 }
 function setupBackupSchedule_() {
   var lock=LockService.getUserLock();if(!lock.tryLock(100))throw new Error('กำลังสำรองข้อมูล กรุณาลองใหม่');
@@ -2921,7 +2987,7 @@ function setupWeeklyBackupTrigger_() {return setupBackupSchedule_();}
 function removeWeeklyBackupTrigger_() {ScriptApp.getProjectTriggers().forEach(function(t){if(['weeklyBackupJob','weeklyBackupJob_','dailyBackupJob','dailyBackupJob_'].indexOf(t.getHandlerFunction())>=0)ScriptApp.deleteTrigger(t);});}
 function getBackupOverview_() {
   var triggers=ScriptApp.getProjectTriggers().filter(function(t){return ['weeklyBackupJob','weeklyBackupJob_','dailyBackupJob','dailyBackupJob_'].indexOf(t.getHandlerFunction())>=0;});
-  var job=backupPendingJob_();return {files:listBackupFiles_(),activeJob:job?{kind:job.kind,readDocuments:job.readDocuments,startedAt:job.startedAt,lastError:job.lastError||''}:null,schedule:{enabled:triggers.length===1&&triggers[0].getHandlerFunction()==='dailyBackupJob_',duplicate:triggers.length>1,timezone:BACKUP_TIMEZONE,hour:22,fullKeep:BACKUP_KEEP_COUNT}};
+  var job=backupPendingJob_();return {files:listBackupFiles_(),activeJob:job?{kind:job.kind,phase:job.phase||'capture',readDocuments:job.readDocuments,startedAt:job.startedAt,lastError:job.lastError||''}:null,schedule:{enabled:triggers.length===1&&triggers[0].getHandlerFunction()==='dailyBackupJob_',duplicate:triggers.length>1,timezone:BACKUP_TIMEZONE,hour:22,fullKeep:BACKUP_KEEP_COUNT}};
 }
 function listBackupFiles_() {
   var list=[],project=backupProjectFolder_(),full=backupChildFolder_(project,'Full'),bases=[];
@@ -2950,6 +3016,7 @@ function readFolderBackup_(folderId,sourceProjectId,start) {
     backupCheckDeadline_(start);var m=version.m,folder=version.folder,time=Date.parse(m.readTime),changes=Object.create(null);
     if(time<lastTime)throw new Error('Incremental chain มีเวลาย้อนกลับ');lastTime=time;
     m.parts.forEach(function(part){
+      backupCheckDeadline_(start);
       var partFolder=DriveApp.getFolderById(part.folderId);assertPrivateBackupFolder_(partFolder);backupFileInFolder_(partFolder,folder);
       var payload=backupReadJson_(part,partFolder);
       if(!backupPathValid_(payload.collection,false)||payload.collection!==part.collection||!Array.isArray(payload.upserts)||!Array.isArray(payload.deleted))throw new Error('Backup part ไม่ถูกต้อง');
@@ -2959,12 +3026,12 @@ function readFolderBackup_(folderId,sourceProjectId,start) {
       });
       payload.deleted.forEach(function(path){if(m.kind==='full'||!backupPathValid_(path,true)||path.slice(0,path.lastIndexOf('/'))!==payload.collection||changes[path]||!documents[path])throw new Error('Backup deletion ไม่ถูกต้อง');changes[path]=true;delete documents[path];});
     });
-    var index=backupIndex_(folder,m),paths=Object.keys(documents);
+    backupCheckDeadline_(start);var index=backupIndex_(folder,m),paths=Object.keys(documents);
     lastIndex=index;
     if(paths.length!==Object.keys(index.documents).length||paths.some(function(path){return backupJsonDigest_(documents[path])!==index.documents[path];}))throw new Error('Backup chain มีข้อมูลไม่ครบหรือ checksum ไม่ตรง');
     var counts=Object.create(null);paths.forEach(function(path){var col=path.slice(0,path.lastIndexOf('/'));counts[col]=(counts[col]||0)+1;});
     m.collections.forEach(function(col){if((counts[col.path]||0)!==col.count)throw new Error('Backup document count ไม่ตรง');delete counts[col.path];});if(Object.keys(counts).length)throw new Error('Backup ไม่ได้ระบุ Collection ครบ');
-    properties=backupReadJson_(m.scriptProperties,folder);if(!properties||typeof properties!=='object'||Array.isArray(properties))throw new Error('Backup Properties ไม่ถูกต้อง');
+    backupCheckDeadline_(start);properties=backupReadJson_(m.scriptProperties,folder);if(!properties||typeof properties!=='object'||Array.isArray(properties))throw new Error('Backup Properties ไม่ถูกต้อง');
   });
   if(Object.keys(documents).some(function(path){return path.split('/')[0]==='Master_Users'&&String(parseFirestoreValue_(documents[path].fields.Totp_Enabled))==='true';})&&!properties.AUTH_MASTER_KEY)throw new Error('Backup ไม่มีคีย์สำหรับกู้คืน TOTP');
   return {manifest:chain[chain.length-1].m,documents:documents,index:lastIndex,scriptProperties:properties};

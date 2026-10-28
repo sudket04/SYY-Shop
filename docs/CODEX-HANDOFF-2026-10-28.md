@@ -4,6 +4,8 @@
 
 อัปเดตหลังรับช่วง: ลง Source ชุดถอดรูปตาราง, shared compact catalog, แยกโหลดเอกสาร/PO และ Admin correction แล้ว ดูรายละเอียด ผลทดสอบ และงานที่ยังไม่ผ่านเกณฑ์ที่ [รายงาน implementation](PERFORMANCE-STOCK-CORRECTION-2026-10-28.md) ตาราง baseline ด้านล่างเป็นสถานะ **ก่อน** ชุดนี้ ยังไม่ได้ Deploy ชุดใหม่ และยังไม่ยืนยันว่าทุกหน้าโหลดภายใน 10 วินาที
 
+อัปเดตรอบต่อ: ผู้ใช้ยืนยัน **ไม่มี Staging; อ่านระบบเดิมได้ แต่ห้ามเขียน/แก้/ลบ DB จริง** ตรวจพบ Backup Version100 วันที่28 เวลา22:02:30 timeout 360.807s และ Incremental folder ว่าง เพิ่ม verifier/discovery ที่พักงานได้ และแก้ POS ข้าม initial render เมื่อ server ยืนยัน catalog จาก IndexedDB; ดู [หลักฐานล่าสุดและงานค้าง](READONLY-AUDIT-BACKUP-2026-10-28.md) ชุดนี้ยังไม่ Sync/Deploy และต้องรอ session ที่ Login ไว้แล้วเพื่อวัดเมนูจริง
+
 ## 1. คำสั่งสำหรับ Codex ที่รับช่วง
 
 ```text
@@ -233,6 +235,7 @@
 npm test
 npm run check
 npm run test:browser
+npm run test:browser-backend
 npm run test:reads
 npm run release:prepare
 node scripts/prepare-release.cjs --verify <release-directory>

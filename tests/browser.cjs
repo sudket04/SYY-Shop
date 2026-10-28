@@ -935,9 +935,13 @@ async function main(){
     const p=await pageFor('index.html','admin');await p.evaluate(()=>{
       var originalTimeout=window.setTimeout;window.backupPolls=[];window.backupToasts=[];
       window.setTimeout=function(fn,ms){if(ms===30000){backupPolls.push(fn);return 987654;}return originalTimeout.apply(this,arguments);};
-      toast=function(message){backupToasts.push(message);};window.jobPaused=false;
-      var before=respond;respond=function(fn,args){if(fn==='getBackupOverview')return {activeJob:{kind:'full',readDocuments:300,lastError:jobPaused?'Drive unavailable':''},files:[],schedule:{enabled:true}};if(fn==='backupNow')return {success:true,pending:true,readDocuments:300};return before(fn,args);};openBackup();
+      toast=function(message){backupToasts.push(message);};window.jobPaused=false;window.jobVerifying=true;
+      var before=respond;respond=function(fn,args){if(fn==='getBackupOverview')return {activeJob:{kind:'incremental',phase:jobVerifying?'verify':'capture',readDocuments:jobVerifying?0:300,lastError:jobPaused?'Drive unavailable':''},files:[],schedule:{enabled:true}};if(fn==='backupNow')return {success:true,pending:true,phase:'verify',readDocuments:0};return before(fn,args);};openBackup();
     });
+    await p.waitForFunction(()=>document.getElementById('backupJobStatus').textContent.includes('checksum'));
+    assert.match(await p.locator('#backupJobStatus').innerText(),/ก่อนอ่าน DB ชุดใหม่/);
+    assert.equal(await p.evaluate(()=>apiCalls.some(x=>x.fn==='backupNow'||x.fn==='setupBackupSchedule')),false);
+    await p.evaluate(()=>{jobVerifying=false;loadBackupList();});
     await p.waitForFunction(()=>document.getElementById('backupJobStatus').textContent.includes('300'));
     assert.match(await p.locator('#backupList').innerText(),/ยังไม่มีชุดที่สำรองครบ/);assert.match(await p.locator('#btnBackupNow').innerText(),/ทำ Backup ที่ค้างต่อ/);
     await p.locator('#btnBackupNow').click();await p.waitForFunction(()=>backupToasts.length>0);assert.match(await p.evaluate(()=>backupToasts[0]),/ทำต่ออัตโนมัติ/);assert(!await p.evaluate(()=>backupToasts.some(t=>t.includes('สำรองข้อมูลสำเร็จ'))));

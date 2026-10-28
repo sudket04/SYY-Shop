@@ -452,7 +452,9 @@
       btnDone(refreshButton);if(revision!==syyDataRevision()){syyDataFailed();return;}
       syyDataLoaded();
       // A validated unchanged response must not reset the user's working view.
-      if(readInfo&&readInfo.notModified)return;
+      // A disk snapshot is validated before its first display. Only a view
+      // that already has these rows may skip rendering an unchanged result.
+      if(readInfo&&readInfo.notModified&&products.length)return;
       products = (data || []).filter(function (p) { return (p.status || 'Active') === 'Active'; });
       basket.forEach(function(item){var fresh=products.find(function(p){return p.productCode===item.productCode;});item.stock=fresh?num(fresh.currentStock):0;if(fresh){item.productName=fresh.productName;item.costPrice=num(fresh.costPrice);item.minStock=num(fresh.minStock);}});renderBasket();
       buildCategoryFilter();

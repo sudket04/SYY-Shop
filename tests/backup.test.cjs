@@ -1,7 +1,7 @@
 // Data-only folder backups. All DB, Drive, properties and triggers are local fixtures.
 const test=require('node:test'),assert=require('node:assert/strict');
 const {setup,plain,reply}=require('./support/services.cjs');
-function fresh(){const s=setup();let now=Date.parse('2026-10-13T15:00:00Z');s.c.Date=class extends Date{constructor(...args){super(args.length?args[0]:now);}static now(){return now;}};s.advance=()=>{now+=10000;s.c.readTime=new Date(now).toISOString();};s.c.Utilities.formatDate=(d,_z,format)=>{const local=new Date(d.getTime()+7*3600000),iso=local.toISOString();return format==='yyyy-MM-dd'?iso.slice(0,10):format==='u'?String(local.getUTCDay()||7):format==='HH-mm-ss'?iso.slice(11,19).replace(/:/g,'-'):iso;};return s;}
+function fresh(){const s=setup();let now=Date.parse('2026-10-13T15:00:00Z');s.c.Date=class extends Date{constructor(...args){super(args.length?args[0]:now);}static now(){return now;}};s.advance=(ms=10000)=>{now+=ms;s.c.readTime=new Date(now).toISOString();};s.c.Utilities.formatDate=(d,_z,format)=>{const local=new Date(d.getTime()+7*3600000),iso=local.toISOString();return format==='yyyy-MM-dd'?iso.slice(0,10):format==='u'?String(local.getUTCDay()||7):format==='HH-mm-ss'?iso.slice(11,19).replace(/:/g,'-'):iso;};return s;}
 function run(s,kind='full'){s.advance();const result=s.c.backupAllDataToBackup_(kind);assert.equal(result.success,true,JSON.stringify(result.errors));return result;}
 function materialize(s,result){return s.c.readFolderBackup_(result.folderId);}
 function image(s){const f=s.makeFile(Buffer.from([1,2,3]));s.put('Product_Images/P1',{Drive_File_Id:f.id,Image_Url:'https://lh3.googleusercontent.com/d/'+f.id});return f;}
@@ -136,13 +136,63 @@ test('Overview detects an old weekly trigger coexisting with the new daily trigg
   s.c.ScriptApp.getProjectTriggers=()=>[daily,other];overview=s.c.getBackupOverview_();assert.equal(overview.schedule.enabled,true);assert.equal(overview.schedule.duplicate,false);assert.equal(s.calls.length,0);
 });
 
-function resumable(){
- const s=fresh(),triggers=[],other={getHandlerFunction:()=> 'unrelated',getUniqueId:()=> 'other'};triggers.push(other);let seq=0;
+function continuations(s){
+ const triggers=[],other={getHandlerFunction:()=> 'unrelated',getUniqueId:()=> 'other'};triggers.push(other);let seq=0;
  s.c.ScriptApp.getProjectTriggers=()=>triggers.slice();s.c.ScriptApp.deleteTrigger=t=>{const i=triggers.indexOf(t);if(i>=0)triggers.splice(i,1);};
  s.c.ScriptApp.newTrigger=handler=>{const builder={timeBased:()=>builder,after(ms){assert.equal(ms,60000);return builder;},create(){const id='resume-'+(++seq),t={getHandlerFunction:()=>handler,getUniqueId:()=>id};triggers.push(t);return t;}};return builder;};
- s.c.BACKUP_SLICE_MS=25000;s.c.pageSize=3;const fetch=s.c.UrlFetchApp.fetch;
- s.c.UrlFetchApp.fetch=(url,opts)=>{s.advance();return fetch(url,opts);};s.triggers=triggers;return s;
+ s.triggers=triggers;return s;
 }
+function resumable(){
+ const s=continuations(fresh());s.c.BACKUP_SLICE_MS=25000;s.c.pageSize=3;const fetch=s.c.UrlFetchApp.fetch;
+ s.c.UrlFetchApp.fetch=(url,opts)=>{s.advance();return fetch(url,opts);};return s;
+}
+test('slow subcollection discovery yields between batches and resumes without rereading the captured page',()=>{
+ const s=continuations(fresh());s.advance(0);for(let i=0;i<100;i++)s.put('Data/P'+i,{Name:'Data '+i});s.put('Data/P99/Child/C1',{Name:'Nested'});
+ const fetchAll=s.c.UrlFetchApp.fetchAll;s.c.UrlFetchApp.fetchAll=requests=>{const responses=fetchAll(requests);s.advance(60000);return responses;};
+ let result=s.c.backupNow_(),slices=1;assert.equal(result.success,true,JSON.stringify(result.errors));assert.equal(result.pending,true);const job=s.c.backupPendingJob_(),saved=s.c.backupReadJson_(job.checkpoint,s.folders.get(job.folderId));assert(saved.capture.discovery.length>0);
+ while(result.pending){result=s.c.continueBackupJob_();assert(result.success,JSON.stringify(result.errors));assert(++slices<20);}
+ const docs=materialize(s,result).documents;assert.equal(Object.keys(docs).length,101);assert(docs['Data/P99/Child/C1']);assert.equal(s.calls.filter(x=>x.url.includes('/Data?')).length,1);assert.equal(s.commits.length,0);
+});
+test('slow incremental base verification checkpoints before any fresh DB reads and finishes with the same validated chain',()=>{
+ const s=continuations(fresh());s.c.pageSize=1;for(let i=0;i<7;i++)s.put('Data/P'+i,{Name:'Before '+i});const full=run(s);const fullIndex=materialize(s,full).index;
+ const originalReads=[];for(const file of s.files.values())if(file.name.startsWith('part-')){const read=file.getBlob;originalReads.push([file,read]);file.getBlob=()=>{s.advance(60000);return read();};}
+ const before=s.calls.length;let result=s.c.backupAllDataToBackup_('incremental');assert.equal(result.success,true,JSON.stringify(result.errors));assert.equal(result.pending,true);assert.equal(s.calls.length,before,'base validation uses Drive only');
+ let slices=1;while(result.pending){result=s.c.continueBackupJob_();assert(result.success,JSON.stringify(result.errors));assert(++slices<20);}
+ originalReads.forEach(([file,read])=>file.getBlob=read);assert.equal(result.written+result.deleted,0);assert.deepEqual(plain(materialize(s,result).index),plain(fullIndex));assert.equal(s.commits.length,0);
+});
+test('paused base verification uses a fresh snapshot after completion and rejects a corrupt remaining part before DB reads',()=>{
+ for(const corrupt of [false,true]){const s=continuations(fresh());s.c.pageSize=1;for(let i=0;i<7;i++)s.put('Data/P'+i,{Name:'Before '+i});const full=run(s),manifest=materialize(s,full).manifest,readers=[];
+  for(const file of s.files.values())if(file.name.startsWith('part-')){const get=file.getBlob;readers.push([file,get]);file.getBlob=()=>{s.advance(60000);return get();};}
+  let result=s.c.backupAllDataToBackup_('incremental');assert(result.pending);const calls=s.calls.length,baseline=s.props.SYY_BACKUP_STATE_V3;s.put('Data/LATE',{Name:'After verification started'});
+  if(corrupt){s.files.get(manifest.parts[3].id).blob={getBytes:()=>[1],getDataAsString:()=> '{}'};result=s.c.backupNow_();assert.equal(result.success,false);assert.equal(s.calls.length,calls);assert.equal(s.props.SYY_BACKUP_STATE_V3,baseline);assert.equal(s.props.SYY_BACKUP_PENDING_V3,undefined);}
+  else{let n=0;while(result.pending){result=s.c.continueBackupJob_();assert(++n<20);}readers.forEach(([file,get])=>file.getBlob=get);assert.equal(result.written,1);assert(materialize(s,result).documents['Data/LATE']);}
+  assert.equal(s.commits.length,0);
+ }
+});
+test('same-snapshot empty delta remains valid for older stored data and performs no new DB scan',()=>{
+ const s=fresh();s.seed();const full=run(s),before=s.calls.length;s.advance(51*60000);const delta=s.c.backupAllDataToBackup_('incremental',true);assert.equal(delta.success,true,JSON.stringify(delta.errors));assert.equal(delta.written+delta.deleted,0);assert.equal(s.calls.length,before);assert.equal(materialize(s,delta).manifest.readTime,materialize(s,full).manifest.readTime);
+});
+test('scheduled Full-to-delta handoff retains the marker while delta verification is pending',()=>{
+ const s=resumable();s.c.BACKUP_SLICE_MS=1;for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});let result=s.c.dailyBackupJob_(),pendingDelta=false,n=0;
+ while(result.pending){if(result.kind==='incremental'){pendingDelta=true;assert.equal(s.props.SYY_BACKUP_LAST_DAY,undefined);assert(s.c.backupPendingJob_().scheduledMarker);}result=s.c.continueBackupJob_();assert(++n<30);}
+ assert(pendingDelta);assert(s.props.SYY_BACKUP_LAST_DAY);const listed=s.c.listBackupFiles_();assert.equal(listed.filter(f=>f.kind==='full').length,1);assert.equal(listed.filter(f=>f.kind==='incremental').length,1);assert.equal(s.commits.length,0);
+});
+test('scheduled retention waits for the Full daily delta and is not repeated on ordinary incremental days',()=>{
+ const s=fresh();s.advance(0);s.seed();const cleanup=s.c.cleanupOldBackups_;let calls=0;
+ s.c.cleanupOldBackups_=(project,start)=>{calls++;assert.equal(s.c.listBackupFiles_().length,2);return cleanup(project,start);};
+ const bootstrap=s.c.dailyBackupJob_();assert(bootstrap.full.success&&bootstrap.incremental.success);assert.equal(calls,1);
+ s.advance(24*60*60000);const next=s.c.dailyBackupJob_();assert.equal(next.success,true);assert.equal(next.kind,'incremental');assert.equal(calls,1);assert.equal(s.c.listBackupFiles_().length,3);assert.equal(s.commits.length,0);
+});
+test('legacy capture checkpoint without a discovery queue resumes with the same data and page anchor',()=>{
+ const s=resumable();for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});assert(s.c.backupNow_().pending);const job=s.c.backupPendingJob_(),run=s.folders.get(job.folderId),saved=s.c.backupReadJson_(job.checkpoint,run);
+ saved.capture.queue=saved.capture.queue.concat(s.c.backupCollectionIds_(saved.capture.discovery.map(p=>p.path),saved.context.readTime,s.c.Date.now()));delete saved.capture.discovery;delete saved.context.reuseSnapshot;delete job.phase;job.checkpoint=s.c.backupWriteJson_(run,'legacy-checkpoint.json',saved);s.props.SYY_BACKUP_PENDING_V3=JSON.stringify(job);
+ let result=s.c.backupNow_(),n=0;while(result.pending){result=s.c.continueBackupJob_();assert(++n<20);}assert.equal(Object.keys(materialize(s,result).documents).length,9);assert.equal(s.calls.filter(x=>x.url.includes('/Data?')).length,3);assert.equal(s.commits.length,0);
+});
+test('slow retention stops with a warning without deleting versions or invalidating a completed backup',()=>{
+ const s=fresh();s.c.pageSize=1;for(let i=0;i<7;i++)s.put('Data/P'+i,{Name:'Data'});const full=run(s),state=s.props.SYY_BACKUP_STATE_V3,readers=[];
+ for(const file of s.files.values())if(file.name.startsWith('part-')){const get=file.getBlob;readers.push([file,get]);file.getBlob=()=>{s.advance(60000);return get();};}
+ const warnings=s.c.cleanupOldBackups_(s.c.backupProjectFolder_(),s.c.Date.now());assert(warnings.some(x=>x.includes('เวลา')));assert.equal(s.folders.get(full.folderId).trashed,false);assert.equal(s.props.SYY_BACKUP_STATE_V3,state);readers.forEach(([file,get])=>file.getBlob=get);assert.equal(materialize(s,full).manifest.complete,true);assert.equal(s.commits.length,0);
+});
 test('large backup checkpoints and continues one snapshot without publishing partial manifests or rereading completed pages',()=>{
  const s=resumable();for(let i=0;i<15;i++)s.put('Data/P'+String(i).padStart(2,'0'),{Name:'Original '+i});s.put('constructor/toString',{Name:'prototype-safe'});
  let result=s.c.backupNow_(),slices=1;assert.equal(result.pending,true);assert.equal(s.props.SYY_BACKUP_STATE_V3,undefined);assert.equal(s.c.listBackupFiles_().length,0);const before=s.calls.length,job=JSON.parse(s.props.SYY_BACKUP_PENDING_V3);assert.equal(s.c.getBackupOverview_().activeJob.readDocuments,3);assert.equal(s.calls.length,before);
@@ -166,7 +216,7 @@ test('incremental continuation preserves deletions and changed rows across page 
 });
 test('transient page failure retains the checkpoint for manual resume; expired and corrupt snapshots never publish',()=>{
  for(const mode of ['network','expired','corrupt']){const s=resumable();for(let i=0;i<9;i++)s.put('Data/P'+i,{Name:'Data'});const first=s.c.backupNow_();assert(first.pending);const pointer=s.props.SYY_BACKUP_PENDING_V3,job=JSON.parse(pointer);
-  if(mode==='network')s.c.failRequest=url=>url.includes('showMissing')?503:0;
+  if(mode==='network'){s.c.BACKUP_SLICE_MS=180000;s.c.failRequest=url=>url.includes('showMissing')?503:0;}
   if(mode==='expired')s.c.BACKUP_SNAPSHOT_MAX_AGE_MS=-1;
   if(mode==='corrupt')s.files.get(job.checkpoint.id).blob={getBytes:()=>[1],getDataAsString:()=> '{}'};
   const failed=s.c.backupNow_();assert.equal(failed.success,false,mode);assert.equal(s.props.SYY_BACKUP_STATE_V3,undefined);assert.equal(s.c.listBackupFiles_().length,0);
