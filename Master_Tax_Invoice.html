@@ -539,7 +539,7 @@ var itemRowSeq     = 0;
 var invoicePdfBusy=false;
 var currentPrintInvoice = null;   // ใบที่กำลังเปิดดู/พิมพ์อยู่ (ใช้ตอนดาวน์โหลดไฟล์)
 
-document.addEventListener('DOMContentLoaded',function(){ loadAll(); populateProvinceDropdown('qc'); });
+syyOnReady(function(){ loadAll(); populateProvinceDropdown('qc'); });
 
 /* ══════════════════════════════════════════════════════════════
    ★ ที่อยู่แบบ Cascading Dropdown — จังหวัด → อำเภอ → ตำบล → รหัสไปรษณีย์
@@ -662,7 +662,7 @@ function switchTab(which) {
 /* ═══ โหลดข้อมูล ═══ */
 // ★ yearParam: undefined/null = ปีล่าสุด (ค่าเริ่มต้น), ตัวเลข พ.ศ. = ปีนั้น, 'all' = ทุกปี
 var documentPager;
-document.addEventListener('DOMContentLoaded',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},invalidate:function(){invoiceLoadGeneration++;},render:function(){renderRows();renderDashboard();}});});
+syyOnReady(function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getTaxInvoiceListData',key:'invoices',year:function(){return currentPageYear;},rows:function(){return invoicesCache;},invalidate:function(){invoiceLoadGeneration++;},render:function(){renderRows();renderDashboard();}});});
 var invoiceLoadGeneration=0,invoiceSectionVersions={},invoiceEditorReady=false,invoiceEditorLoading=false,invoiceEditorWaiters=[],invoiceDraftRestore=null;
 function ensureInvoiceEditor(resume){
   if(invoiceEditorReady)return true;invoiceEditorWaiters.push(resume);if(invoiceEditorLoading)return false;invoiceEditorLoading=true;
@@ -1755,13 +1755,13 @@ syyRegisterFreshness({reload:function(){loadAll(currentPageYear,null,null,true);
   stock:function(stocks){syyApplyStockRows(productsCache,stocks);},product:function(product,deleted){syyApplyProductRows(productsCache,product,deleted);}});
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('invoice',{
+syyOnReady(function(){syyDraftRegister('invoice',{
  capture:function(){if(invoiceDraftRestore)return invoiceDraftRestore;if(!document.getElementById('invoiceModal').classList.contains('active'))return null;return {fields:syyReadFields('#invoiceModal'),items:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {name:row.querySelector('.item-name').value,qty:row.querySelector('.item-qty').value,unit:row.querySelector('.item-unit').value,unitPrice:row.querySelector('.item-price').value};}),editingDocId:editingDocId,unknown:!!syyUnknownWrites.saveTaxInvoice};},
  restore:function(d){if(!d||!Array.isArray(d.items)||d.items.length>200)return;invoiceDraftRestore=d;if(!ensureInvoiceEditor(function(){syyDrafts.invoice.adapter.restore(d);}))return;openAddModal(true);editingDocId=d.editingDocId||null;document.getElementById('itemBasket').innerHTML='';d.items.forEach(addItemRow);syyWriteFields(d.fields);recalcTotals();invoiceDraftRestore=null;if(d.unknown){syyUnknownWrites.saveTaxInvoice=true;syyLockUnknownWrite('saveTaxInvoice');}}
 });});
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyViewRegister('invoice',function(){return {tab:document.getElementById('panelDash').classList.contains('active')?'dash':'list',scroll:document.querySelector('#panelList .table-wrap')?.scrollTop||window.scrollY};},function(v){switchTab(v.tab==='dash'?'dash':'list');requestAnimationFrame(function(){var wrap=document.querySelector('#panelList .table-wrap');if(wrap)wrap.scrollTop=v.scroll||0;});});});
+syyOnReady(function(){syyViewRegister('invoice',function(){return {tab:document.getElementById('panelDash').classList.contains('active')?'dash':'list',scroll:document.querySelector('#panelList .table-wrap')?.scrollTop||window.scrollY};},function(v){switchTab(v.tab==='dash'?'dash':'list');requestAnimationFrame(function(){var wrap=document.querySelector('#panelList .table-wrap');if(wrap)wrap.scrollTop=v.scroll||0;});});});
 </script>
 </body>
 </html>

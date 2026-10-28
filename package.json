@@ -2,7 +2,8 @@
   "name": "syy-shop-regression",
   "private": true,
   "scripts": {
-    "test": "node --test tests/backend.test.cjs tests/security.test.cjs tests/integrity.test.cjs tests/audit.test.cjs tests/recovery.test.cjs tests/release.test.cjs tests/ux.test.cjs tests/read-efficiency.test.cjs tests/backup.test.cjs tests/catalog-scale.test.cjs tests/client-cache.test.cjs tests/hybrid-cache.test.cjs tests/sales-bills.test.cjs tests/stock-corrections.test.cjs",
+    "test": "node --test tests/backend.test.cjs tests/security.test.cjs tests/integrity.test.cjs tests/audit.test.cjs tests/recovery.test.cjs tests/release.test.cjs tests/ux.test.cjs tests/read-efficiency.test.cjs tests/backup.test.cjs tests/catalog-scale.test.cjs tests/client-cache.test.cjs tests/hybrid-cache.test.cjs tests/sales-bills.test.cjs tests/stock-corrections.test.cjs tests/frame-loading.test.cjs",
+    "test:frames": "node --test tests/frame-loading.test.cjs",
     "test:reads": "node tests/read-model.cjs",
     "test:browser": "node tests/browser.cjs",
     "test:browser-backend": "node tests/browser-backend.cjs",

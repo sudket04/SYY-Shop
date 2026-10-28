@@ -197,7 +197,7 @@
 
   var cache=[], editingId=null, deleteId=null, searchTimer=null,masterDataLoaded=false;
 
-  document.addEventListener('DOMContentLoaded',function(){
+  syyOnReady(function(){
     initDensity();
     document.getElementById('tbodyMain').innerHTML = skeletonRows(10,5);
     renderHead();

@@ -365,7 +365,7 @@ var STATUS_CLASS = {
   'ยกเลิก/ไม่ได้งาน'    : 'status-lost'
 };
 
-document.addEventListener('DOMContentLoaded', function () {
+syyOnReady( function () {
   document.getElementById('inpQuoteDate').value = businessDate();
   loadPageData();
 });
@@ -379,7 +379,7 @@ document.addEventListener('keydown', function (e) {
 //   (เดิมดึงใบเสนอราคา "ทุกใบทุกปี" ทุกครั้งที่เปิดหน้า — ปรับให้กรองตามปีฝั่ง server แทน
 //   ลดการอ่าน Firestore ลงมาก โดยเฉพาะร้านที่เปิดมานานสะสมใบเสนอราคาไว้เยอะ)
 var documentPager;
-document.addEventListener('DOMContentLoaded',function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getQuotationListData',key:'quotations',year:function(){return currentPageYear;},rows:function(){return quotations;},invalidate:function(){quotationLoadGeneration++;},render:function(){renderList();}});});
+syyOnReady(function(){documentPager=syyDocumentPager({container:'#panelList .card',api:'getQuotationListData',key:'quotations',year:function(){return currentPageYear;},rows:function(){return quotations;},invalidate:function(){quotationLoadGeneration++;},render:function(){renderList();}});});
 var quotationLoadGeneration=0,quotationSectionVersions={},quotationCatalogPrepared=false,quotationCatalogPreparing=false,quotationRestoredCatalog=null;
 function loadPageData(yearParam, afterLoad, onError, forceFull) {
   if(!quotationBootstrapped&&!quotationCatalogPrepared){if(quotationCatalogPreparing)return;quotationCatalogPreparing=true;syyRestoreCatalog(function(saved){quotationCatalogPreparing=false;quotationCatalogPrepared=true;quotationRestoredCatalog=saved;if(saved)quotationSectionVersions.products=saved.section;loadPageData(yearParam,afterLoad,onError,forceFull);});return;}
@@ -1188,7 +1188,7 @@ syyRegisterFreshness({reload:function(){loadPageData(currentPageYear,null,null,t
   product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();renderResults();}});
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('quotation',{
+syyOnReady(function(){syyDraftRegister('quotation',{
  capture:function(){return {fields:syyQuoteDraftFields(),basket:basket.map(function(b){return {productCode:b.productCode,productName:b.productName,partNumber:b.partNumber,qty:b.qty,unitPrice:b.unitPrice,costPrice:b.costPrice};}),raw:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {qty:row.querySelector('.quote-qty').value,price:row.querySelector('.price-input').value};}),editingDocId:editingDocId,customerOption:document.getElementById('selCustomer').selectedOptions[0]?.text||'',quoteBadge:document.getElementById('qtNoBadge').textContent,unknown:!!syyUnknownWrites.saveQuotation};},
  restore:function(d){if(!d||!Array.isArray(d.basket)||d.basket.length>200)return;editingDocId=d.editingDocId||null;basket=d.basket.map(function(b){var p=products.find(function(x){return x.productCode===b.productCode;});return Object.assign({},b,{stock:p?num(p.currentStock):0});});renderBasket();var customer=document.getElementById('selCustomer'),customerId=d.fields&&d.fields.selCustomer;if(customerId&&!Array.from(customer.options).some(function(o){return o.value===customerId;}))customer.add(new Option(d.customerOption||'ลูกค้าในร่างเดิม',customerId));syyWriteFields(d.fields);document.getElementById('qtNoBadge').textContent=d.quoteBadge||'ร่างที่กู้คืน (ยังไม่บันทึก)';Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).forEach(function(row,i){if(d.raw&&d.raw[i]){row.querySelector('.quote-qty').value=d.raw[i].qty;row.querySelector('.price-input').value=d.raw[i].price;}});switchTab('build');if(d.unknown){syyUnknownWrites.saveQuotation=true;syyLockUnknownWrite('saveQuotation');}}
 });});
@@ -1197,7 +1197,7 @@ document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('quotat
 function syyQuoteDraftFields(){var values={};['selCustomer','inpQuoteDate','selValidDays','inpCustomerPo','inpVehicleNote','inpNote','inpDiscPct'].forEach(function(id){values[id]=document.getElementById(id).value;});return values;}
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyViewRegister('quotation',function(){return {status:listStatusFilter,tab:document.getElementById('panelList').classList.contains('active')?'list':'build',scroll:window.scrollY};},function(v){listStatusFilter=v.status||'';renderStatusFilterBar();renderList();switchTab(v.tab==='list'?'list':'build');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
+syyOnReady(function(){syyViewRegister('quotation',function(){return {status:listStatusFilter,tab:document.getElementById('panelList').classList.contains('active')?'list':'build',scroll:window.scrollY};},function(v){listStatusFilter=v.status||'';renderStatusFilterBar();renderList();switchTab(v.tab==='list'?'list':'build');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

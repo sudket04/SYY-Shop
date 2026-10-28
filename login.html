@@ -2,6 +2,8 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'undefined' ? '' : frameChannel ?>">
+  <meta name="syy-session-state" content="<?= typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired ? 'expired' : '' ?>">
   <base target="_top">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -110,7 +112,11 @@
 </head>
 <body>
 
-  <div class="login-box">
+  <div class="login-box" data-session-expired="<?= typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired ? 'true' : 'false' ?>">
+    <? if (typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired) { ?>
+    <style>.login-box[data-session-expired="true"] .view{display:none!important}</style>
+    <div role="alert"><h2>เซสชันหมดอายุ</h2><p>กรุณาเปิดหน้าเข้าสู่ระบบใหม่ แล้วเข้าสู่ระบบด้วยบัญชีเดิม</p><a class="btn-login" target="_top" href="<?= webAppUrl ?>?page=login">เข้าสู่ระบบใหม่</a></div>
+    <? } ?>
     <div class="login-logo">
       <span class="icon">🏪</span>
       <div class="title">SYY Shop Control</div>

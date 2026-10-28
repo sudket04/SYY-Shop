@@ -20,6 +20,8 @@ function doGet(e) {
   var token = (e && e.parameter && e.parameter.token) ? e.parameter.token : '';
   var mode   = (e && e.parameter && e.parameter.mode)   ? e.parameter.mode   : '';
   var rtoken = (e && e.parameter && e.parameter.rtoken) ? e.parameter.rtoken : '';
+  var frameChannel = (e && e.parameter && e.parameter.channel) || '';
+  frameChannel = /^[A-Za-z0-9-]{16,80}$/.test(String(frameChannel)) ? String(frameChannel) : '';
 
   // ★ NEW: ดึง User-Agent จาก request headers เพื่อผูก session กับเบราว์เซอร์ที่ login ไว้
   //   e.parameter ไม่มี user-agent ตรงๆ — Apps Script HtmlService ไม่ส่ง header มาให้ doGet โดยตรง
@@ -45,6 +47,7 @@ function doGet(e) {
   };
 
   var session = getSession_(token, userAgent);
+  var embeddedSessionExpired = page !== 'login' && !session && !!frameChannel;
 
   // ★ FIX: เดิมเช็ค session เฉพาะ page==='home' เท่านั้น — เปิด URL ตรงๆ เช่น ?page=manageusers
   //   โดยไม่มี token เลยก็ยังได้ template หน้านั้นเต็มๆ กลับมา (ช่องโหว่จริง ดูรายละเอียดที่ callApi()
@@ -56,7 +59,8 @@ function doGet(e) {
   if (page === 'login') {
     var loginTemplate = HtmlService.createTemplateFromFile(files['login']);
     loginTemplate.webAppUrl = getWebAppUrl_();
-    loginTemplate.frameChannel = "";
+    loginTemplate.frameChannel = frameChannel;
+    loginTemplate.embeddedSessionExpired = embeddedSessionExpired;
     loginTemplate.resetMode = mode;
     loginTemplate.resetToken = rtoken;
     return loginTemplate
@@ -68,8 +72,7 @@ function doGet(e) {
   var template = HtmlService.createTemplateFromFile(files[page] || 'index');
   template.webAppUrl = getWebAppUrl_();
   template.authToken = token;
-  var frameChannel = (e && e.parameter && e.parameter.channel) || "";
-  template.frameChannel = /^[A-Za-z0-9-]{16,80}$/.test(String(frameChannel)) ? String(frameChannel) : "";
+  template.frameChannel = frameChannel;
   template.userRole  = session.role;
   template.userName  = session.fullName || session.username;
   template.username  = session.username;

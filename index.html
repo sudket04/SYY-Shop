@@ -541,7 +541,7 @@
   var allProducts=[], masters={},mastersLoaded=false,mastersLoadedAt=0;
 
   /* ═══ Init ═══ */
-  document.addEventListener('DOMContentLoaded', function(){
+  syyOnReady( function(){
     initDensity();
     document.getElementById('userName').innerText   = USER_NAME || 'ผู้ใช้งาน';
     document.getElementById('userRole').innerText   = USER_ROLE || '';
@@ -660,7 +660,7 @@
     else if(d.action==='REFRESH_DROPDOWNS'){ syyInvalidateReadScopes(['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'],false);broadcastDataDelta(d,d.channel); }
     else if(d.action==='REFRESH_PRODUCTS'){ syyInvalidateReadScopes(['Master_Products','Product_Images'],false);broadcastDataDelta(d,d.channel); }
     else if(d.action==='REFRESH_STOCK_FULL'){ syyInvalidateReadScopes(['Master_Products','Stock_Movements','Purchase_Orders'],false);broadcastDataDelta(d,d.channel); }
-    else if(d.action==='SESSION_EXPIRED'){syyDraftFlush();document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});}
+    else if(d.action==='SESSION_EXPIRED'){syyShowSessionExpired();document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});}
     else if(d.action==='OPEN_STOCK_ISSUE'){
       switchPage('stockissue');
       var payload = { items:d.items, refNo:d.refNo, note:d.note, quoteId:d.quoteId };

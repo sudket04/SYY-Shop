@@ -8,11 +8,11 @@ const {evaluateTemplate} = require('./support/templates.cjs');
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'test-results');
 fs.mkdirSync(output, {recursive:true});
-function render(file, role, channel = '') {
+function render(file, role, channel = '', extra = {}) {
   // Evaluate top-level scriptlets instead of silently replacing missing variables.
   // include_() still returns raw fragments, as it does in the application.
   let html = evaluateTemplate(file, {userRole:role,username:'fixture',userName:'fixture',authToken:'test-token',
-    webAppUrl:'http://127.0.0.1:'+server.address().port+'/',frameChannel:channel,resetMode:'',resetToken:''});
+    webAppUrl:'http://127.0.0.1:'+server.address().port+'/',frameChannel:channel,resetMode:'',resetToken:'',...extra});
   html = html.replace(/<script\b[^>]*\bsrc=[^>]*><\/script>/g, '');
   return html;
 }
@@ -52,13 +52,19 @@ const server = http.createServer((req,res)=>{
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
     res.end('<!DOCTYPE html><html><body><iframe id="loginFrame" title="Apps Script sandbox fixture" sandbox="allow-scripts allow-same-origin allow-forms" src="/?file=login.html" style="width:100%;height:900px;border:0"></iframe></body></html>');return;
   }
-  const pages={home:'index.html',stockissue:'StockIssue.html',products:'Master_Products.html',taxinvoice:'Master_Tax_Invoice.html',quotation:'Quotation.html',orders:'Purchase_Orders.html',brands:'Master_Brands.html',categories:'Master_Categories.html',zones:'Master_Zones.html'};
+  const pages={login:'login.html',home:'index.html',stockissue:'StockIssue.html',products:'Master_Products.html',taxinvoice:'Master_Tax_Invoice.html',quotation:'Quotation.html',orders:'Purchase_Orders.html',brands:'Master_Brands.html',categories:'Master_Categories.html',zones:'Master_Zones.html'};
   const file = u.searchParams.get('file') || pages[u.searchParams.get('page')] || 'Quotation.html';
   if(!/^[A-Za-z_]+\.html$/.test(file)) {res.writeHead(400).end();return;}
   // A real child route receives its role from the same authenticated session as the shell.
   // Preserve that role in local iframe fixtures instead of silently testing staff under a Viewer shell.
   const referringRole=req.headers.referer?new URL(req.headers.referer,'http://localhost').searchParams.get('role'):null;
-  const html=render(file,u.searchParams.get('role')||referringRole||'staff',u.searchParams.get('channel')||'').replace('<head>','<head>'+fixture);
+  const expired=u.searchParams.get('token')==='expired-fixture';
+  let html=render(expired?'login.html':file,u.searchParams.get('role')||referringRole||'staff',u.searchParams.get('channel')||'',{embeddedSessionExpired:expired}).replace('<head>','<head>'+fixture);
+  if(u.searchParams.get('fixture')==='late-html'){
+    const scripts=[];html=html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/g,(_,code)=>{scripts.push(code);return '';});
+    // Model a host that installs app scripts after its document is already ready.
+    html=html.replace('</body>','<script>window.addEventListener("load",function(){setTimeout(function(){for(const text of '+JSON.stringify(scripts).replace(/</g,'\\u003c')+'){const script=document.createElement("script");script.textContent=text;document.body.appendChild(script);}},0);});</script></body>');
+  }
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(html);
 });
 let browser, cases=0;
@@ -79,13 +85,55 @@ async function main(){
     await page.waitForFunction(()=>typeof syyUxBusy==='undefined'||syyUxBusy===0);
     return page;
   }
-  let encountered=0;async function check(name,fn){encountered++;if(encountered<Number(process.env.BROWSER_TEST_START||1))return;await fn();cases++;console.log('PASS: '+name);}
+  let encountered=0;async function check(name,fn){encountered++;if(encountered<Number(process.env.BROWSER_TEST_START||1)||process.env.BROWSER_TEST_MATCH&&!name.includes(process.env.BROWSER_TEST_MATCH))return;await fn();cases++;console.log('PASS: '+name);}
   await check('All 15 routed pages load after private include rename',async()=>{
     for(const file of ['index.html','Master_Products.html','StockIssue.html','Purchase_Orders.html','Quotation.html',
       'Master_Tax_Invoice.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html',
       'Master_Zones.html','Master_Cars.html','Profile.html','Manage_Users.html','login.html']) {
       const p=await pageFor(file);assert.deepEqual(p.errors,[],file);assert.doesNotMatch(await p.locator('body').innerText(),/<\?!=\s*include_\(/,file);await p.close();
     }
+  });
+  await check('Late-installed page scripts initialize all authenticated menus once after the document is ready',async()=>{
+    for(const file of ['index.html','Master_Products.html','StockIssue.html','Purchase_Orders.html','Quotation.html','Master_Tax_Invoice.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html','Profile.html','Manage_Users.html']){
+      const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));
+      await p.goto('http://127.0.0.1:'+port+'/?file='+file+'&role=admin&fixture=late-html');
+      await p.waitForFunction(()=>window.apiCalls?.length>0);await p.waitForFunction(()=>typeof syyUxBusy==='undefined'||syyUxBusy===0);
+      const calls=await p.evaluate(()=>apiCalls.map(x=>x.fn));assert.equal(calls.length,new Set(calls).size,file+' duplicated initial requests');
+      assert.deepEqual(p.errors,[],file);await p.close();
+    }
+  });
+  await check('Expired menu routes show one actionable session message without a blank frame or asynchronous top navigation',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>document.getElementById('iframe-brands').dataset.src=document.getElementById('iframe-brands').dataset.src.replace('token=test-token','token=expired-fixture'));
+    await p.locator('#menu-brands').click();await p.locator('#syySessionExpired').waitFor({state:'visible'});
+    const login=p.locator('#syySessionExpired a');assert.equal(await login.getAttribute('target'),'_top');assert.equal(new URL(await login.getAttribute('href')).search,'?page=login');
+    assert.equal(await p.locator('#syySessionExpired').count(),1);assert.equal(await p.evaluate(()=>syyExpiryStarted),true);
+    assert.deepEqual(p.errors,[]);await p.screenshot({path:path.join(output,'expired-menu-recovery.png')});await login.click();await p.locator('#loginForm').waitFor({state:'visible'});assert.equal(new URL(p.url()).searchParams.get('page'),'login');await p.close();
+  });
+  await check('Google-style cross-origin wrappers preserve authenticated menu readiness and frame ownership',async()=>{
+    const nested=await browser.newContext({viewport:{width:1365,height:950}});
+    const files={brands:'Master_Brands.html',products:'Master_Products.html',profile:'Profile.html',manageusers:'Manage_Users.html'};
+    await nested.route('**/*',async route=>{
+      const u=new URL(route.request().url());if(!['script.google.com','child-script.googleusercontent.com','shell-script.googleusercontent.com'].includes(u.hostname))return route.abort();
+      let html;
+      if(u.hostname==='script.google.com'){
+        const next=new URL('https://child-script.googleusercontent.com/panel');next.search=u.search;
+        html='<iframe title="Google sandbox wrapper" src="'+next.href.replace(/&/g,'&amp;')+'"></iframe>';
+      }else if(u.pathname==='/panel'){
+        const next=new URL(u);next.pathname='/content';html='<iframe title="HtmlService app" src="'+next.href.replace(/&/g,'&amp;')+'"></iframe>';
+      }else{
+        const file=u.hostname.startsWith('shell-')?'index.html':files[u.searchParams.get('page')];
+        html=render(file,'admin',u.searchParams.get('channel')||'',{webAppUrl:'https://script.google.com/exec'}).replace('<head>','<head>'+fixture);
+      }
+      await route.fulfill({contentType:'text/html; charset=utf-8',body:html});
+    });
+    const p=await nested.newPage();const errors=[];p.on('pageerror',e=>errors.push(e.message));await p.goto('https://shell-script.googleusercontent.com/app');
+    for(const id of Object.keys(files)){
+      if(id==='profile')await p.evaluate(()=>switchPage('profile'));else await p.locator('#menu-'+id).click();
+      await p.waitForFunction(id=>document.getElementById('iframe-'+id).dataset.ready==='true',id);
+      assert.equal(await p.locator('#'+id+'Form .syy-frame-status').isVisible(),false);
+      assert.equal(await p.evaluate(id=>document.getElementById('iframe-'+id).syyOrigin,id),'https://child-script.googleusercontent.com');
+    }
+    assert.deepEqual(errors,[]);await nested.close();
   });
   await check('SweetAlert confirmations have no generated dropdown, retain native input and draft decisions',async()=>{
     const p=await pageFor('Quotation.html');await p.evaluate(()=>{

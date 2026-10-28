@@ -428,6 +428,7 @@
     </div>
   </div>
 </div>
+<?!= include_('UiSystem'); ?>
 <script>
 /* ══════════════════════════════════════════════════════════════
    XLFILTER ENGINE — เหมือนกับ Master_Categories.html ทุกประการ
@@ -717,7 +718,7 @@ var targetToggleDocId  = null;
 var targetToggleStatus = null;
 var targetResetDocId   = null;
 
-document.addEventListener('DOMContentLoaded',function(){ loadTable(); });
+syyOnReady(function(){ loadTable(); });
 
 // ★ เรียกทุกฟังก์ชันผ่าน apiGateway เพราะต้องเช็ค role admin ที่ backend
 function manageErrorMessage(err){var message=err&&err.message||'';return message&&message.length<=250?message:'การเชื่อมต่อขัดข้อง กรุณาลองใหม่';}
@@ -995,6 +996,5 @@ function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 //   (หน้านี้ไม่ได้ include_('Shared') จึงมี esc()/escJs() ของตัวเองแยกต่างหาก ไม่ใช้ตัวกลาง)
 function escJs(v) { return esc(v).replace(/'/g,"\\'"); }
 </script>
-<?!= include_('UiSystem'); ?>
 </body>
 </html>

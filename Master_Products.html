@@ -610,7 +610,7 @@
   // ★ ยังไม่เคยอัปโหลดรูป → request รูป 404 ตามคาด — สลับเป็นไอคอน placeholder แทนไอคอนรูปหักของเบราว์เซอร์
   function prodImgFallback(el) { el.outerHTML = '<span style="font-size:16px;color:var(--faint)">📦</span>'; }
 
-  document.addEventListener('DOMContentLoaded',function() {
+  syyOnReady(function() {
     loadProductColumnPreference();
     renderProductColumnPicker();
     renderProductTableStructure();

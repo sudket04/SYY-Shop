@@ -355,7 +355,7 @@
     searchInputEl.select();
   }
 
-  document.addEventListener('DOMContentLoaded',function(){
+  syyOnReady(function(){
     initDensity();
     restorePendingIssue();
     loadProducts();
@@ -1130,7 +1130,7 @@
     },function(error){correctionBusy=false;correctionFailed(syyErrorMessage(error),true);});
   }
   function correctionFailed(message,uncertain){correctionUncertain=uncertain;lockCorrection(uncertain);document.getElementById('correctionPreview').textContent=message+(uncertain?' · กดยืนยันตรวจคำขอเดิม ห้ามสร้างรายการใหม่':' · ตรวจรายละเอียดและตัวอย่างใหม่');document.getElementById('correctionConfirm').disabled=!uncertain;document.getElementById('correctionConfirm').textContent=uncertain?'ตรวจผลคำขอเดิม':'ยืนยันแก้ไข';if(!uncertain){correctionPayload=null;try{sessionStorage.removeItem(correctionStore);}catch(e){}}}
-  document.addEventListener('DOMContentLoaded',function(){if(USER_ROLE!=='admin')return;try{var saved=JSON.parse(sessionStorage.getItem(correctionStore)||'null');if(saved&&saved.url===WEB_APP_URL&&saved.payload&&saved.payload.requestId){correctionModal();correctionPayload=saved.payload;document.getElementById('correctionBill').textContent='คำขอเดิม: '+correctionPayload.docNo;document.getElementById('correctionAction').value=correctionPayload.action;document.getElementById('correctionReason').value=correctionPayload.correctionReason;document.getElementById('correctionRef').value=correctionPayload.refNo;document.getElementById('correctionNote').value=correctionPayload.note;(correctionPayload.items||[]).forEach(addCorrectionLine);correctionMode();correctionUncertain=true;correctionFailed('มีคำขอแก้ไขที่ยังไม่ยืนยันผล',true);openModal('issueCorrectionModal');}}catch(e){}});
+  syyOnReady(function(){if(USER_ROLE!=='admin')return;try{var saved=JSON.parse(sessionStorage.getItem(correctionStore)||'null');if(saved&&saved.url===WEB_APP_URL&&saved.payload&&saved.payload.requestId){correctionModal();correctionPayload=saved.payload;document.getElementById('correctionBill').textContent='คำขอเดิม: '+correctionPayload.docNo;document.getElementById('correctionAction').value=correctionPayload.action;document.getElementById('correctionReason').value=correctionPayload.correctionReason;document.getElementById('correctionRef').value=correctionPayload.refNo;document.getElementById('correctionNote').value=correctionPayload.note;(correctionPayload.items||[]).forEach(addCorrectionLine);correctionMode();correctionUncertain=true;correctionFailed('มีคำขอแก้ไขที่ยังไม่ยืนยันผล',true);openModal('issueCorrectionModal');}}catch(e){}});
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('issueCorrectionModal')?.classList.contains('active')){e.preventDefault();e.stopImmediatePropagation();closeIssueCorrection();}},true);
 </script>
 <script>
@@ -1139,14 +1139,14 @@ syyRegisterFreshness({reload:loadProducts,canRefresh:function(){return !issueBus
   stock:function(stocks){syyApplyStockRows(products,stocks);reconcileStockBasket();},product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();reconcileStockBasket();}});
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('stockissue',{
+syyOnReady(function(){syyDraftRegister('stockissue',{
  blocked:function(){return issueBusy||issueUncertain();},
  capture:function(){return {reason:document.getElementById('inpReason').value,refNo:document.getElementById('inpRefNo').value,note:document.getElementById('inpNote').value,basket:basket.map(function(b){var copy=Object.assign({},b);delete copy.stock;return copy;}),quoteId:pendingQuoteId};},
  restore:function(d){if(issueBusy||issueUncertain()||!d||!Array.isArray(d.basket)||d.basket.length>200)return;basket=d.basket.map(function(b){var p=products.find(function(x){return x.productCode===b.productCode;});return Object.assign({},b,{stock:p?num(p.currentStock):0});});pendingQuoteId=d.quoteId||null;document.getElementById('inpRefNo').value=d.refNo||'';document.getElementById('inpNote').value=d.note||'';renderBasket();}
 });});
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyViewRegister('stockissue',function(){return {search:searchInputEl.value,category:document.getElementById('filterCategory').value,stockFilter:stockFilter,mvFilter:mvFilter,tab:document.getElementById('panelHistory').classList.contains('active')?'history':'issue',scroll:window.scrollY};},function(v){searchInputEl.value=v.search||'';document.getElementById('filterCategory').value=v.category||'';stockFilter=v.stockFilter||'all';mvFilter=v.mvFilter||'all';renderResults();switchTab(v.tab==='history'?'history':'issue');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
+syyOnReady(function(){syyViewRegister('stockissue',function(){return {search:searchInputEl.value,category:document.getElementById('filterCategory').value,stockFilter:stockFilter,mvFilter:mvFilter,tab:document.getElementById('panelHistory').classList.contains('active')?'history':'issue',scroll:window.scrollY};},function(v){searchInputEl.value=v.search||'';document.getElementById('filterCategory').value=v.category||'';stockFilter=v.stockFilter||'all';mvFilter=v.mvFilter||'all';renderResults();switchTab(v.tab==='history'?'history':'issue');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

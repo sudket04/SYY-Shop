@@ -173,7 +173,7 @@ document.addEventListener('keydown',function(event){
   else if(!event.shiftKey&&(document.activeElement===last||!top.element.contains(document.activeElement))){event.preventDefault();first.focus();}
 });
 document.addEventListener('focusin',function(event){var top=syyModalStack.at(-1);if(top&&!document.querySelector('.swal2-container')&&!top.element.contains(event.target))(syyModalFocusables(top.element)[0]||top.dialog).focus();});
-document.addEventListener('DOMContentLoaded',function(){new MutationObserver(function(records){if(records.some(function(record){return record.target.classList?.contains('modal-overlay');}))syySyncModals();}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class']});});
+syyOnReady(function(){new MutationObserver(function(records){if(records.some(function(record){return record.target.classList?.contains('modal-overlay');}))syySyncModals();}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class']});});
 
 /* ── SYY Searchable Select ────────────────────────────────────────────────
    Progressive enhancement for native <select>. Search is 100% client-side. */
@@ -260,7 +260,7 @@ var SYYSelect=(function(){
 window.SYYSelect=SYYSelect;
 document.addEventListener('click',SYYSelect.documentClick);
 window.addEventListener('resize',SYYSelect.reposition,{passive:true});window.addEventListener('scroll',SYYSelect.reposition,true);
-document.addEventListener('DOMContentLoaded',function(){
+syyOnReady(function(){
   SYYSelect.init(document);
   new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType===1)SYYSelect.init(n);});m.removedNodes.forEach(function(n){if(n.nodeType===1&&!n.isConnected)SYYSelect.remove(n);});});}).observe(document.documentElement,{childList:true,subtree:true});
 });
@@ -380,12 +380,25 @@ function swyConfirm(o){
    หน้า login ไม่ได้เรียกผ่าน callApi() นี้เลย (เรียก google.script.run ตรงๆ เฉพาะฟังก์ชัน auth ที่
    ตั้งใจเปิดให้ก่อน login อยู่แล้ว — authLogin/authForgotPassword/authResetPassword/ฯลฯ) จึงตัด
    ทางลัดนี้ออกได้โดยไม่กระทบการ login */
+function syyShowSessionExpired(){
+  syyDraftFlush();
+  if(window.syyExpiryStarted)return;
+  window.syyExpiryStarted=true;syyClearReadCache();
+  var box=document.createElement('div');box.id='syySessionExpired';box.setAttribute('role','alertdialog');box.setAttribute('aria-modal','true');box.setAttribute('aria-labelledby','syySessionExpiredTitle');
+  box.style.cssText='position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:#0f294580;padding:20px';
+  var panel=document.createElement('div');panel.style.cssText='background:white;color:#16324f;border-radius:14px;padding:28px;max-width:480px;text-align:center;box-shadow:0 12px 40px #0003';
+  var title=document.createElement('h2');title.id='syySessionExpiredTitle';title.textContent='เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่';
+  var message=document.createElement('p');message.textContent='ร่างที่รองรับถูกเก็บไว้ในเบราว์เซอร์ เข้าสู่ระบบด้วยบัญชีเดิมเพื่อตรวจและกู้คืน';
+  var link=document.createElement('a');link.textContent='เข้าสู่ระบบใหม่';link.className='btn btn-primary';link.target='_top';
+  var url=new URL(WEB_APP_URL,location.href);url.search='?page=login';url.hash='';link.href=url.href;
+  panel.append(title,message,link);box.appendChild(panel);document.body.appendChild(box);link.focus();
+}
 function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache){
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
   var done=false,timer=null;
   function settled(failed){if(done)return false;done=true;clearTimeout(timer);syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&/^(get|fetch)/.test(fnName))syyUxLoaded=Date.now();syyUxStatus();return true;}
   function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,restartPage:error.restartPage===true,timeout:error.timeout===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
-  function expired(){if(!settled(true))return;syyClearReadCache();syyDraftFlush();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});if(window.syyExpiryStarted)return;window.syyExpiryStarted=true;swyError('เซสชันหมดอายุ','ร่างที่รองรับถูกเก็บไว้ในเบราว์เซอร์ กรุณาเข้าสู่ระบบด้วยบัญชีเดิมเพื่อตรวจและกู้คืน').then(function(){setTimeout(function(){if(typeof WEB_APP_URL!=='undefined')window.top.location.href=WEB_APP_URL+'?page=login';},200);});}
+  function expired(){if(!settled(true))return;syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});}
   if(!token){expired();return;}
   // This only settles the browser read. GAS may finish later; late callbacks
   // cannot overwrite a retry. Writes have no client deadline or automatic retry.
@@ -773,7 +786,7 @@ var syyViews={};
 function syyViewRegister(name,capture,restore){syyViews[name]={capture:capture,restore:restore,ready:false};}
 function syyViewStart(){Object.keys(syyViews).forEach(function(name){var view=syyViews[name];if(view.ready)return;view.ready=true;var saved=syyLocalGet('screen',name);if(saved)view.restore(saved);});}
 function syyViewFlush(){if(window.syyIntentionalExit)return;Object.keys(syyViews).forEach(function(name){var view=syyViews[name];if(view.ready)syyLocalSet('screen',name,view.capture());});}
-document.addEventListener('DOMContentLoaded',function(){
+syyOnReady(function(){
   syyAccessibleFields(document);document.addEventListener('click',function(event){var label=event.target.closest('label[for]'),field=label&&document.getElementById(label.htmlFor);if(field&&field.classList.contains('syy-select-native')){event.preventDefault();document.getElementById(field.id+'-control')?.focus();}});new MutationObserver(function(records){records.forEach(function(record){record.addedNodes.forEach(function(node){if(node.nodeType===1)syyAccessibleFields(node);});});}).observe(document.body,{childList:true,subtree:true});
   var status=document.createElement('div');status.id='syyDataStatus';status.className='syy-data-status';status.setAttribute('role','status');document.querySelector('.page-head,.page-header')?.insertAdjacentElement('afterend',status);syyUxStatus();
   var draftStatus=document.createElement('div');draftStatus.id='syyDraftStatus';draftStatus.className='syy-data-status';draftStatus.setAttribute('role','status');draftStatus.hidden=true;status.insertAdjacentElement('afterend',draftStatus);
@@ -781,7 +794,7 @@ document.addEventListener('DOMContentLoaded',function(){
   function persist(){syyDraftFlush();if(!window.syyIntentionalExit)syyViewFlush();}
   document.addEventListener('change',function(event){syyClearInvalid(event.target);setTimeout(persist,0);});document.addEventListener('click',function(){setTimeout(persist,0);});
   window.addEventListener('scroll',function(){clearTimeout(window.syyViewTimer);window.syyViewTimer=setTimeout(syyViewFlush,150);},true);
-  window.addEventListener('message',function(event){if(syyTrustedParentMessage(event)&&event.data.action==='CLEAR_LOCAL_STATE'){window.syyIntentionalExit=true;syyClearAccountState();};if(syyTrustedParentMessage(event)&&event.data.action==='SESSION_EXPIRED'){syyDraftFlush();window.syyExpiryStarted=true;}});
+  window.addEventListener('message',function(event){if(syyTrustedParentMessage(event)&&event.data.action==='CLEAR_LOCAL_STATE'){window.syyIntentionalExit=true;syyClearAccountState();};if(syyTrustedParentMessage(event)&&event.data.action==='SESSION_EXPIRED')syyShowSessionExpired();});
   window.addEventListener('pagehide',syyDraftFlush);window.addEventListener('beforeunload',function(event){syyDraftFlush();if(!window.syyIntentionalExit&&!window.syyExpiryStarted&&Object.keys(syyDrafts).some(syyDraftDirty)){event.preventDefault();event.returnValue='';}});
   setInterval(syyUxStatus,30000);
 });

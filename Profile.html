@@ -282,7 +282,7 @@ var myProfile = null;
 var activityLogCache = [];
 var activityLogLoadedAt = 0, activityLogLoading = false;
 
-document.addEventListener('DOMContentLoaded',function(){
+syyOnReady(function(){
   if (!AUTH_TOKEN) {
     // ★ ไม่มี token เลย (เปิดหน้านี้ตรงๆ โดยไม่ผ่าน login) — เด้งกลับหน้า login ทันที
     //   หน้านี้ต้องรู้ว่าเป็นใครถึงจะแสดงข้อมูลได้ ต่างจาก Master pages ที่ยัง fallback ได้

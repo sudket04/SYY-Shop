@@ -322,7 +322,7 @@
   var lowStockItems   = [];   // สินค้าสต็อกต่ำ (จาก getLowStockProductsForOrder)
   var purchaseOrders  = [];   // ประวัติใบสั่งซื้อ (จาก getPurchaseOrders)
   var pendingSummary={codes:{},pendingCount:0},documentPager,purchaseLoadSequence=0,purchasePageLoaded=false,purchaseCreateLoaded=false,purchaseHistoryLoaded=false;
-  document.addEventListener('DOMContentLoaded',function(){documentPager=syyDocumentPager({container:'#tabHistory',api:'getPurchaseOrderPageData',key:'purchaseOrders',id:'poId',rows:function(){return purchaseOrders;},render:function(){renderHistoryTab();updateStatCards();}});});
+  syyOnReady(function(){documentPager=syyDocumentPager({container:'#tabHistory',api:'getPurchaseOrderPageData',key:'purchaseOrders',id:'poId',rows:function(){return purchaseOrders;},render:function(){renderHistoryTab();updateStatCards();}});});
   var pendingProductCodes = {}; // productCode ที่มีคำสั่งซื้อค้างอยู่ (Pending/Ordered)
   var checkedState    = {};   // { productCode: true/false } เช็คบ็อกซ์ที่เลือกไว้
   var qtyState        = {};   // { productCode: qty } จำนวนที่จะสั่ง (แก้ไขได้)
@@ -341,7 +341,7 @@
 
   var pendingReceivePO = null; // PO object ที่กำลังบันทึกรับสินค้าอยู่ใน modal
 
-  document.addEventListener('DOMContentLoaded', function() {
+  syyOnReady( function() {
     document.getElementById('confirmOrderDate').value = businessDate();
     loadAll();
   });
@@ -1173,13 +1173,13 @@ function upsertPurchaseOrder(po){if(!po||!po.poId)return;var index=purchaseOrder
 function refreshPurchaseOrder(id){callApi('getPurchaseOrderPageData',[{poId:id}],function(data){upsertPurchaseOrder(data.po);},function(){toast('โหลดสถานะล่าสุดไม่สำเร็จ กรุณารีเฟรช','warn');});}
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyDraftRegister('orders',{
+syyOnReady(function(){syyDraftRegister('orders',{
  capture:function(){return {checked:checkedState,qty:qtyState,unknown:!!syyUnknownWrites.savePurchaseOrder};},
  restore:function(d){if(!d||!d.checked||!d.qty)return;checkedState=d.checked;qtyState=d.qty;renderCreateTab();updateStatCards();if(d.unknown){syyUnknownWrites.savePurchaseOrder=true;syyLockUnknownWrite('savePurchaseOrder');}}
 });});
 </script>
 <script>
-document.addEventListener('DOMContentLoaded',function(){syyViewRegister('orders',function(){return {status:historyStatusFilter,tab:document.getElementById('tabHistory').classList.contains('active')?'history':'create',scroll:window.scrollY};},function(v){historyStatusFilter=v.status||'all';renderHistoryTab();switchTab(v.tab==='history'?'history':'create');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
+syyOnReady(function(){syyViewRegister('orders',function(){return {status:historyStatusFilter,tab:document.getElementById('tabHistory').classList.contains('active')?'history':'create',scroll:window.scrollY};},function(v){historyStatusFilter=v.status||'all';renderHistoryTab();switchTab(v.tab==='history'?'history':'create');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

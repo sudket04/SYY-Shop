@@ -237,7 +237,7 @@ test('every channel-aware page evaluates without a channel and preserves a suppl
 function routingSetup(requireLegacyChannel=false) {
   const s=setup();
   s.c.HtmlService={XFrameOptionsMode:{ALLOWALL:'ALLOWALL'},createTemplateFromFile(name){
-    const template={evaluate(){if(requireLegacyChannel){const channel=vm.runInNewContext('frameChannel',template);if(name==='login')assert.equal(channel,'');}const output={file:name,html:evaluateTemplate(name+'.html',template),setTitle(){return output;},setXFrameOptionsMode(){return output;}};return output;}};
+    const template={evaluate(){if(requireLegacyChannel)assert.equal(typeof vm.runInNewContext('frameChannel',template),'string');const output={file:name,html:evaluateTemplate(name+'.html',template),setTitle(){return output;},setXFrameOptionsMode(){return output;}};return output;}};
     return template;
   }};
   return s;
@@ -258,9 +258,23 @@ test('doGet never renders authenticated templates for absent or expired sessions
   const s=routingSetup();s.c.getSession_=()=>null;
   for(const page of ['home','stockissue','quotation','products','manageusers','unknown']) {
     const output=s.c.doGet({parameter:{page,token:'expired',channel:'fixture-channel-123456'}});
-    assert.equal(output.file,'login');assert.doesNotMatch(output.html,/<meta name="syy-frame-channel"/);
+    assert.equal(output.file,'login');assert.match(output.html,/<meta name="syy-frame-channel" content="fixture-channel-123456">/);
+    assert.match(output.html,/<meta name="syy-session-state" content="expired">/);
+    assert.doesNotMatch(output.html,/expired.*authToken|id="productBody"/);
   }
   assert.equal(s.c.doGet().file,'login');assert.equal(s.network.length+s.writes.length+s.mail.length,0);
+});
+
+test('unauthenticated frame routing only echoes validated channels, never renders business data or writes',()=>{
+  const s=routingSetup();s.c.getSession_=()=>null;
+  for(const channel of ['', '<invalid>', 'x'.repeat(81)]){
+    const output=s.c.doGet({parameter:{page:'products',token:'expired',channel}});
+    assert.equal(output.file,'login');assert.match(output.html,/<meta name="syy-frame-channel" content="">/);
+    assert.match(output.html,/<meta name="syy-session-state" content="">/);
+  }
+  const explicit=s.c.doGet({parameter:{page:'login',channel:'fixture-channel-123456'}});
+  assert.match(explicit.html,/<meta name="syy-session-state" content="">/);
+  assert.equal(s.network.length+s.writes.length+s.mail.length,0);
 });
 
 test('legacy direct frameChannel scriptlets work in login, reset and every authenticated route',()=>{
