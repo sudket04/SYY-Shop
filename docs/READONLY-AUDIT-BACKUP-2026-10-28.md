@@ -2,6 +2,8 @@
 
 ต่อจาก [implementation รอบแรก](PERFORMANCE-STOCK-CORRECTION-2026-10-28.md) บน `main` baseline `b6609c28afab40e95eadb1268d0862a99d28eeaf` ผู้ใช้ยืนยันว่าไม่มี Staging และอนุญาตอ่านผ่านระบบเดิม แต่ห้ามเขียน แก้ไข หรือลบ DB จริง
 
+ผลตรวจรอบถัดไป29ต.ค.อยู่ใน [Source/Executions audit](SOURCE-EXECUTIONS-AUDIT-2026-10-29.md): เพิ่ม read-only year getter, integration12หน้า และประวัติ Backupย้อนหลัง11 executions เนื้อหาด้านล่างเป็นผลรอบ28ต.ค. ไม่ใช่ baseline ใหม่หลัง Deploy
+
 ## ขอบเขตที่ดำเนินการจริง
 
 - อ่าน Apps Script Executions, Cloud log ของงานเดิม และรายการชื่อไฟล์/โฟลเดอร์ Backup ใน Drive เท่านั้น

@@ -2410,7 +2410,7 @@ var QUOTATION_YEARS_ID = "quotation_years";
 
 // ★ เก็บรายชื่อปี (พ.ศ.) ที่มีใบเสนอราคาอยู่จริง ไว้ใช้สร้างตัวเลือกปีในหน้าเว็บ (pattern เดียวกับ
 //   updateTaxInvoiceYearsMeta_ ของใบกำกับภาษี) — เรียกครั้งเดียวตอนบันทึกสำเร็จ ไม่ใช่ทุกครั้งที่โหลดหน้า
-function updateQuotationYearsMeta_(yearBE) { appendYearMeta_(QUOTATION_YEARS_ID,yearBE);clearCollectionCache_('Quotations'); }
+function updateQuotationYearsMeta_(yearBE) { appendYearMeta_(QUOTATION_YEARS_ID,yearBE,discoverQuotationYears_);clearCollectionCache_('Quotations'); }
 
 function getQuotationAvailableYears_() {return cachedReadResult_('document-years:quotation',['Quotations'],120000,getQuotationAvailableYearsUncached_);}
 function getQuotationAvailableYearsUncached_() {
@@ -2424,11 +2424,11 @@ function getQuotationAvailableYearsUncached_() {
       var years = parseFirestoreValue_((doc.fields || {}).Years) || [];
       years = years.map(function(y) { return parseInt(y, 10); }).sort(function(a, b) { return b - a; });
       if (years.length) return years;
+      return discoverQuotationYears_();
     } else if (res.getResponseCode() === 404) {
-      // ★ meta ปียังไม่เคยถูกสร้าง (ใบเสนอราคาเก่าก่อนหน้านี้ไม่เคยบันทึก meta ปีไว้ ต่างจากใบกำกับ
-      //   ภาษีที่มี meta นี้มาตั้งแต่แรก) — สแกนหาปีทั้งหมดที่มีข้อมูลอยู่จริงครั้งเดียวเพื่อตั้งต้น
-      //   หลังจากนี้ทุกครั้งจะอ่านแค่ meta doc เอกสารเดียว ไม่สแกนซ้ำอีกเลย
-      return seedQuotationYearsMeta_();
+      // Browsing is read-only, including a legacy database without year metadata.
+      // The explicit save path seeds metadata; ordinary reads reuse this cached discovery.
+      return discoverQuotationYears_();
     }
   } catch (e) {
     throw e;
@@ -2436,13 +2436,27 @@ function getQuotationAvailableYearsUncached_() {
   return [new Date().getFullYear() + 543];
 }
 
-function seedQuotationYearsMeta_() {
-  var fetched=fetchAllPagesRaw_(QUOTATION_COLLECTION),seen={};
-  if(!fetched.ok)throw new Error("อ่านปีใบเสนอราคาไม่ครบ");
-  fetched.docs.forEach(function(doc){var date=parseFirestoreValue_((doc.fields||{}).Quote_Date);if(validDateOnly_(date)) seen[new Date(date+"T00:00:00Z").getUTCFullYear()+543]=true;});
-  var years=Object.keys(seen).map(Number);if(!years.length)years=[new Date().getFullYear()+543];
-  years.forEach(updateQuotationYearsMeta_);
-  return getQuotationAvailableYearsUncached_();
+function discoverQuotationYears_() {
+  var seen=Object.create(null),before='',readTime='';
+  function query(all){
+    var q={from:[{collectionId:QUOTATION_COLLECTION}],select:{fields:[{fieldPath:'Quote_Date'}]}},body={structuredQuery:q};
+    if(!all){q.orderBy=[{field:{fieldPath:'Quote_Date'},direction:'DESCENDING'}];q.limit=1;if(before)q.where={fieldFilter:{field:{fieldPath:'Quote_Date'},op:'LESS_THAN',value:{stringValue:before}}};}
+    if(readTime)body.readTime=readTime;
+    var response=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});
+    if(response.getResponseCode()!==200)throw new Error('อ่านปีใบเสนอราคาไม่ครบ กรุณาลองใหม่');
+    var rows=JSON.parse(response.getContentText());if(!Array.isArray(rows))throw new Error('ข้อมูลปีใบเสนอราคาไม่ถูกต้อง');
+    rows.forEach(function(row){if(!readTime&&row.readTime)readTime=row.readTime;});var docs=rows.filter(function(row){return row.document;}).map(function(row){return row.document;});
+    if(docs.length&&!isFinite(Date.parse(readTime)))throw new Error('ไม่พบเวลายืนยันปีใบเสนอราคา');return docs;
+  }
+  function add(date){if(!validDateOnly_(date))return;var year=Number(date.slice(0,4))+543;if(year<2400||year>3000)throw new Error('ปีใบเสนอราคาไม่ถูกต้อง');seen[year]=true;}
+  // Skip directly to the preceding year: one returned document per distinct year.
+  // Malformed legacy dates retain the old skip behavior via a date-only projection.
+  for(var i=0;i<602;i++){
+    var docs=query(false);if(!docs.length)break;var date=parseFirestoreValue_((docs[0].fields||{}).Quote_Date);
+    if(!validDateOnly_(date)){query(true).forEach(function(doc){add(parseFirestoreValue_((doc.fields||{}).Quote_Date));});break;}
+    add(date);var next=date.slice(0,4)+'-01-01';if(before&&next>=before)throw new Error('ปีใบเสนอราคาวนซ้ำ');before=next;
+  }
+  var years=Object.keys(seen).map(Number).sort(function(a,b){return b-a;});return years.length?years:[Number(businessDate_().slice(0,4))+543];
 }
 
 // ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
@@ -5497,20 +5511,22 @@ var validatedGatewaySession_ = null;
 function validDateOnly_(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !isNaN(new Date(value + "T00:00:00Z").getTime()) && new Date(value + "T00:00:00Z").toISOString().slice(0,10) === value;
 }
-function appendYearMeta_(id, yearBE) {
+function appendYearMeta_(id, yearBE, initialYears) {
   yearBE = Number(yearBE);
   if (!Number.isInteger(yearBE) || yearBE < 2400 || yearBE > 3000) throw new Error("ปีเอกสารไม่ถูกต้อง");
   var url = "https://firestore.googleapis.com/v1/" + fsDocPath_(META_COLLECTION, id);
   var res = UrlFetchApp.fetch(url, {method:"get",headers:getAuthHeader_(),muteHttpExceptions:true});
   if (res.getResponseCode() !== 200 && res.getResponseCode() !== 404) throw new Error("อ่านข้อมูลปีเอกสารไม่สำเร็จ");
-  if(res.getResponseCode()===200){var existing=parseFirestoreValue_((JSON.parse(res.getContentText()).fields||{}).Years)||[];if(!Array.isArray(existing))throw new Error("ข้อมูลปีเอกสารไม่ถูกต้อง");if(existing.map(Number).indexOf(yearBE)>=0)return;}
-  var result;
+  var emptyMetadata=res.getResponseCode()===404;
+  if(res.getResponseCode()===200){var existing=parseFirestoreValue_((JSON.parse(res.getContentText()).fields||{}).Years)||[];if(!Array.isArray(existing))throw new Error("ข้อมูลปีเอกสารไม่ถูกต้อง");if(existing.map(Number).indexOf(yearBE)>=0)return;emptyMetadata=existing.length===0;}
+  var result,values=[yearBE];
+  if(initialYears&&emptyMetadata){var initial=initialYears();if(!Array.isArray(initial))throw new Error('ข้อมูลปีเอกสารไม่ถูกต้อง');values=Array.from(new Set(initial.concat([yearBE]).map(Number)));if(values.some(function(year){return !Number.isInteger(year)||year<2400||year>3000;}))throw new Error('ปีเอกสารไม่ถูกต้อง');}
   if (res.getResponseCode() === 404) {
-    result = fsCommit_([{update:{name:fsDocPath_(META_COLLECTION,id),fields:{Years:{arrayValue:{values:[{integerValue:String(yearBE)}]}}}},currentDocument:{exists:false}}]);
+    result = fsCommit_([{update:{name:fsDocPath_(META_COLLECTION,id),fields:{Years:{arrayValue:{values:values.map(function(year){return {integerValue:String(year)};})}}}},currentDocument:{exists:false}}]);
     if (result.ok) return;
     if (!isPreconditionFailure_(result.message) && !/ALREADY_EXISTS/i.test(result.message)) throw new Error(result.message);
   }
-  result = fsCommit_([{transform:{document:fsDocPath_(META_COLLECTION,id),fieldTransforms:[{fieldPath:"Years",appendMissingElements:{values:[{integerValue:String(yearBE)}]}}]},currentDocument:{exists:true}}]);
+  result = fsCommit_([{transform:{document:fsDocPath_(META_COLLECTION,id),fieldTransforms:[{fieldPath:"Years",appendMissingElements:{values:values.map(function(year){return {integerValue:String(year)};})}}]},currentDocument:{exists:true}}]);
   if (!result.ok) throw new Error("บันทึกปีเอกสารไม่สำเร็จ: " + result.message);
 }
 

@@ -16,6 +16,20 @@ for(let i=0;i<10000;i++){
 }
 store.put('Master_Brands/B1',{Brand_Name:'แบรนด์ไทย'});store.put('Master_Categories/C1',{Category_Name:'อะไหล่'});
 store.put('Master_Customers/C1',{Customer_Name:'ผู้ซื้อ',Customer_Type:'ลูกค้าทั่วไป',Branch:'สำนักงานใหญ่'});
+store.put('Master_Vendors/V1',{Vendor_name:'ผู้จำหน่าย',Phone:'fixture-only'});
+store.put('Master_Zones/Z1',{Area:'A',Build:'โกดัง',Floor:'1',Rack_no:'R1',Rack_Level:'1'});
+store.put('Master_Cars/CAR1',{Brand:'รถ',Model:'รุ่น'});
+const day=store.c.businessDate_();
+for(let i=0;i<125;i++){
+ const id=String(i).padStart(4,'0'),date=day; // Document forms save calendar dates, not movement timestamps.
+ store.put('Quotations/Q'+id,{Quote_No:'Q'+id,Quote_Date:date,Customer_ID:'C1',Customer_Name:'ผู้ซื้อ',Items_JSON:'[]',Grand_Total:200,Status:'ร่าง'});
+ store.put('Master_Tax_Invoice/TX'+id,{Invoice_No:'TX'+id,Invoice_Date:date,Buyer_Name:'ผู้ซื้อ',Items_JSON:'[]',Grand_Total:200});
+ store.put('Purchase_Orders/PO'+id,{PO_Number:'PO'+id,Order_Date:date,Vendor_ID:'V1',Status:'Pending',Items_JSON:JSON.stringify([{productCode:'P09999',productName:'อะไหล่ 9999',qty:2,receivedQty:0,costPrice:100}]),Total_Amount:200,Total_Qty:2});
+}
+for(let i=0;i<1200;i++){
+ const id=String(i).padStart(4,'0'),date=new Date(Date.now()-i*1000).toISOString();
+ store.put('Stock_Movements/SI'+id+'-1',{Doc_No:'SI'+id,Bill_No:'SI-'+day.replace(/-/g,'')+'-'+id,Type:'OUT',Reason:'ขายหน้าร้าน',Product_Code:'P00000',Product_Name:'อะไหล่ 0',Qty:1,Unit_Price:200,Cost_Price:100,Timestamp:date,Committed_At:date});
+}
 store.c.getSession_=token=>sessions.get(token)||null;
 const fetch=store.c.UrlFetchApp.fetch;
 store.c.UrlFetchApp.fetch=(url,options={})=>{
@@ -26,9 +40,10 @@ store.c.UrlFetchApp.fetch=(url,options={})=>{
  }
  return result;
 };
-const allowed=new Set(['getAllProducts','getProductCatalogPage','getProductCatalogFacets','getProductById','getProductImageBatch','getAllMasterDropdowns','getQuotationPageData','getQuotationListData','getTaxInvoicePageData','getTaxInvoiceListData','getStockMovementPage','getStockMovementDetail']);
+const allowed=new Set(['getAllProducts','getProductCatalogPage','getProductCatalogFacets','getProductById','getProductImageBatch','getAllMasterDropdowns','getQuotationPageData','getQuotationListData','getTaxInvoicePageData','getTaxInvoiceListData','getStockMovementPage','getStockMovementDetail','getDashboardBootstrap','getDashboardDelta','getPurchaseOrderPageData','getBrands','getCategories','getVendorsFull','getCustomersFull','getZonesFull','getCarsFull']);
 const bridge=`<script>
 window.gatewayCalls=[];window.Swal={fire:()=>Promise.resolve({isConfirmed:false})};
+document.addEventListener('DOMContentLoaded',function(){if(new URL(location.href).searchParams.get('initial')==='history')switchTab('history');});
 window.google={script:{run:{withSuccessHandler:function(ok){var runner={withFailureHandler:function(fail){runner.fail=fail;return runner;},apiGateway:function(token,fn,args,ua,metadata){gatewayCalls.push(fn);fetch('/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,fn,args,ua,metadata})}).then(r=>{if(!r.ok)throw Error('fixture bridge failed');return r.json();}).then(ok).catch(e=>runner.fail(e));}};return runner;}}}};
 </script>`;
 const server=http.createServer(async(req,res)=>{
@@ -44,7 +59,7 @@ const server=http.createServer(async(req,res)=>{
   // The last case delivers an already-known page template after revocation;
   // only the real gateway decides whether its stored data may be reused.
   const file=url.searchParams.get('file'),user=url.searchParams.get('user')||'staff',session=sessions.get(user)||(user==='staff'?{username:'fixture-staff',role:'staff'}:null);
-  if(!session||!['Master_Products.html','StockIssue.html','Quotation.html','Master_Tax_Invoice.html'].includes(file)){res.writeHead(404).end();return;}
+  if(!session||!['index.html','Master_Products.html','StockIssue.html','Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html'].includes(file)){res.writeHead(404).end();return;}
   const html=evaluateTemplate(file,{username:session.username,userName:session.username,userRole:session.role,authToken:user,webAppUrl:'http://127.0.0.1:'+server.address().port+'/',frameChannel:'',resetMode:'',resetToken:''}).replace(/<script\b[^>]*\bsrc=[^>]*><\/script>/g,'').replace('<head>','<head>'+bridge);
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}).end(html);
  }catch(error){errors.push(error.message);res.writeHead(500).end('Local fixture rejected the request');}
@@ -59,9 +74,9 @@ async function main(){
  const context=await browser.newContext({viewport:{width:1365,height:950}});
  await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
  const origin='http://127.0.0.1:'+server.address().port;
- async function pageFor(file,user='staff'){
+ async function pageFor(file,user='staff',initial=''){
   const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
-  await page.goto(origin+'/?file='+file+'&user='+user);return page;
+  await page.goto(origin+'/?file='+file+'&user='+user+'&initial='+initial);return page;
  }
  async function check(name,fn){await fn();cases++;console.log('PASS: '+name);}
  const pages=[];
@@ -112,6 +127,46 @@ async function main(){
   await pos.waitForFunction(()=>document.querySelector('#resultList').textContent.includes('อะไหล่ 9999'));
   assert.equal(await pos.locator('#resultList .res-row').count(),1);
   await pos.evaluate(()=>moveSel(1));assert.equal(await pos.evaluate(()=>selIdx),0);
+ });
+ await check('Dashboard consumes real packed movements and a validated catalog, then reuses its warm snapshot without data reads',async()=>{
+  const before={...reads},dashboard=await pageFor('index.html');pages.push(dashboard);
+  await dashboard.waitForFunction(()=>DASH.loaded&&!DASH.loading);
+  assert.equal(await dashboard.evaluate(()=>DASH.products.length),10000);assert.equal(await dashboard.evaluate(()=>DASH.movements.length),1200);
+  assert.equal(await dashboard.evaluate(()=>DASH.movements.reduce((n,m)=>n+m.qty*m.unitPrice,0)),240000);
+  assert.equal(reads.Master_Products,before.Master_Products);
+  assert.equal(reads.Stock_Movements-(before.Stock_Movements||0),1200);
+  assert.equal(await dashboard.locator('#dashKpiRow .sk').count(),0);
+  const warm={...reads};await dashboard.evaluate(()=>dashLoad());await dashboard.waitForFunction(()=>!DASH.loading);assert.deepEqual(reads,warm);
+ });
+ await check('Quotation and Tax list page through real snapshot cursors without duplicate rows or an automatic return to page one',async()=>{
+  for(const [file,key,boot] of [['Quotation.html','quotations','quotationBootstrapped'],['Master_Tax_Invoice.html','invoicesCache','taxInvoiceBootstrapped']]){
+   const page=await pageFor(file);pages.push(page);await page.waitForFunction(name=>window[name]&&syyUxBusy===0,boot);
+   await page.evaluate(()=>switchTab('list'));
+   assert.equal(await page.evaluate(name=>window[name].length,key),50);
+   const first=await page.evaluate(name=>window[name].map(x=>x.id),key);
+   await page.getByRole('button',{name:'โหลดเพิ่ม',exact:true}).click();await page.waitForFunction(()=>!documentPager.busy());
+   const all=await page.evaluate(name=>window[name].map(x=>x.id),key);assert.equal(all.length,125);assert.equal(new Set(all).size,125);assert.deepEqual(all.slice(0,50),first);
+   await page.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();
+   const body=page.locator(file==='Quotation.html'?'#listBody':'#taxBody'),visible=await body.locator('tr[data-row-key]').evaluateAll(rows=>rows.map(row=>row.dataset.rowKey));
+   assert.equal(visible.length,50);assert(visible.every(id=>!first.includes(id)));
+   const count=requests.length;await page.waitForTimeout(50);assert.equal(requests.length,count);assert.deepEqual(await body.locator('tr[data-row-key]').evaluateAll(rows=>rows.map(row=>row.dataset.rowKey)),visible);
+  }
+ });
+ await check('cold PO history omits product catalog reads and its global pending count includes orders outside the visible page',async()=>{
+  store.c.clearCollectionCache_('Master_Products');const before={...reads},orders=await pageFor('Purchase_Orders.html','staff','history');pages.push(orders);
+  await orders.waitForFunction(()=>purchaseHistoryLoaded&&syyUxBusy===0);
+  assert.equal(await orders.evaluate(()=>purchaseOrders.length),50);assert.equal(await orders.evaluate(()=>purchaseCreateLoaded),false);
+  assert.equal(await orders.locator('#statPendingPO').innerText(),'125');assert.equal(reads.Master_Products,before.Master_Products);
+  const first=await orders.evaluate(()=>purchaseOrders.map(x=>x.poId));await orders.getByRole('button',{name:'โหลดเพิ่ม',exact:true}).click();await orders.waitForFunction(()=>!documentPager.busy());
+  const all=await orders.evaluate(()=>purchaseOrders.map(x=>x.poId));assert.equal(all.length,125);assert.equal(new Set(all).size,125);assert.deepEqual(all.slice(0,50),first);
+  await orders.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();const visible=await orders.locator('#historyTableBody tr[data-row-key]').evaluateAll(rows=>rows.map(row=>row.dataset.rowKey));assert.equal(visible.length,50);assert(visible.every(id=>!first.includes(id)));assert.equal(reads.Master_Products,before.Master_Products);
+ });
+ await check('six master pages render actual gateway rows and repeated reads reuse the snapshot',async()=>{
+  for(const file of ['Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html']){
+   const page=await pageFor(file);pages.push(page);await page.waitForFunction(()=>cache.length===1&&syyUxBusy===0);
+   assert.equal(await page.locator('#tbodyMain tr[data-row-key]').count(),1,file);
+   const count=requests.length;await page.evaluate(()=>loadTable());await page.waitForFunction(()=>syyUxBusy===0);assert.equal(requests.length,count,file);
+  }
  });
  await check('revoked session cannot open a new page from persisted cache',async()=>{
   sessions.delete('staff');const page=await pageFor('StockIssue.html');pages.push(page);

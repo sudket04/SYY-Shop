@@ -7,6 +7,33 @@ function fresh(){const s=setup();s.c.readTime=new Date().toISOString();s.reads={
 function products(s,n=769){for(let i=0;i<n;i++)s.put('Master_Products/P'+i,{Product_Name:'Part '+i,Current_Stock:10,Min_Stock:2,Cost_Price:100,Selling_Price:200,Extra:'keep'});}
 const issue={requestId:'read-test-stock-0001',reason:'ขายหน้าร้าน',items:[{productCode:'P1',qty:2}]};
 const queries=s=>s.calls.filter(x=>x.url.endsWith(':runQuery')).map(x=>JSON.parse(x.options.payload));
+
+test('missing quotation-year metadata is discovered read-only by distinct years, cached and never materializes the full documents',()=>{
+ const s=fresh();for(let i=0;i<1250;i++)s.put('Quotations/Q'+i,{Quote_Date:(i<1000?'2026':'2024')+'-06-01',Items_JSON:'sensitive rows that are not needed'});
+ const before=plain([...s.docs]);assert.deepEqual(plain(s.c.getQuotationAvailableYears_()),[2569,2567]);assert.deepEqual(plain([...s.docs]),before);assert.equal(s.commits.length,0);
+ assert.equal(s.reads.Quotations,2);assert(queries(s).every(q=>q.structuredQuery.limit===1&&q.structuredQuery.select.fields[0].fieldPath==='Quote_Date'));assert(!s.calls.some(x=>x.url.includes('/Quotations?')));
+ const count=s.calls.length;s.c.getQuotationAvailableYears_();assert.equal(s.calls.length,count);
+ const requests=queries(s);assert(requests.slice(1).every(q=>q.readTime===s.c.readTime));
+});
+test('quotation-year discovery keeps the prior invalid-date behavior and does not cache partial query failures',()=>{
+ const s=fresh();s.put('Quotations/Invalid',{Quote_Date:'zz-invalid'});s.put('Quotations/Valid',{Quote_Date:'2024-06-01'});s.put('Quotations/Missing',{Items_JSON:'[]'});const before=plain([...s.docs]);
+ assert.deepEqual(plain(s.c.getQuotationAvailableYears_()),[2567]);assert.deepEqual(plain([...s.docs]),before);assert.equal(s.commits.length,0);assert(queries(s).every(q=>q.structuredQuery.select));
+ const t=fresh();t.put('Quotations/Now',{Quote_Date:'2026-06-01'});t.put('Quotations/Older',{Quote_Date:'2024-06-01'});let n=0;t.c.failRequest=url=>url.endsWith(':runQuery')&&++n===2?503:0;
+ assert.throws(()=>t.c.getQuotationAvailableYears_(),/ปีใบเสนอราคา/);t.c.failRequest=null;assert.deepEqual(plain(t.c.getQuotationAvailableYears_()),[2569,2567]);assert.equal(t.commits.length,0);
+});
+test('only an explicit quotation-year update seeds missing metadata and its CAS race preserves every old and concurrent year',()=>{
+ for(const race of [false,true]){const s=fresh();s.put('Quotations/Old',{Quote_Date:'2024-06-01'});s.put('Quotations/New',{Quote_Date:'2026-06-01'});
+  if(race)s.c.beforeCommit=()=>s.put('Meta_Counters/quotation_years',{Years:[2571]});
+  s.c.updateQuotationYearsMeta_(2570);assert.deepEqual(s.value('Meta_Counters/quotation_years','Years').map(Number).sort(),(race?[2567,2569,2570,2571]:[2567,2569,2570]));assert.equal(s.commits.length,1);
+  const count=s.calls.length;s.c.updateQuotationYearsMeta_(2570);assert.equal(s.commits.length,1);assert(!s.calls.slice(count).some(x=>x.url.endsWith(':runQuery')));
+ }
+});
+test('Viewer list remains read-only with absent or empty year metadata; explicit repair preserves unrelated metadata fields',()=>{
+ for(const empty of [false,true]){const s=fresh();s.put('Quotations/Old',{Quote_Date:'2024-06-01'});s.put('Quotations/New',{Quote_Date:'2026-06-01'});if(empty)s.put('Meta_Counters/quotation_years',{Years:[],Preserve:'keep'});s.c.getSession_=()=>({username:'viewer',role:'viewer'});const before=plain([...s.docs]);
+  const list=s.c.apiGateway('fixture','getQuotationListData',['all'],'fixture');assert.deepEqual(plain(list.availableYears),[2569,2567]);assert.equal(list.quotations.length,2);assert.deepEqual(plain([...s.docs]),before);assert.equal(s.commits.length,0);
+  s.c.updateQuotationYearsMeta_(2570);assert.deepEqual(s.value('Meta_Counters/quotation_years','Years').map(Number).sort(),[2567,2569,2570]);if(empty)assert.equal(s.value('Meta_Counters/quotation_years','Preserve'),'keep');assert.equal(s.commits.length,1);
+ }
+});
 test('document lists defer all editor collections, editor-only loading does not query documents or years',()=>{
  const s=fresh();products(s,2);s.put('Master_Customers/C1',{Customer_Name:'Buyer'});s.put('Meta_Counters/tax_invoice_years',{Years:[2569]});s.put('Meta_Counters/quotation_years',{Years:[2569]});
  for(const [fn,col] of [['getTaxInvoicePageData_','Master_Tax_Invoice'],['getQuotationPageData_','Quotations']]){s.calls.length=0;const list=s.c[fn](2569,{deferSections:true});assert.equal(list.products,undefined);assert.equal(list.customers,undefined);assert(s.calls.every(c=>!/(Master_Products|Master_Customers)(?:\?|\/|\")/.test(c.url+' '+(c.options.payload||''))));

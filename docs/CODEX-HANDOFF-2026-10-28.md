@@ -6,6 +6,8 @@
 
 อัปเดตรอบต่อ: ผู้ใช้ยืนยัน **ไม่มี Staging; อ่านระบบเดิมได้ แต่ห้ามเขียน/แก้/ลบ DB จริง** ตรวจพบ Backup Version100 วันที่28 เวลา22:02:30 timeout 360.807s และ Incremental folder ว่าง เพิ่ม verifier/discovery ที่พักงานได้ และแก้ POS ข้าม initial render เมื่อ server ยืนยัน catalog จาก IndexedDB; ดู [หลักฐานล่าสุดและงานค้าง](READONLY-AUDIT-BACKUP-2026-10-28.md) ชุดนี้ยังไม่ Sync/Deploy และต้องรอ session ที่ Login ไว้แล้วเพื่อวัดเมนูจริง
 
+อัปเดต29ต.ค.: ผู้ใช้ยังไม่พร้อม Login ให้ตรวจ Source/Executions ต่อ พบ getter ปี Quotation เขียน metadata และสแกนทั้ง collection เมื่อ metadata หาย แก้เป็น read-only distinct-year discovery และ seed เฉพาะ save path แล้ว; ดู [รายงาน Source/Executions ล่าสุด](SOURCE-EXECUTIONS-AUDIT-2026-10-29.md) รวมผล275 unit tests และ140 browser groups, ประวัติ Backup11 executions และข้อจำกัดการนับ Reads ยังไม่ Sync/Deploy หรือเขียน DB จริง
+
 ## 1. คำสั่งสำหรับ Codex ที่รับช่วง
 
 ```text
