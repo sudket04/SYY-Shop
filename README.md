@@ -44,6 +44,8 @@ Browser tests ใช้ HTTP server, RPC fixtures และ block external HTTPS
 
 ## รายงานและงานค้าง
 
+- [ส่งต่องาน 28 ต.ค.: เป้าโหลด ≤10 วินาที, ถอดรูปตาราง, cache/bootstrap และแก้/ยกเลิกบิลตัดสต๊อก](docs/CODEX-HANDOFF-2026-10-28.md) — เป็นแผนรับช่วง งาน runtime ชุดนี้ยังไม่ได้ลงโค้ดหรือ Deploy
+
 - [Production รุ่น 100: เลขบิลรายวันและรายละเอียดบิลขาย; ตรวจ Source 24/24](docs/DEPLOYMENT-2026-10-20-V100.md)
 
 - [Production รุ่น 99: Deploy ddf38ad พร้อม menu recovery ตรวจ Source 24 ไฟล์และข้อมูล/Pagination จริง](docs/DEPLOYMENT-2026-10-19-V99.md)
