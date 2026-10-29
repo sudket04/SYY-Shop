@@ -1,5 +1,7 @@
 # ส่งต่องานเพิ่มเติม: บิล ประวัติ Dashboard และหน้าแก้ไขสินค้า — 29 ตุลาคม 2569
 
+**อัปเดต30ต.ค.:** ผู้ใช้อนุมัติแก้การเปิดหน้า/ประสิทธิภาพและห้ามกระทบ DB จริง มีแพตช์ Source เพิ่ม early bootstrap/ready ACK, transient auth/lock errors, foreground read queue และ deferred tools ตาม [รายงาน implementation](LOADING-RESILIENCE-IMPLEMENTATION-2026-10-30.md) ชุดใหม่มี25runtime filesและ **ยังไม่ Sync/Deploy**; Version103ด้านล่างเป็นProductionก่อนแพตช์นี้ ไม่ใช่หลักฐานว่าชุดใหม่ขึ้นแล้ว ห้ามใช้การอนุมัติDeploy103ซ้ำหรือเขียนDBเพื่อทดสอบ
+
 ## 1. สถานะคำสั่งและขอบเขตการอนุมัติ
 
 **สถานะล่าสุด: ผู้ใช้อนุมัติตรวจบัคและ Deploy แล้ว เผยแพร่ Version103 สำเร็จ29ต.ค.2026 เวลา21:09 Asia/Bangkok จาก runtime `c3dc7521ac0bd74cf7e2b052382e6a006c1243c3` รวมงานบิล รูปสินค้า100รายการ/skeleton และแพตช์ audit ไม่มีการเปลี่ยนข้อมูลย้อนหลัง**

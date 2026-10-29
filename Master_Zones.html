@@ -2,12 +2,13 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
+<meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
+<?!= include_('UiBootstrap'); ?>
 <meta name="syy-owner" content="<?= username ?>">
 <meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <?!= include_('Styles'); ?>
 </head>
 <body data-syy-layout="compact">

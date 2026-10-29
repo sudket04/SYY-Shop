@@ -2,10 +2,11 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
+<meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
+<?!= include_('UiBootstrap'); ?>
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     .sk{display:block;width:75%;height:10px;border-radius:4px;background:linear-gradient(90deg,#eef1f5 25%,#f6f8fa 50%,#eef1f5 75%);background-size:200% 100%;animation:skm 1.2s linear infinite}@keyframes skm{from{background-position:200% 0}to{background-position:-200% 0}}@media(prefers-reduced-motion:reduce){.sk{animation:none}}
     :root { 
@@ -724,9 +725,14 @@ syyOnReady(function(){ loadTable(); });
 // ★ เรียกทุกฟังก์ชันผ่าน apiGateway เพราะต้องเช็ค role admin ที่ backend
 function manageErrorMessage(err){var message=err&&err.message||'';return message&&message.length<=250?message:'การเชื่อมต่อขัดข้อง กรุณาลองใหม่';}
 function callGatewayApi(fnName, args, onSuccess, onFailure) {
+  function failed(error){if(typeof SYYFrameBridge!=='undefined')SYYFrameBridge.dataError(error&&error.code||'READ_FAILED');if(onFailure)onFailure(error);else alert('เกิดข้อผิดพลาด: '+manageErrorMessage(error));}
   google.script.run
-    .withSuccessHandler(onSuccess)
-    .withFailureHandler(onFailure || function(err) { alert('เกิดข้อผิดพลาด: ' + manageErrorMessage(err)); })
+    .withSuccessHandler(function(result){
+      if(result&&result.__authError&&typeof SYYFrameBridge!=='undefined')SYYFrameBridge.post({action:'SESSION_EXPIRED'});
+      if(result&&result.success===false&&(/^(get|fetch)/.test(fnName)||result.__authError||result.code==='AUTH_UNAVAILABLE')){failed(result);return;}
+      onSuccess(result);if(!(result&&result.success===false)&&typeof SYYFrameBridge!=='undefined')SYYFrameBridge.dataReady();
+    })
+    .withFailureHandler(failed)
     .apiGateway(AUTH_TOKEN_MU, fnName, args || [], navigator.userAgent);
 }
 

@@ -22,6 +22,8 @@ function doGet(e) {
   var rtoken = (e && e.parameter && e.parameter.rtoken) ? e.parameter.rtoken : '';
   var frameChannel = (e && e.parameter && e.parameter.channel) || '';
   frameChannel = /^[A-Za-z0-9-]{16,80}$/.test(String(frameChannel)) ? String(frameChannel) : '';
+  var frameParentOrigin = (e && e.parameter && e.parameter.parentOrigin) || '';
+  frameParentOrigin = frameChannel && /^https:\/\/(?:script\.google\.com|script\.googleusercontent\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(String(frameParentOrigin)) ? String(frameParentOrigin) : '';
 
   // ★ NEW: ดึง User-Agent จาก request headers เพื่อผูก session กับเบราว์เซอร์ที่ login ไว้
   //   e.parameter ไม่มี user-agent ตรงๆ — Apps Script HtmlService ไม่ส่ง header มาให้ doGet โดยตรง
@@ -46,8 +48,11 @@ function doGet(e) {
     'stockissue' : 'StockIssue'
   };
 
-  var session = getSession_(token, userAgent);
-  var embeddedSessionExpired = page !== 'login' && !session && !!frameChannel;
+  var session = null, connectionUnavailable = false;
+  try { session = page === 'login' ? null : getSession_(token, userAgent, true); }
+  catch (error) { if(error.code !== 'AUTH_UNAVAILABLE')throw error; connectionUnavailable = true; }
+  var requestedPage = Object.prototype.hasOwnProperty.call(files,page) ? page : 'home';
+  var embeddedSessionExpired = page !== 'login' && !session && !connectionUnavailable && !!frameChannel;
 
   // ★ FIX: เดิมเช็ค session เฉพาะ page==='home' เท่านั้น — เปิด URL ตรงๆ เช่น ?page=manageusers
   //   โดยไม่มี token เลยก็ยังได้ template หน้านั้นเต็มๆ กลับมา (ช่องโหว่จริง ดูรายละเอียดที่ callApi()
@@ -60,6 +65,9 @@ function doGet(e) {
     var loginTemplate = HtmlService.createTemplateFromFile(files['login']);
     loginTemplate.webAppUrl = getWebAppUrl_();
     loginTemplate.frameChannel = frameChannel;
+    loginTemplate.frameParentOrigin = frameParentOrigin;
+    loginTemplate.connectionUnavailable = connectionUnavailable;
+    loginTemplate.connectionRetryUrl = getWebAppUrl_() + '?page=' + encodeURIComponent(requestedPage) + '&token=' + encodeURIComponent(token);
     loginTemplate.embeddedSessionExpired = embeddedSessionExpired;
     loginTemplate.resetMode = mode;
     loginTemplate.resetToken = rtoken;
@@ -73,6 +81,7 @@ function doGet(e) {
   template.webAppUrl = getWebAppUrl_();
   template.authToken = token;
   template.frameChannel = frameChannel;
+  template.frameParentOrigin = frameParentOrigin;
   template.userRole  = session.role;
   template.userName  = session.fullName || session.username;
   template.username  = session.username;
@@ -1527,7 +1536,7 @@ function readExistingDocument_(collection, docId) {
   var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
     + "/databases/(default)/documents/" + collection + "/" + encodeURIComponent(docId);
   var res = UrlFetchApp.fetch(url, { method:"get", headers:getAuthHeader_(), muteHttpExceptions:true });
-  if (res.getResponseCode() !== 200) throw new Error("อ่านข้อมูลเดิมไม่สำเร็จ กรุณารีเฟรชก่อนแก้ไขอีกครั้ง");
+  if (res.getResponseCode() !== 200) { var error = new Error("อ่านข้อมูลเดิมไม่สำเร็จ กรุณารีเฟรชก่อนแก้ไขอีกครั้ง"); error.httpStatus = res.getResponseCode(); throw error; }
   var doc = JSON.parse(res.getContentText());
   if (!doc.updateTime) throw new Error("ตรวจสอบเวอร์ชันข้อมูลเดิมไม่สำเร็จ กรุณาลองใหม่");
   return doc;
@@ -3729,13 +3738,15 @@ function revokeUserSessions_(username) {
     throw new Error("เพิกถอนเซสชันไม่สำเร็จ กรุณาลองใหม่");
 }
 
-function getSession_(token, userAgent) {
+function getSession_(token, userAgent, strict) {
   if (!token) return null;
   if (validatedGatewaySession_ && validatedGatewaySession_.token === token) return validatedGatewaySession_.session;
   try {
     var raw = CacheService.getScriptCache().get("sess_" + token);
     if (!raw) return null;
-    var session = JSON.parse(raw);
+    var session;
+    try { session = JSON.parse(raw); } catch(invalid) { return null; }
+    if(!session || typeof session.username !== 'string' || typeof session.role !== 'string')return null;
     if (!session.docId) {
       var legacy = findUserByUsername_(session.username);
       if (!legacy) return null;
@@ -3748,7 +3759,11 @@ function getSession_(token, userAgent) {
         String(user.Session_Version || "") !== String(session.sessionVersion || "")) return null;
     session.fullName = user.Full_Name;
     return session;
-  } catch (e) { return null; }
+  } catch (e) {
+    if(e.httpStatus === 404)return null;
+    if(strict){var unavailable=new Error('ยังตรวจสอบบัญชีไม่ได้ชั่วคราว กรุณาลองอีกครั้ง');unavailable.code='AUTH_UNAVAILABLE';unavailable.retryAfterMs=2000;throw unavailable;}
+    return null;
+  }
 }
 
 function destroySession_(token) {
@@ -4197,7 +4212,7 @@ function clientConditionalCursorAllowed_(name,args){
 }
 function apiGateway(token, fnName, args, userAgent, clientCache) {
   try {
-    var timingStarted=Date.now(),session = getSession_(token, userAgent),authMs=Date.now()-timingStarted;
+    var timingStarted=Date.now(),session = getSession_(token, userAgent, true),authMs=Date.now()-timingStarted;
     if (!session) {
       return { __authError: true, success: false, message: "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่" };
     }
@@ -4215,7 +4230,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
       return { success: false, message: "สิทธิ์ของคุณไม่เพียงพอสำหรับการทำรายการนี้" };
     }
 
-    if (!allowReadRequest_(fnName,session.username)) return {success:false,readLimited:true,retryAfterMs:10000,message:'เรียกข้อมูลถี่เกินไป กรุณารอสักครู่แล้วลองใหม่'};
+    if (!allowReadRequest_(fnName,session.username)) return readRequestFailure_();
 
     if (args != null && !Array.isArray(args)) {
       return { success: false, message: "รูปแบบข้อมูลคำขอไม่ถูกต้อง" };
@@ -4251,7 +4266,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     var authoritative=!!(cacheScopes&&clientCache.refresh===true),manual=!!(cacheScopes&&clientCache.manual===true&&!authoritative);
     if(authoritative){
       if(a.some(function(x){return x&&typeof x==='object'&&x.cursor;}))return {success:false,message:'กรุณาเริ่มรีเฟรชจากหน้าแรก เพื่อไม่เปลี่ยน snapshot ระหว่างแบ่งหน้า'};
-      if(!allowReadRequest_('authoritativeRefresh',session.username))return {success:false,readLimited:true,retryAfterMs:60000,message:'รีเฟรชจากฐานข้อมูลได้ไม่เกิน 3 ครั้งต่อนาที กรุณารอแล้วลองใหม่ ข้อมูลเดิมยังอยู่'};
+      if(!allowReadRequest_('authoritativeRefresh',session.username))return readRequestFailure_();
       if(cacheScopes.map(function(scope){return clearCollectionCache_(scope);}).some(function(ok){return !ok;}))return {success:false,message:'ยังรีเฟรช Cache จากฐานข้อมูลไม่ได้ กรุณาลองใหม่ ข้อมูลเดิมยังอยู่'};
     }
     executionReadContext_={collections:Object.create(null),catalog:null,refreshScopes:authoritative?cacheScopes:[]};
@@ -4276,20 +4291,31 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     return result;
 
   } catch (e) {
-    console.error("apiGateway error [" + fnName + "]:", e);
-    return { success: false, message: friendlyErrorMessage_(e), restartPage:e.restartPage===true };
+    // Logs contain only an allowlisted operation and technical timing/code.
+    console.error('apiGateway failed',JSON.stringify({operation:Object.prototype.hasOwnProperty.call(API_REGISTRY,fnName)?fnName:'invalid',code:e.code||'REQUEST_FAILED',authMs:Number.isFinite(authMs)?authMs:Date.now()-timingStarted,serverMs:Date.now()-timingStarted}));
+    return readFailureResponse_(e);
   } finally { validatedGatewaySession_ = null; executionReadContext_ = null; }
 }
 
 // Server-side cost protection for authenticated read routes. It adds no DB writes
 // and never rate-limits stock commits, permissions checks, or document saves.
+var lastReadRequestFailure_ = null;
+function readFailureResponse_(error){
+ var code=error&&error.code==='AUTH_UNAVAILABLE'?'AUTH_UNAVAILABLE':'REQUEST_FAILED';
+ return {success:false,code:code,retryable:code==='AUTH_UNAVAILABLE',retryAfterMs:code==='AUTH_UNAVAILABLE'?2000:0,message:code==='AUTH_UNAVAILABLE'?error.message:friendlyErrorMessage_(error),restartPage:!!(error&&error.restartPage===true)};
+}
+function readRequestFailure_(){return Object.assign({},lastReadRequestFailure_||{success:false,code:'READ_BUSY',retryable:true,retryAfterMs:1000,message:'ระบบกำลังให้บริการคำขออื่น กรุณาลองอีกครั้ง'});}
 function allowReadRequest_(name,username){
+ lastReadRequestFailure_=null;
  var limits={authoritativeRefresh:3,getProductById:120,getProductCatalogPage:120,getProductCatalogFacets:120,getProductImageBatch:120,getDashboardBootstrap:30,getDashboardDelta:120,getStockMovementPage:120,getStockMovements:60,getStockMovementDetail:120,getStockIssueCorrectionHistory:60,getStockIssueCorrectionPreview:30,getPurchaseOrderPageData:120,getAllProducts:60};
  if(!limits[name])return true;
- var key='read_rate_'+readCacheKey_(name+':'+username),lock=LockService.getScriptLock();if(!lock.tryLock(250))return false;
+ var key='read_rate_'+readCacheKey_(name+':'+username),lock=LockService.getScriptLock();
+ lastReadRequestFailure_={success:false,code:'READ_BUSY',retryable:true,retryAfterMs:1000,message:'ระบบกำลังให้บริการคำขออื่น กรุณาลองอีกครั้ง'};
+ if(!lock.tryLock(250))return false;
  try{var props=PropertiesService.getScriptProperties(),raw=props.getProperty(key),state=raw?JSON.parse(raw):null,now=Date.now();
   if(!state||now-state.start>=60000||now<state.start)state={start:now,count:0};
-  if(state.count>=limits[name])return false;state.count++;props.setProperty(key,JSON.stringify(state));return true;
+  if(state.count>=limits[name]){lastReadRequestFailure_={success:false,code:'READ_LIMITED',readLimited:true,retryable:true,retryAfterMs:Math.max(1000,60000-(now-state.start)),message:name==='authoritativeRefresh'?'รีเฟรชจากฐานข้อมูลได้ไม่เกิน 3 ครั้งต่อนาที กรุณารอแล้วลองใหม่ ข้อมูลเดิมยังอยู่':'เรียกข้อมูลถี่เกินไป กรุณารอสักครู่แล้วลองใหม่'};return false;}
+  state.count++;props.setProperty(key,JSON.stringify(state));lastReadRequestFailure_=null;return true;
  }catch(e){return false;}finally{lock.releaseLock();}
 }
 

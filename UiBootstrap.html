@@ -1,0 +1,61 @@
+<script>
+/* Runs before remote assets. No RPC, credentials or business rows are used here. */
+function syyOnReady(callback){
+  var queued=false;
+  function ready(){if(queued)return;queued=true;document.removeEventListener('DOMContentLoaded',ready);window.removeEventListener('load',ready);setTimeout(callback,0);}
+  if(document.readyState!=='loading')ready();else{document.addEventListener('DOMContentLoaded',ready);window.addEventListener('load',ready);}
+}
+var SYYFrameBridge=(function(){
+  var receiver=null,receiverOrigin='',acknowledged=false,timers=[],started=Date.now(),lastData=null,dataDone=false;
+  function meta(name){var node=document.querySelector('meta[name="'+name+'"]');return node?node.content:'';}
+  var channel=meta('syy-frame-channel'),hint=meta('syy-parent-origin');
+  function allowed(origin){
+    if(origin===location.origin&&origin!=='null')return true;
+    return /^https:\/\/(?:script\.google\.com|script\.googleusercontent\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(origin||'');
+  }
+  function ancestor(source){var p=window;for(var i=0;i<8;i++){try{if(p.parent===p)break;p=p.parent;if(p===source)return true;}catch(e){break;}}return false;}
+  function post(data){
+    if(!channel||window.parent===window)return;
+    var payload=Object.assign({},data,{channel:channel});
+    if(receiver){try{receiver.postMessage(payload,receiverOrigin);}catch(e){}return;}
+    var p=window;
+    for(var i=0;i<8;i++){
+      try{if(p.parent===p)break;p=p.parent;}catch(e){break;}
+      var origin='';try{origin=p.location.origin;}catch(e){}
+      if(!origin&&location.ancestorOrigins)origin=location.ancestorOrigins[i]||'';
+      if(!origin&&i===0)try{origin=new URL(document.referrer).origin;}catch(e){}
+      // The server validates this exact origin hint. It covers browsers without
+      // ancestorOrigins; channel + actual descendant window still gate the ACK.
+      if(!origin&&allowed(hint))origin=hint;
+      if(allowed(origin))try{p.postMessage(payload,origin);}catch(e){}
+    }
+  }
+  function announce(){
+    var state=meta('syy-session-state'),action=state==='expired'?'SESSION_EXPIRED':state==='unavailable'?'PAGE_UNAVAILABLE':'PAGE_READY';
+    post({action:action});
+  }
+  window.addEventListener('message',function(event){
+    var d=event.data;
+    if(!d||d.action!=='PAGE_ACK'||d.channel!==channel||!channel||!allowed(event.origin)||!ancestor(event.source))return;
+    if(receiver&&(receiver!==event.source||receiverOrigin!==event.origin))return;
+    receiver=event.source;receiverOrigin=event.origin;acknowledged=true;timers.forEach(clearTimeout);timers=[];
+    if(lastData)post(lastData);
+  });
+  syyOnReady(function(){
+    announce();
+    if(channel&&window.parent!==window)[500,1500,4000].forEach(function(ms){timers.push(setTimeout(function(){if(!acknowledged)announce();},ms));});
+  });
+  function data(ok,code){
+    if(dataDone)return;if(ok)dataDone=true;
+    lastData={action:ok?'PAGE_DATA_READY':'PAGE_DATA_ERROR',elapsedMs:Math.min(3600000,Math.max(0,Date.now()-started)),code:ok?'':/^[A-Z_]{1,40}$/.test(code||'')?code:'READ_FAILED'};
+    post(lastData);
+  }
+  return {post:post,allowed:allowed,ancestor:ancestor,dataReady:function(){data(true);},dataError:function(code){data(false,code);}};
+})();
+// Remote fonts improve appearance only; they cannot block parser or app scripts.
+syyOnReady(function(){
+  if(document.querySelector('link[data-syy-fonts]'))return;
+  var link=document.createElement('link');link.rel='stylesheet';link.dataset.syyFonts='true';
+  link.href='https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap';document.head.appendChild(link);
+});
+</script>

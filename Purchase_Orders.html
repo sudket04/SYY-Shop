@@ -2,12 +2,12 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
+<meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
+<?!= include_('UiBootstrap'); ?>
 <meta name="syy-owner" content="<?= username ?>">
 <meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <?!= include_('Styles'); ?>
   <style>
   /* ─── เฉพาะหน้านี้: แท็บ, การ์ดผู้จัดจำหน่าย, สถานะใบสั่งซื้อ, รับสินค้า (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
@@ -1153,7 +1153,12 @@
     return rows;
   }
 
-  function exportOrderToExcel(order) {
+  var poExcelBusy=false;
+  async function exportOrderToExcel(order) {
+    if(poExcelBusy)return;poExcelBusy=true;
+    order=JSON.parse(JSON.stringify(order));
+    try{
+    await syyLoadLibrary('xlsx');
     var aoa = buildOrderSheetAOA(order);
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [{wch:8},{wch:14},{wch:30},{wch:14},{wch:14},{wch:14}];
@@ -1161,6 +1166,7 @@
     XLSX.utils.book_append_sheet(wb, ws, "PO");
     var filename = 'PO_' + (order.poId || 'draft') + '_' + businessDate() + '.xlsx';
     XLSX.writeFile(wb, filename);
+    }catch(error){swyError('สร้าง Excel ไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{poExcelBusy=false;}
   }
 </script>
 <script>

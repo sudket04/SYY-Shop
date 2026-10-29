@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'undefined' ? '' : frameChannel ?>">
-  <meta name="syy-session-state" content="<?= typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired ? 'expired' : '' ?>">
+<meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
+<?!= include_('UiBootstrap'); ?>
+  <meta name="syy-session-state" content="<?= typeof connectionUnavailable !== 'undefined' && connectionUnavailable ? 'unavailable' : typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired ? 'expired' : '' ?>">
   <base target="_top">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -112,7 +112,11 @@
 </head>
 <body>
 
-  <div class="login-box" data-session-expired="<?= typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired ? 'true' : 'false' ?>">
+  <div class="login-box" data-session-expired="<?= typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired ? 'true' : 'false' ?>" data-connection-unavailable="<?= typeof connectionUnavailable !== 'undefined' && connectionUnavailable ? 'true' : 'false' ?>">
+    <? if (typeof connectionUnavailable !== 'undefined' && connectionUnavailable) { ?>
+    <style>.login-box[data-connection-unavailable="true"] .view,.login-box[data-connection-unavailable="true"] .login-logo{display:none!important}</style>
+    <div role="alert"><h2>ยังตรวจสอบการเชื่อมต่อไม่ได้</h2><p>ระบบตรวจบัญชีไม่พร้อมชั่วคราว กรุณาลองเปิดหน้าอีกครั้ง ข้อมูลยังไม่ถูกเปลี่ยนแปลง</p><a class="btn-login" target="_top" href="<?= connectionRetryUrl ?>">ลองเปิดหน้าอีกครั้ง</a></div>
+    <? } ?>
     <? if (typeof embeddedSessionExpired !== 'undefined' && embeddedSessionExpired) { ?>
     <style>.login-box[data-session-expired="true"] .view{display:none!important}</style>
     <div role="alert"><h2>เซสชันหมดอายุ</h2><p>กรุณาเปิดหน้าเข้าสู่ระบบใหม่ แล้วเข้าสู่ระบบด้วยบัญชีเดิม</p><a class="btn-login" target="_top" href="<?= webAppUrl ?>?page=login">เข้าสู่ระบบใหม่</a></div>

@@ -2,7 +2,7 @@
 /* ═══════════════════════════════════════════════════════════
    SYY Shop Control — Shared.html  (ฟังก์ชันกลางของทุกหน้า)
    ใช้: <?!= include_('Shared'); ?>  ก่อน </body>
-   ต้องมี SweetAlert2 โหลดไว้แล้วใน <head>
+   UiBootstrap initializes before optional remote libraries.
   <meta charset="UTF-8">
    ═══════════════════════════════════════════════════════════ */
 
@@ -25,10 +25,12 @@ function syyValidMessageData(d){
   if(d.action==='CACHE_INVALIDATED')return Array.isArray(d.scopes)&&d.scopes.length<=12&&d.scopes.every(function(scope){return syyCacheScopes.indexOf(scope)>=0;});
   if(d.action==='SESSION_EXPIRED'||d.action==='CLEAR_LOCAL_STATE')return true;
   if(d.action==='OPEN_PRODUCT_ADD')return typeof d.barcode==='string' && d.barcode.length<=200;
-  return ['REFRESH_DROPDOWNS','REFRESH_PRODUCTS','REFRESH_STOCK_FULL','STOCKISSUE_READY','PRODUCTS_READY','TAXINVOICE_READY','PAGE_ACTIVATED','PAGE_HIDDEN','PAGE_READY'].indexOf(d.action)>=0;
+  if(['PAGE_DATA_READY','PAGE_DATA_ERROR'].indexOf(d.action)>=0)return Number.isFinite(d.elapsedMs)&&d.elapsedMs>=0&&d.elapsedMs<=3600000&&typeof d.code==='string'&&/^[A-Z_]{0,40}$/.test(d.code);
+  return ['REFRESH_DROPDOWNS','REFRESH_PRODUCTS','REFRESH_STOCK_FULL','STOCKISSUE_READY','PRODUCTS_READY','TAXINVOICE_READY','PAGE_ACTIVATED','PAGE_HIDDEN','PAGE_READY','PAGE_ACK','PAGE_UNAVAILABLE'].indexOf(d.action)>=0;
 }
 function syyTrustedParentMessage(e){return syyFrameChannel() && e.data && e.data.channel===syyFrameChannel() && syyMessageOriginAllowed(e.origin) && syyIsAncestor(e.source) && syyValidMessageData(e.data);}
 function syyPostParent(data){
+  if(typeof SYYFrameBridge!=='undefined'){SYYFrameBridge.post(data);return;}
   var channel=syyFrameChannel();if(!channel||window.parent===window)return;
   data=Object.assign({},data,{channel:channel});
   var p=window;
@@ -61,7 +63,7 @@ function syyTrustedChildMessage(e){
   if(!frame)return false;
   var page=frame.id.replace('iframe-',''),allowed={stockissue:['STOCKISSUE_READY','OPEN_PRODUCT_ADD','OPEN_TAX_INVOICE','STOCK_DELTA','REFRESH_STOCK_FULL'],products:['PRODUCTS_READY','PRODUCT_DELTA','REFRESH_PRODUCTS'],orders:['STOCK_DELTA','REFRESH_STOCK_FULL'],quotation:['OPEN_STOCK_ISSUE','MASTER_DELTA'],taxinvoice:['TAXINVOICE_READY','MASTER_DELTA']};
   var actions=allowed[page]||['MASTER_DELTA','REFRESH_DROPDOWNS'];
-  if(e.data.action!=='PAGE_READY'&&e.data.action!=='SESSION_EXPIRED'&&e.data.action!=='CACHE_INVALIDATED'&&actions.indexOf(e.data.action)<0)return false;
+  if(['PAGE_READY','PAGE_DATA_READY','PAGE_DATA_ERROR','PAGE_UNAVAILABLE','SESSION_EXPIRED','CACHE_INVALIDATED'].indexOf(e.data.action)<0&&actions.indexOf(e.data.action)<0)return false;
   if(e.data.action==='MASTER_DELTA' && e.data.kind!==page && !(['quotation','taxinvoice'].indexOf(page)>=0 && e.data.kind==='customers'))return false;
   frame.syyReceiver=e.source;frame.syyOrigin=e.origin;
   return true;
@@ -433,23 +435,51 @@ function notifyParentRefreshStockFull(){
    ให้สอดคล้องกับนโยบาย Static/Persistent Modal เดียวกับ .modal-overlay (ดู openModal/closeModal
    ด้านบน) — กันคลิกพลาด/กด Esc หลุดโดยไม่ตั้งใจ โดยเฉพาะ swyConfirm ที่เป็นกล่องยืนยันการกระทำสำคัญ
    (เช่น ลบข้อมูล/ยืนยันตัดสต๊อก) */
+var syyDialogQueue=Promise.resolve(),syyDialogSequence=0,syyDismissFallbackDialog=null;
+function syyDialog(options){
+  if(typeof Swal!=='undefined'&&typeof Swal.fire==='function'&&!document.querySelector('.syy-dialog-fallback'))return Swal.fire(options);
+  // The current dialog works locally immediately; a CDN outage cannot approve
+  // an action or prevent errors/confirmations from being displayed.
+  syyLoadLibrary('dialogs').catch(function(){});
+  var result=syyDialogQueue.then(function(){return new Promise(function(resolve){
+    if(window.syyExpiryStarted){resolve({isConfirmed:false,isDismissed:true});return;}
+    var previous=document.activeElement,overlay=document.createElement('div');overlay.className='syy-dialog-fallback swal2-container';
+    overlay.setAttribute('role','alertdialog');overlay.setAttribute('aria-modal','true');
+    var titleId='syy-dialog-title-'+(++syyDialogSequence);overlay.setAttribute('aria-labelledby',titleId);
+    var panel=document.createElement('div');panel.className='swy-popup';
+    var title=document.createElement('h2');title.id=titleId;title.className='swy-title';title.textContent=options.title||'';
+    var content=document.createElement('div');content.className='swy-html';content.innerHTML=options.html||'';
+    var actions=document.createElement('div');actions.className='syy-dialog-actions';
+    var confirm=document.createElement('button');confirm.type='button';confirm.className=options.customClass&&options.customClass.confirmButton||'swy-confirm-btn';confirm.textContent=options.confirmButtonText||'ตกลง';
+    var cancel=document.createElement('button');cancel.type='button';cancel.className='swy-cancel-btn';cancel.textContent=options.cancelButtonText||'ยกเลิก';
+    var finished=false;
+    function finish(accepted){if(finished)return;finished=true;syyDismissFallbackDialog=null;window.removeEventListener('pagehide',dismiss);document.removeEventListener('focusin',trap);overlay.remove();if(previous&&previous.isConnected)previous.focus();resolve({isConfirmed:accepted,isDismissed:!accepted});}
+    function dismiss(){finish(false);}
+    function trap(event){if(!overlay.contains(event.target))(options.showCancelButton?cancel:confirm).focus();}
+    confirm.addEventListener('click',function(){finish(true);});cancel.addEventListener('click',dismiss);
+    if(options.showCancelButton)actions.appendChild(cancel);actions.appendChild(confirm);panel.append(title,content,actions);overlay.appendChild(panel);document.body.appendChild(overlay);
+    overlay.addEventListener('keydown',function(event){event.stopPropagation();if(event.key==='Escape'){event.preventDefault();return;}if(event.key==='Tab'){var buttons=options.showCancelButton?[cancel,confirm]:[confirm];var i=buttons.indexOf(document.activeElement);event.preventDefault();buttons[(i+(event.shiftKey?-1:1)+buttons.length)%buttons.length].focus();}});
+    syyDismissFallbackDialog=dismiss;document.addEventListener('focusin',trap);window.addEventListener('pagehide',dismiss);(options.showCancelButton?cancel:confirm).focus();
+  });});
+  syyDialogQueue=result.catch(function(){});return result;
+}
 function swySuccess(title,html){
-  return Swal.fire({icon:'success',title:title,html:html||'',confirmButtonText:'ตกลง',
+  return syyDialog({icon:'success',title:title,html:html||'',confirmButtonText:'ตกลง',
     allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
 }
 function swyError(title,html){
-  return Swal.fire({icon:'error',title:title,html:html||'',confirmButtonText:'ตกลง',
+  return syyDialog({icon:'error',title:title,html:html||'',confirmButtonText:'ตกลง',
     allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn danger'},buttonsStyling:false});
 }
 function swyWarning(title,html){
-  return Swal.fire({icon:'warning',title:title,html:html||'',confirmButtonText:'ตกลง',
+  return syyDialog({icon:'warning',title:title,html:html||'',confirmButtonText:'ตกลง',
     allowOutsideClick:false,allowEscapeKey:false,
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
 }
 function swyConfirm(o){
-  return Swal.fire({
+  return syyDialog({
     icon:o.icon||'question',title:o.title,html:o.html||'',showCancelButton:true,
     confirmButtonText:o.confirmText||'ยืนยัน',cancelButtonText:o.cancelText||'ยกเลิก',reverseButtons:true,
     allowOutsideClick:false,allowEscapeKey:false,
@@ -468,32 +498,59 @@ function swyConfirm(o){
 function syyShowSessionExpired(){
   syyDraftFlush();
   if(window.syyExpiryStarted)return;
-  window.syyExpiryStarted=true;syyClearReadCache();
-  var box=document.createElement('div');box.id='syySessionExpired';box.setAttribute('role','alertdialog');box.setAttribute('aria-modal','true');box.setAttribute('aria-labelledby','syySessionExpiredTitle');
+  window.syyExpiryStarted=true;if(syyDismissFallbackDialog)syyDismissFallbackDialog();syyClearReadCache();
+  var box=document.createElement('div');box.id='syySessionExpired';box.className='swal2-container';box.setAttribute('role','alertdialog');box.setAttribute('aria-modal','true');box.setAttribute('aria-labelledby','syySessionExpiredTitle');
   box.style.cssText='position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:#0f294580;padding:20px';
   var panel=document.createElement('div');panel.style.cssText='background:white;color:#16324f;border-radius:14px;padding:28px;max-width:480px;text-align:center;box-shadow:0 12px 40px #0003';
   var title=document.createElement('h2');title.id='syySessionExpiredTitle';title.textContent='เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่';
   var message=document.createElement('p');message.textContent='ร่างที่รองรับถูกเก็บไว้ในเบราว์เซอร์ เข้าสู่ระบบด้วยบัญชีเดิมเพื่อตรวจและกู้คืน';
   var link=document.createElement('a');link.textContent='เข้าสู่ระบบใหม่';link.className='btn btn-primary';link.target='_top';
   var url=new URL(WEB_APP_URL,location.href);url.search='?page=login';url.hash='';link.href=url.href;
-  panel.append(title,message,link);box.appendChild(panel);document.body.appendChild(box);link.focus();
+  panel.append(title,message,link);box.appendChild(panel);document.body.appendChild(box);
+  box.addEventListener('keydown',function(event){event.stopPropagation();if(event.key==='Tab'){event.preventDefault();link.focus();}});
+  document.addEventListener('focusin',function(event){if(box.isConnected&&!box.contains(event.target))link.focus();});link.focus();
 }
-function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache){
+/* A bounded local queue prioritizes the visible data over optional image work.
+   Writes bypass it and are never cancelled or automatically retried. */
+var syyReadQueue=[],syyActiveReads=0;
+function syyScheduleRead(run,background){
+  syyReadQueue.push({run:run,background:!!background});syyDrainReads();
+}
+function syyDrainReads(){
+  while(syyActiveReads<3&&syyReadQueue.length){
+    var index=syyReadQueue.findIndex(function(item){return !item.background;});
+    var item=syyReadQueue.splice(index<0?0:index,1)[0];syyActiveReads++;
+    (function(task){var released=false;task.run(function(){if(released)return;released=true;syyActiveReads=Math.max(0,syyActiveReads-1);syyDrainReads();});})(item);
+  }
+}
+function syyReportReadState(ok,error,background){
+  if(background||typeof SYYFrameBridge==='undefined')return;
+  if(ok)SYYFrameBridge.dataReady();else SYYFrameBridge.dataError(error&&error.code||'READ_FAILED');
+}
+function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOptions){
+  requestOptions=requestOptions||{};
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
-  var done=false,timer=null;
-  function settled(failed){if(done)return false;done=true;clearTimeout(timer);syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&/^(get|fetch)/.test(fnName))syyUxLoaded=Date.now();syyUxStatus();return true;}
-  function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,restartPage:error.restartPage===true,timeout:error.timeout===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
+  var done=false,timer=null,releaseRead=null,createdAt=Date.now(),rpcDispatched=false;
+  function settled(failed){if(done)return false;done=true;clearTimeout(timer);if(releaseRead)releaseRead();syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&/^(get|fetch)/.test(fnName))syyUxLoaded=Date.now();syyUxStatus();return true;}
+  function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,code:error.code||'READ_FAILED',dispatched:rpcDispatched,retryable:error.retryable===true,retryAfterMs:Number(error.retryAfterMs)||0,restartPage:error.restartPage===true,timeout:error.timeout===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
   function expired(){if(!settled(true))return;syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});}
   if(!token){expired();return;}
   // This only settles the browser read. GAS may finish later; late callbacks
   // cannot overwrite a retry. Writes have no client deadline or automatic retry.
   if(/^(get|fetch)/.test(fnName))timer=setTimeout(function(){fail({timeout:true,message:'รอข้อมูลเกิน 45 วินาที กรุณาลองอีกครั้ง'});},45000);
-  try{google.script.run.withSuccessHandler(function(res){
+  function execute(release){
+    releaseRead=release||null;
+    if(done){if(release)release();return;}
+    if(release&&typeof requestOptions.mayRun==='function'&&!requestOptions.mayRun()){fail({code:'READ_SUPERSEDED',message:'คำขอนี้ถูกแทนที่ด้วยข้อมูลล่าสุดแล้ว'});return;}
+    if(release&&Date.now()-createdAt>=45000){fail({timeout:true,message:'รอข้อมูลเกิน 45 วินาที กรุณาลองอีกครั้ง'});return;}
+    try{rpcDispatched=true;google.script.run.withSuccessHandler(function(res){
     if(done)return;
     if(res&&res.__authError){expired();return;}
-    if(res&&res.success===false&&/^(get|fetch)/.test(fnName)&&!(fnName==='getDashboardDelta'&&res.fullRefresh===true)){fail({message:res.message,restartPage:res.restartPage===true});return;}
+    if(res&&res.success===false&&/^(get|fetch)/.test(fnName)&&!(fnName==='getDashboardDelta'&&res.fullRefresh===true)){fail(res);return;}
     settled(res&&res.success===false);if(onSuccess)onSuccess(res);
   }).withFailureHandler(fail).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);}catch(error){if(done)throw error;fail(error);}
+  }
+  if(/^(get|fetch)/.test(fnName))syyScheduleRead(execute,requestOptions.background);else execute();
 }
 
 // Fetch only requested pages; incomplete lists are visibly marked and cannot claim full totals.
@@ -736,7 +793,7 @@ function callApi(fnName,args,onSuccess,onFailure,options){
      callApi(fnName,args,onSuccess,onFailure,Object.assign({},options,{manual:manual,diskReady:true,diskStamp:stamp,validate:true}));
    });return;
  }
- if(record&&!manual&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){var hitSequence=syyReadLatest.get(key+':'+identity);syyCacheStats.hits++;setTimeout(function(){syyEnsureCacheIdentity();if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||hitSequence!==syyReadLatest.get(key+':'+identity)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyLastReadSource='memory';syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)));},0);return;}
+ if(record&&!manual&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){var hitSequence=syyReadLatest.get(key+':'+identity);syyCacheStats.hits++;setTimeout(function(){syyEnsureCacheIdentity();if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||hitSequence!==syyReadLatest.get(key+':'+identity)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyLastReadSource='memory';syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)));if(typeof syyReportReadState==='function')syyReportReadState(true,null,options.background);},0);return;}
  var pendingKey=key+':'+identity+':'+epoch+':'+!!force+':'+!!authoritative+(manual?':manual':''),listeners=syyPendingReads.get(pendingKey);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
  if(authoritative)syyCacheStats.authoritative++;
  if(manual)syyCacheStats.manual++;
@@ -744,7 +801,7 @@ function callApi(fnName,args,onSuccess,onFailure,options){
  listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);var rpcStarted=Date.now(),measured=false,fenceKey=key+':'+identity,requestSequence=++syyReadSequence;
  syyReadLatest.delete(fenceKey);syyReadLatest.set(fenceKey,requestSequence);while(syyReadLatest.size>200)syyReadLatest.delete(syyReadLatest.keys().next().value);
  var rpcTiming={};function measure(failed){if(measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0,slowCount:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.slowCount=(m.slowCount||0)+(m.lastMs>=3000?1:0);m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);m.samples=(m.samples||[]).concat([Object.assign({totalMs:m.lastMs,failed:!!failed},rpcTiming)]).slice(-20);var sorted=m.samples.map(function(x){return x.totalMs;}).sort(function(a,b){return a-b;});m.p50Ms=sorted[Math.ceil(sorted.length*.5)-1];m.p95Ms=sorted[Math.ceil(sorted.length*.95)-1];}
- function failed(error){measure(true);syyPendingReads.delete(pendingKey);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
+ function failed(error){if(error&&error.dispatched===false)syyCacheStats.cancelled=(syyCacheStats.cancelled||0)+1;else measure(true);syyPendingReads.delete(pendingKey);if(error&&error.code!=='READ_SUPERSEDED'&&typeof syyReportReadState==='function')syyReportReadState(false,error,options.background);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
  syyCallApiRaw(fnName,args,function(data){
    syyEnsureCacheIdentity();
    if(policy&&(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||syyReadLatest.get(fenceKey)!==requestSequence)){failed({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
@@ -761,8 +818,9 @@ function callApi(fnName,args,onSuccess,onFailure,options){
    if(canCache&&version!==null&&fnName==='getAllProducts'&&args[0]&&args[0].paged&&data&&data.catalogPage){var pageArgs=JSON.parse(JSON.stringify(args));pageArgs[0].includeMasters=false;var pageData=Object.assign({},data),pageKey='getProductCatalogPage'+JSON.stringify(syyReadArgs('getProductCatalogPage',pageArgs));delete pageData.masters;if((syyReadLatest.get(pageKey+':'+identity)||0)<=requestSequence)syyStoreRead(pageKey,syyReadPolicy('getProductCatalogPage',pageArgs),pageData,version,syyReadCache.get(key),undefined,expiresAt);}
    if(canCache&&data&&data.facets&&typeof data.facetVersion==='string')Object.keys(data.facets).forEach(function(column){var facet=data.facets[column];if(facet&&Array.isArray(facet.values))syyStoreRead('getProductCatalogFacets'+JSON.stringify(syyReadArgs('getProductCatalogFacets',[{},column])),syyReadPolicy('getProductCatalogFacets'),facet,data.facetVersion,previous,undefined,expiresAt);});
    if(policy&&canCache&&version!==null&&wireProducts)syySeedCatalog(wireProducts,catalogSection,identity,policy.scopes,epoch);
-   measure(false);syyPendingReads.delete(pendingKey);syyUxStatus();listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data,{notModified:!!previous,manual:manual});}catch(e){setTimeout(function(){throw e;},0);}});
- },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt,expiresAt:record&&record.expiresAt,manual:!!manual,refresh:!!authoritative}:undefined);
+   measure(false);syyPendingReads.delete(pendingKey);syyUxStatus();var rendered=false,renderFailed=false;listeners.forEach(function(x){try{if(x.ok)x.ok(policy?JSON.parse(JSON.stringify(data)):data,{notModified:!!previous,manual:manual});rendered=true;}catch(e){renderFailed=true;if(typeof syyReportReadState==='function')syyReportReadState(false,{code:'RENDER_FAILED'},options.background);setTimeout(function(){throw e;},0);}});
+   if(rendered&&!renderFailed&&!(data&&data.success===false)&&typeof syyReportReadState==='function')syyReportReadState(true,null,options.background);
+ },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt,expiresAt:record&&record.expiresAt,manual:!!manual,refresh:!!authoritative}:undefined,options);
 }
 /* UI state is local to this browser session and the server-verified account. Never store credentials. */
 var syyFieldSequence=0,syyDrafts={},syyModalBaselines={},syyUxBusy=0,syyUxLoaded=0,syyUxFailed=false;
@@ -935,8 +993,10 @@ document.addEventListener('click',function(event){
 });
 var syyLibraries=Object.create(null);
 function syyLoadLibrary(name){
- var urls={xlsx:"https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",barcode:"https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"};
+ var urls={xlsx:"https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",barcode:"https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js",dialogs:"https://cdn.jsdelivr.net/npm/sweetalert2@11",qrcode:"https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js",html2canvas:"https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",pdf:"https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"};
+ var checks={xlsx:function(){return typeof XLSX!=='undefined';},barcode:function(){return typeof JsBarcode!=='undefined';},dialogs:function(){return typeof Swal!=='undefined'&&typeof Swal.fire==='function';},qrcode:function(){return typeof QRCode!=='undefined';},html2canvas:function(){return typeof html2canvas==='function';},pdf:function(){return typeof window.jspdf?.jsPDF==='function';}};
+ if(checks[name]&&checks[name]())return Promise.resolve();
  if(!urls[name])return Promise.reject(Error("ไม่รู้จัก library"));if(syyLibraries[name])return syyLibraries[name];
- syyLibraries[name]=new Promise(function(resolve,reject){var script=document.createElement("script"),done=false,timer=setTimeout(function(){finish(false);},10000);function finish(ok){if(done)return;done=true;clearTimeout(timer);if(ok)resolve();else{delete syyLibraries[name];script.remove();reject(Error("โหลดเครื่องมือไม่สำเร็จ กรุณาลองอีกครั้ง"));}}script.src=urls[name];script.onload=function(){finish(name==="xlsx"?typeof XLSX!=="undefined":typeof JsBarcode!=="undefined");};script.onerror=function(){finish(false);};document.head.appendChild(script);});return syyLibraries[name];
+ syyLibraries[name]=new Promise(function(resolve,reject){var script=document.createElement("script"),done=false,timer=setTimeout(function(){finish(false);},10000);function finish(ok){if(done)return;done=true;clearTimeout(timer);if(ok)resolve();else{delete syyLibraries[name];script.remove();reject(Error("โหลดเครื่องมือไม่สำเร็จ กรุณาลองอีกครั้ง"));}}script.async=true;script.src=urls[name];script.onload=function(){finish(checks[name]());};script.onerror=function(){finish(false);};document.head.appendChild(script);});return syyLibraries[name];
 }
 </script>

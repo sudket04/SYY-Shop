@@ -2,12 +2,13 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
+<meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
+<?!= include_('UiBootstrap'); ?>
 <meta name="syy-owner" content="<?= username ?>">
 <meta name="syy-role" content="<?= userRole ?>">
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <?!= include_('Styles'); ?>
   <style>
   /* ─── เฉพาะหน้านี้: ค้นหา/pagination/multi-select รุ่นรถ (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
@@ -788,7 +789,7 @@
         var renderStarted=performance.now();filterAndRenderTable(true);syyRecordViewTiming('products',started,renderStarted,productsCache.length);
         if(bootstrap)syyPostParent({action:'PRODUCTS_READY'});
       }catch(e){failed(e);}
-    },failed,refreshSnapshot?{fresh:true}:undefined);
+    },failed,{fresh:!!refreshSnapshot,mayRun:function(){return sequence===productLoadSequence&&revision===syyDataRevision();}});
     function failed(err){if(sequence!==productLoadSequence)return;productLoading=false;tbody.setAttribute('aria-busy','false');syyDataFailed();if(productRemote||productsCache.length){if(productRemote)currentPage=productRemote.page;filterAndRenderTable(true);updateProductRecordCounts('โหลดไม่สำเร็จ · แสดงข้อมูลเดิม');toast('โหลดไม่สำเร็จ กำลังแสดงข้อมูลเดิม: '+syyErrorMessage(err),'err');return;}updateProductRecordCounts('โหลดไม่สำเร็จ');tbody.innerHTML=emptyStateHtml(visibleProductColumns.length,{icon:'⚠️',title:'โหลดไม่สำเร็จ',sub:syyErrorMessage(err),actions:[{label:'ลองอีกครั้ง',primary:true,onclick:'loadTable(true)'}]});}
   }
 
@@ -1354,7 +1355,7 @@
         batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];var image=data[p.id],safeImage={imageUrl:image.imageUrl,imageUrls:image.imageUrls.slice(),primaryImageIndex:image.primaryImageIndex,imageUpdateTime:image.imageUpdateTime};productImageCache.delete(p.id);productImageCache.set(p.id,{stamp:stamp,at:Date.now(),data:safeImage});while(productImageCache.size>300)productImageCache.delete(productImageCache.keys().next().value);
           var current=productsCache.find(function(row){return (row.id||row.productCode)===p.id;});if(current)Object.assign(current,safeImage,{imageDataLoaded:true});p.waiters.forEach(function(w){if(w.ok)w.ok(current||Object.assign({id:p.id},safeImage));});
         });
-      },failed);
+      },failed,{background:true,mayRun:function(){return stamp===productImageStamp()&&batch.some(function(p){return p.waiters.length||productsCache.some(function(row){return (row.id||row.productCode)===p.id;});});}});
       function failed(error){batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];p.waiters.forEach(function(w){if(w.fail)w.fail(error);});});}
     })(fresh.slice(i,i+100));
   }

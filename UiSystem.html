@@ -1,33 +1,3 @@
-<script>
-// HtmlService may install scripts after DOMContentLoaded. Queue once in either
-// lifecycle so all page declarations are available before an initializer runs.
-function syyOnReady(callback){
-  var queued=false;
-  function ready(){
-    if(queued)return;queued=true;
-    document.removeEventListener('DOMContentLoaded',ready);window.removeEventListener('load',ready);
-    setTimeout(callback,0);
-  }
-  if(document.readyState!=='loading')ready();
-  else{document.addEventListener('DOMContentLoaded',ready);window.addEventListener('load',ready);}
-}
-// Readiness describes the page UI, never successful authentication or data reads.
-syyOnReady(function(){
-  var state=document.querySelector('meta[name="syy-session-state"]');
-  var action=state&&state.content==='expired'?'SESSION_EXPIRED':'PAGE_READY';
-  if(typeof syyPostParent==='function'){syyPostParent({action:action});return;}
-  var meta=document.querySelector('meta[name="syy-frame-channel"]'),channel=meta&&meta.content;
-  if(!channel||window.parent===window)return;
-  var p=window;
-  for(var i=0;i<8;i++){
-    try{if(p.parent===p)break;p=p.parent;}catch(e){break;}
-    var origin='';try{origin=p.location.origin;}catch(e){}
-    if(!origin&&location.ancestorOrigins)origin=location.ancestorOrigins[i]||'';
-    if(!origin&&i===0)try{origin=new URL(document.referrer).origin;}catch(e){}
-    try{var u=new URL(origin);if(origin===location.origin&&origin!=='null'||u.protocol==='https:'&&(u.hostname==='script.google.com'||u.hostname==='script.googleusercontent.com'||u.hostname.endsWith('-script.googleusercontent.com')))p.postMessage({action:action,channel:channel},origin);}catch(e){}
-  }
-});
-</script>
 <style>
 /* Stable content widths follow the information on each page, even after filtering. */
 [hidden]{display:none!important}

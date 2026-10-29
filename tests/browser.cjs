@@ -13,7 +13,8 @@ function render(file, role, channel = '', extra = {}) {
   // include_() still returns raw fragments, as it does in the application.
   let html = evaluateTemplate(file, {userRole:role,username:'fixture',userName:'fixture',authToken:'test-token',
     webAppUrl:'http://127.0.0.1:'+server.address().port+'/',frameChannel:channel,resetMode:'',resetToken:'',...extra});
-  html = html.replace(/<script\b[^>]*\bsrc=[^>]*><\/script>/g, '');
+  // Keep remote-script tags if a future regression adds them. External network
+  // is blocked by the browser fixture, so dependency failures stay observable.
   return html;
 }
 const fixture = `<script>
@@ -123,7 +124,7 @@ async function main(){
         const next=new URL(u);next.pathname='/content';html='<iframe title="HtmlService app" src="'+next.href.replace(/&/g,'&amp;')+'"></iframe>';
       }else{
         const file=u.hostname.startsWith('shell-')?'index.html':files[u.searchParams.get('page')];
-        html=render(file,'admin',u.searchParams.get('channel')||'',{webAppUrl:'https://script.google.com/exec'}).replace('<head>','<head>'+fixture);
+        html=render(file,'admin',u.searchParams.get('channel')||'',{webAppUrl:'https://script.google.com/exec',frameParentOrigin:u.searchParams.get('parentOrigin')||''}).replace('<head>','<head>'+fixture);
       }
       await route.fulfill({contentType:'text/html; charset=utf-8',body:html});
     });
@@ -135,6 +136,70 @@ async function main(){
       assert.equal(await p.evaluate(id=>document.getElementById('iframe-'+id).syyOrigin,id),'https://child-script.googleusercontent.com');
     }
     assert.deepEqual(errors,[]);await nested.close();
+  });
+  await check('Loading resilience: a lost first readiness signal is recovered without repeating business reads',async()=>{
+    const p=await pageFor('index.html');
+    await p.evaluate(()=>{window.droppedReady=false;window.addEventListener('message',function(e){if(!droppedReady&&e.data?.action==='PAGE_READY'){droppedReady=true;e.stopImmediatePropagation();}},{capture:true});});
+    await p.locator('#menu-brands').click();await p.waitForFunction(()=>document.getElementById('iframe-brands').dataset.ready==='true');
+    const child=p.frames().find(f=>new URL(f.url()).searchParams.get('page')==='brands');assert(child);await child.waitForFunction(()=>apiCalls.some(x=>x.fn==='getBrands')&&syyUxBusy===0);
+    assert.equal(await p.evaluate(()=>droppedReady),true);assert.equal(await child.evaluate(()=>apiCalls.filter(x=>x.fn==='getBrands').length),1);
+    assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);await p.waitForFunction(()=>syyPageDiagnostics.at(-1).dataMs!==null);
+    assert.equal(await p.evaluate(()=>syyPageDiagnostics.at(-1).route),'brands');assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: local confirmations work immediately when the dialog CDN is unavailable',async()=>{
+    const p=await pageFor('StockIssue.html');await p.evaluate(()=>{delete window.Swal;window.localDecision=null;swyConfirm({title:'ทดสอบการยืนยัน',html:'ยังไม่มีการบันทึกข้อมูล'}).then(value=>localDecision=value);});
+    const box=p.getByRole('alertdialog');await box.waitFor({state:'visible'});assert.equal(await p.evaluate(()=>localDecision),null);assert.equal(await box.getByRole('combobox').count(),0);
+    assert.equal(await p.evaluate(()=>document.activeElement.textContent),'ยกเลิก');await box.press('F4');assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='issueStock').length),0);
+    await box.getByRole('button',{name:'ยกเลิก',exact:true}).click();await p.waitForFunction(()=>localDecision===false);
+    await p.evaluate(()=>{localDecision=null;swyConfirm({title:'ยืนยันอย่างชัดเจน'}).then(value=>localDecision=value);});await p.getByRole('alertdialog').getByRole('button',{name:'ยืนยัน',exact:true}).click();await p.waitForFunction(()=>localDecision===true);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: auth infrastructure errors retain the visible product data and session',async()=>{
+    const p=await pageFor('Master_Products.html');const before=await p.locator('#productBody').innerText();
+    await p.evaluate(()=>{window.transientResult=null;const old=respond;respond=(fn,args,m)=>fn==='getAllProducts'?{success:false,code:'AUTH_UNAVAILABLE',retryable:true,retryAfterMs:2000,message:'ระบบตรวจบัญชีไม่พร้อมชั่วคราว'}:old(fn,args,m);syyCallApiRaw('getAllProducts',[],()=>{throw Error('Unexpected success');},e=>transientResult=e);});
+    await p.waitForFunction(()=>transientResult!==null);assert.equal(await p.evaluate(()=>transientResult.code),'AUTH_UNAVAILABLE');assert.equal(await p.evaluate(()=>transientResult.retryAfterMs),2000);assert.equal(await p.locator('#syySessionExpired').count(),0);assert.equal(await p.locator('#productBody').innerText(),before);assert.equal(await p.evaluate(()=>AUTH_TOKEN),'test-token');assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: fallback dialog traps focus above an editor and session expiry cancels it safely',async()=>{
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{delete window.Swal;openModal('productModal');window.editorDecision=null;swyConfirm({title:'ยืนยันในฟอร์มแก้ไข'}).then(v=>editorDecision=v);});
+    const box=p.locator('.syy-dialog-fallback');await box.waitFor({state:'visible'});assert.equal(await p.evaluate(()=>document.activeElement.textContent),'ยกเลิก');await p.keyboard.press('Tab');assert.equal(await p.evaluate(()=>document.activeElement.textContent),'ยืนยัน');await p.keyboard.press('Tab');assert.equal(await p.evaluate(()=>document.activeElement.textContent),'ยกเลิก');
+    await p.evaluate(()=>syyShowSessionExpired());await p.waitForFunction(()=>editorDecision===false);assert.equal(await box.count(),0);assert.equal(await p.locator('#syySessionExpired').count(),1);assert.equal(await p.evaluate(()=>document.activeElement.textContent),'เข้าสู่ระบบใหม่');await p.keyboard.press('Tab');assert.equal(await p.evaluate(()=>document.activeElement.textContent),'เข้าสู่ระบบใหม่');assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: the bounded read queue prioritizes foreground work and leaves writes unchanged',async()=>{
+    const p=await pageFor('Master_Brands.html');
+    await p.evaluate(()=>{window.dispatched=[];window.completeQueue={};google.script.run={withSuccessHandler(ok){return {withFailureHandler(fail){return {apiGateway(token,fn){dispatched.push(fn);completeQueue[fn]=()=>ok([]);}};}};}};
+      ['getA','getB','getC'].forEach(fn=>syyCallApiRaw(fn,[],()=>{},()=>{}));syyCallApiRaw('getBackground',[],()=>{},()=>{},null,{background:true});syyCallApiRaw('getForeground',[],()=>{},()=>{});syyCallApiRaw('saveBrand',[],()=>{},()=>{});
+    });
+    assert.deepEqual(await p.evaluate(()=>dispatched),['getA','getB','getC','saveBrand']);assert.equal(await p.evaluate(()=>syyActiveReads),3);
+    await p.evaluate(()=>completeQueue.getA());assert.equal(await p.evaluate(()=>dispatched.at(-1)),'getForeground');
+    await p.evaluate(()=>{completeQueue.getB();completeQueue.getC();completeQueue.getForeground();completeQueue.getBackground();completeQueue.saveBrand();});assert.equal(await p.evaluate(()=>syyActiveReads),0);assert.equal(await p.evaluate(()=>syyReadQueue.length),0);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: no routed page needs parser-blocking remote scripts or imported fonts',async()=>{
+    for(const file of ['index.html','Master_Products.html','Master_Brands.html','Master_Cars.html','Master_Categories.html','Master_Customers.html','Master_Vendors.html','Master_Zones.html','StockIssue.html','Quotation.html','Purchase_Orders.html','Master_Tax_Invoice.html','Profile.html','Manage_Users.html','login.html']){
+      const p=await pageFor(file);assert.equal(await p.locator('script[src]').count(),0,file);assert.equal(await p.evaluate(()=>Array.from(document.querySelectorAll('style')).some(el=>el.textContent.includes('@import'))),false,file);assert.deepEqual(p.errors,[],file);await p.close();
+    }
+  });
+  await check('Loading resilience: deferred Excel loads once, while blocked PDF and QR tools recover without writes',async()=>{
+    const po=await pageFor('Purchase_Orders.html');let libraries=0;
+    await po.route('https://cdn.jsdelivr.net/npm/xlsx@*/**',async route=>{libraries++;await route.fulfill({contentType:'application/javascript',body:'window.testExcelFiles=[];window.XLSX={utils:{aoa_to_sheet:()=>({}),book_new:()=>({}),book_append_sheet:()=>{}},writeFile:(book,name)=>testExcelFiles.push(name)};'});});
+    await po.evaluate(()=>{const order={poId:'PO-LOCAL',items:[],totalAmount:0};exportOrderToExcel(order);exportOrderToExcel(order);});await po.waitForFunction(()=>typeof testExcelFiles!=='undefined'&&testExcelFiles.length===1&&!poExcelBusy);assert.equal(libraries,1);assert.equal(await po.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);assert.deepEqual(po.errors,[]);await po.close();
+    const invoice=await pageFor('Master_Tax_Invoice.html');await invoice.evaluate(()=>{openViewModal('TX1');downloadInvoiceFile();});await invoice.waitForFunction(()=>!invoicePdfBusy&&alerts.some(x=>x.title==='ไม่สามารถโหลดตัวสร้าง PDF ได้'));assert.equal(await invoice.locator('#viewModal .btn-ghost[onclick="downloadInvoiceFile()"]').isDisabled(),false);assert.equal(await invoice.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);assert.deepEqual(invoice.errors,[]);await invoice.close();
+    const profile=await pageFor('Profile.html','admin');await profile.evaluate(()=>renderQrCode('otpauth://totp/local-fixture?secret=FIXTUREONLY'));await profile.waitForFunction(()=>document.getElementById('qrCanvasHolder').textContent.includes('กรุณาใช้รหัสด้านล่าง'));assert.equal(await profile.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue|authStartTotp)/.test(x.fn))),false);assert.deepEqual(profile.errors,[]);await profile.close();
+  });
+  await check('Loading resilience: expired queued reads do not dispatch, timeout frees capacity and late callbacks cannot overwrite retry',async()=>{
+    const p=await pageFor('Master_Brands.html');await p.clock.install();
+    await p.evaluate(()=>{window.dispatchNames=[];window.queueReplies={};window.queueFailures=[];window.queueValues=[];
+      google.script.run={withSuccessHandler(ok){return {withFailureHandler(fail){return {apiGateway(token,fn){dispatchNames.push(fn);queueReplies[fn]=()=>ok([fn]);}};}};}};
+      ['getHeld1','getHeld2','getHeld3','getExpiredQueue'].forEach(fn=>syyCallApiRaw(fn,[],value=>queueValues.push(value),e=>queueFailures.push(fn)));
+    });
+    await p.clock.fastForward(45001);assert.equal(await p.evaluate(()=>syyActiveReads),0);assert.equal(await p.evaluate(()=>dispatchNames.includes('getExpiredQueue')),false);assert.equal(await p.evaluate(()=>queueFailures.length),4);
+    await p.evaluate(()=>{syyCallApiRaw('getExplicitRetry',[],v=>queueValues.push(v),e=>queueFailures.push('retry'));queueReplies.getExplicitRetry();queueReplies.getHeld1();});
+    assert.deepEqual(await p.evaluate(()=>queueValues),[['getExplicitRetry']]);assert.equal(await p.evaluate(()=>syyReadQueue.length),0);await p.clock.resume();assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: superseded queued criteria are discarded before issuing an RPC',async()=>{
+    const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{window.sentReads=[];window.readReleases={};window.currentCriteria=1;window.skippedRead=null;
+      google.script.run={withSuccessHandler(ok){return {withFailureHandler(fail){return {apiGateway(token,fn){sentReads.push(fn);readReleases[fn]=()=>ok([]);}};}};}};
+      ['getHoldA','getHoldB','getHoldC'].forEach(fn=>syyCallApiRaw(fn,[],()=>{},()=>{}));
+      syyCallApiRaw('getObsolete',[],()=>{},e=>skippedRead=e,null,{mayRun:()=>currentCriteria===1});currentCriteria=2;readReleases.getHoldA();
+    });assert.equal(await p.evaluate(()=>sentReads.includes('getObsolete')),false);assert.equal(await p.evaluate(()=>skippedRead.code),'READ_SUPERSEDED');await p.evaluate(()=>{readReleases.getHoldB();readReleases.getHoldC();});assert.equal(await p.evaluate(()=>syyActiveReads),0);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('SweetAlert confirmations have no generated dropdown, retain native input and draft decisions',async()=>{
     const p=await pageFor('Quotation.html');await p.evaluate(()=>{
@@ -657,7 +722,7 @@ async function main(){
         if(typeof saveQuotationNow==='function'){addToBasket('P1');document.getElementById('selCustomer').value='C1';apiFailure='saveQuotation';saveQuotationNow();}
         else if(typeof closeInvoiceModal==='function'){openEditModal('TX1');apiFailure='saveTaxInvoice';handleSubmit();}
         else{pendingConfirmVendor={vendorId:'V1',vendorName:'Vendor',items:[Object.assign({},fixtureProduct,{suggestedQty:1})]};qtyState.P1=1;checkedState.P1=true;document.getElementById('btnConfirmSave').disabled=false;apiFailure='savePurchaseOrder';submitCreateOrder();}
-      });await p.waitForTimeout(25);
+      });await p.waitForFunction(()=>syyUxBusy===0);
       await p.evaluate(()=>{if(typeof saveQuotationNow==='function')saveQuotationNow();else if(typeof closeInvoiceModal==='function')handleSubmit();else submitCreateOrder();});
       assert.equal(await p.evaluate(()=>apiCalls.filter(x=>/^save(Quotation|TaxInvoice|PurchaseOrder)$/.test(x.fn)).length),1);
       assert.equal(await p.evaluate(()=>Object.values(syyUnknownWrites).some(Boolean)),true);assert.deepEqual(p.errors,[]);await p.close();

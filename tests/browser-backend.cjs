@@ -60,7 +60,7 @@ const server=http.createServer(async(req,res)=>{
   // only the real gateway decides whether its stored data may be reused.
   const file=url.searchParams.get('file'),user=url.searchParams.get('user')||'staff',session=sessions.get(user)||(user==='staff'?{username:'fixture-staff',role:'staff'}:null);
   if(!session||!['index.html','Master_Products.html','StockIssue.html','Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html'].includes(file)){res.writeHead(404).end();return;}
-  const html=evaluateTemplate(file,{username:session.username,userName:session.username,userRole:session.role,authToken:user,webAppUrl:'http://127.0.0.1:'+server.address().port+'/',frameChannel:'',resetMode:'',resetToken:''}).replace(/<script\b[^>]*\bsrc=[^>]*><\/script>/g,'').replace('<head>','<head>'+bridge);
+  const html=evaluateTemplate(file,{username:session.username,userName:session.username,userRole:session.role,authToken:user,webAppUrl:'http://127.0.0.1:'+server.address().port+'/',frameChannel:'',resetMode:'',resetToken:''}).replace('<head>','<head>'+bridge);
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'}).end(html);
  }catch(error){errors.push(error.message);res.writeHead(500).end('Local fixture rejected the request');}
 });

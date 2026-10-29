@@ -2,11 +2,11 @@
 <html>
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
+<meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
+<?!= include_('UiBootstrap'); ?>
   <meta charset="UTF-8">
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
   <?!= include_('Styles'); ?>
   <style>
   /* ─── เฉพาะหน้านี้: แท็บ, การ์ดโปรไฟล์, 2FA/QR, log แจ้งเตือนแบบฝังหน้า (ไม่ซ้ำกับหน้าอื่น จึงไม่ย้ายเข้า Styles.html) ─── */
@@ -248,29 +248,29 @@ var WEB_APP_URL = '<?= webAppUrl ?>';
 function callApi(fnName) {
   var callArgs = Array.prototype.slice.call(arguments, 1);
   var runner = google.script.run;
+  var failure=null;
   return {
     withSuccessHandler: function (successFn) {
       runner = runner.withSuccessHandler(function (res) {
         if (res && res.__authError) {
-          try { sessionStorage.removeItem('syy_token'); } catch (e) {}
-          swyError('เซสชันหมดอายุ', 'กรุณาเข้าสู่ระบบใหม่').then(function(){
-            window.top.location.href = WEB_APP_URL + '?page=login';
-          });
+          syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});
           return;
         }
+        if(res&&res.success===false&&res.code==='AUTH_UNAVAILABLE'){syyReportReadState(false,res);if(failure)failure(res);return;}
         successFn(res);
+        if(res&&res.success!==false)syyReportReadState(true);
       });
       return this;
     },
     withFailureHandler: function (failFn) {
-      runner = runner.withFailureHandler(failFn);
+      failure=failFn;runner = runner.withFailureHandler(function(error){syyReportReadState(false,error);failFn(error);});
       return this;
     },
     run: function () {
       if (AUTH_TOKEN) {
         runner.apiGateway(AUTH_TOKEN, fnName, callArgs);
       } else {
-        window.top.location.href = WEB_APP_URL + '?page=login';
+        syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});
       }
     }
   };
@@ -286,7 +286,7 @@ syyOnReady(function(){
   if (!AUTH_TOKEN) {
     // ★ ไม่มี token เลย (เปิดหน้านี้ตรงๆ โดยไม่ผ่าน login) — เด้งกลับหน้า login ทันที
     //   หน้านี้ต้องรู้ว่าเป็นใครถึงจะแสดงข้อมูลได้ ต่างจาก Master pages ที่ยัง fallback ได้
-    window.top.location.href = WEB_APP_URL + '?page=login';
+    syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});
     return;
   }
   loadProfile();
@@ -467,13 +467,16 @@ function openTotpSetupModal() {
     .run();
 }
 
+var qrRenderIntent=0;
 function renderQrCode(otpauthUri) {
+  var intent=++qrRenderIntent;
   var holder = document.getElementById('qrCanvasHolder');
   holder.innerHTML = '';
-  // ★ ใช้ library qrcode จาก CDN (โหลดใน <head>) — ถ้าโหลดไม่สำเร็จ (เน็ตมีปัญหา)
+  // Load the QR library only when requested; a CDN outage keeps the text secret available.
   //   ให้ fallback แสดงแค่ secret text ให้พิมพ์เอง (มีอยู่แล้วด้านล่าง ไม่ต้องพึ่ง QR อย่างเดียว)
   if (typeof QRCode === 'undefined') {
-    holder.innerHTML = '<div style="color:#94a3b8; font-size:12.5px; padding:10px;">ไม่สามารถโหลดตัวสร้าง QR ได้ กรุณาใช้รหัสด้านล่างพิมพ์เองในแอป</div>';
+    holder.innerHTML = skeletonBlock('detail',2);
+    syyLoadLibrary('qrcode').then(function(){if(intent===qrRenderIntent&&holder.isConnected)renderQrCode(otpauthUri);}).catch(function(){if(intent===qrRenderIntent&&holder.isConnected)holder.innerHTML='<div style="color:#64748b;padding:10px">ไม่สามารถโหลดตัวสร้าง QR ได้ กรุณาใช้รหัสด้านล่างพิมพ์เองในแอป</div>';});
     return;
   }
   QRCode.toCanvas(otpauthUri, { width: 180, margin: 1 }, function (err, canvas) {
@@ -486,6 +489,7 @@ function renderQrCode(otpauthUri) {
 }
 
 function closeTotpSetupModal() {
+  qrRenderIntent++;
   closeModal('totpSetupModal');
 }
 

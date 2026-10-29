@@ -4,7 +4,6 @@
    ใช้: <?!= include_('Styles'); ?>  ไว้ใน <head> ของทุกหน้า
    แก้สี/ระยะที่ไฟล์นี้ที่เดียว มีผลทุกหน้า
    ═══════════════════════════════════════════════════════════ */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap');
 
 :root{
   --primary:#005088; --primary-dark:#002e52; --primary-soft:#e6f0fa; --primary-line:#bfdcf5;
@@ -21,6 +20,12 @@
   --font-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
   --fs-body:15px; --lh-body:1.65; --tracking-body:0;
 }
+.syy-dialog-fallback.swal2-container{position:fixed;inset:0;z-index:100100;display:flex;align-items:center;justify-content:center;background:#0f172a66;padding:20px}
+.syy-dialog-fallback>.swy-popup{width:min(540px,100%);max-height:90vh;overflow:auto;background:white;color:var(--ink);border-radius:16px;box-shadow:0 16px 48px #0f172a40;padding:28px;text-align:center}
+.syy-dialog-fallback .swy-title{margin:0 0 16px;font-size:20px}
+.syy-dialog-fallback .swy-html{overflow-wrap:anywhere}
+.syy-dialog-actions{display:flex;justify-content:center;gap:10px;margin-top:24px}
+.syy-dialog-actions button{border:0;min-height:42px;cursor:pointer}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;text-rendering:optimizeLegibility}
 body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--text);font-size:var(--fs-body);line-height:var(--lh-body);letter-spacing:var(--tracking-body);font-weight:400}

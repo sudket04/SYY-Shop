@@ -10,7 +10,7 @@ const staging={stagingProjectId:'fixture-staging-shop',stagingMailbox:'tester@ex
 test('review bundle includes complete client/backend, checksums, routes and manifest without credentials',()=>{
   const before=sha(fs.readFileSync(path.join(root,'Code.gs'))),result=prepareRelease();
   assert.equal(result.mode,'review');assert.equal(result.targetProjectId,null);assert.equal(result.deployed,false);
-  assert.equal(result.files.length,24);
+  assert.equal(result.files.length,25);assert(result.files.some(f=>f.name==='UiBootstrap.html'));
   const metadata=verifyRelease(result.directory);
   assert.equal(metadata.commit,result.commit);
   assert(metadata.files.every(f=>f.sha256===f.originalSha256));

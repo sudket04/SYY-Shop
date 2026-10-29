@@ -312,7 +312,7 @@ function logActivityV2_(username, fnName, args, result) {
 
 function apiGatewayV2(token, fnName, args, userAgent) {
   try {
-    var session = getSession_(token, userAgent);
+    var session = getSession_(token, userAgent, true);
     if (!session) return { __authError: true, success: false, message: "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่" };
 
     var registry = {
@@ -346,7 +346,7 @@ function apiGatewayV2(token, fnName, args, userAgent) {
     logActivityV2_(session.username, fnName, args || [], result);
     return result;
   } catch (e) {
-    console.error("apiGatewayV2 error [" + fnName + "]:", e);
-    return { success: false, message: (typeof friendlyErrorMessage_ === "function" ? friendlyErrorMessage_(e) : e.message) };
+    console.error('apiGatewayV2 failed',e.code||'REQUEST_FAILED');
+    return readFailureResponse_(e);
   }
 }
