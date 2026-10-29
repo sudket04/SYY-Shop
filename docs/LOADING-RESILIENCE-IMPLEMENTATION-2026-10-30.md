@@ -1,5 +1,7 @@
 # แก้การเปิดหน้าและจัดลำดับโหลดข้อมูล — 30 ตุลาคม 2569
 
+**อัปเดตหลังimplementation:** ผู้ใช้สั่งDeployแล้ว เผยแพร่ **Version104 เวลา06:30 วันที่30ต.ค.2026 Asia/Bangkok** จากruntimea0973cc ตรวจSaved Head/immutable sourceตรง25/25ทั้งคู่ ดู [รายงานDeploy104](DEPLOYMENT-2026-10-30-V104.md) ขอบเขตการทดสอบจำลองและข้อความ“ยังไม่Deploy”ในประวัติimplementationเดิมให้แยกจากสถานะเผยแพร่ล่าสุดนี้
+
 ต่อจาก [ผลวิเคราะห์29ตุลาคม](LOADING-ROOT-CAUSE-ANALYSIS-2026-10-29.md) ผู้ใช้อนุมัติให้แก้ไขและกำชับห้ามกระทบข้อมูล DB จริง Baseline Source `c7a01ae` การเปลี่ยนแปลงรอบนี้อยู่ใน Source/การทดสอบจำลองเท่านั้น **ไม่ได้ Sync/Deploy, ส่ง Login, เรียกธุรกรรมบนระบบจริง, รัน Backup/Restore หรือเปลี่ยนข้อมูล/สิทธิ์/Trigger/index/schema**
 
 ## ผลที่แก้
@@ -69,7 +71,7 @@ Source ที่แก้ไม่เพิ่ม query endpoint, Firestore writ
 
 ## Deployment และงานที่ยังต้องพิสูจน์
 
-**ยังไม่ Sync/Deploy ชุดนี้** Production ที่ยืนยันไว้ก่อนหน้าคือ Version103/runtimec3dc752; การอนุมัติDeploy103ครั้งก่อนใช้เสร็จแล้ว คำสั่งรอบนี้อนุมัติแก้ไขSourceและห้ามกระทบข้อมูลDB
+**Deploy104สำเร็จตามคำสั่ง“deploy เลย”ครั้งถัดมา** แทนVersion103/runtimec3dc752 โดยใช้URL/สิทธิ์เดิม คงข้อห้ามแก้ข้อมูลDBและแยกการอนุมัติเผยแพร่จากwriteUAT/การเปลี่ยนข้อมูลย้อนหลัง
 
 Runtime package รอบใหม่มี **25ไฟล์** เพราะเพิ่ม UiBootstrap ต้องใช้ชุดที่ครบและตรวจ dependency/checksum ไม่ส่งเพียงไฟล์เดียวที่ include bootstrap ขึ้นไปโดยไม่มีไฟล์ใหม่
 

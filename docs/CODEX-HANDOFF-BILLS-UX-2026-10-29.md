@@ -1,12 +1,12 @@
 # ส่งต่องานเพิ่มเติม: บิล ประวัติ Dashboard และหน้าแก้ไขสินค้า — 29 ตุลาคม 2569
 
-**อัปเดต30ต.ค.:** ผู้ใช้อนุมัติแก้การเปิดหน้า/ประสิทธิภาพและห้ามกระทบ DB จริง มีแพตช์ Source เพิ่ม early bootstrap/ready ACK, transient auth/lock errors, foreground read queue และ deferred tools ตาม [รายงาน implementation](LOADING-RESILIENCE-IMPLEMENTATION-2026-10-30.md) ชุดใหม่มี25runtime filesและ **ยังไม่ Sync/Deploy**; Version103ด้านล่างเป็นProductionก่อนแพตช์นี้ ไม่ใช่หลักฐานว่าชุดใหม่ขึ้นแล้ว ห้ามใช้การอนุมัติDeploy103ซ้ำหรือเขียนDBเพื่อทดสอบ
+**สถานะล่าสุด30ต.ค.: Deploy Version104สำเร็จ เวลา06:30 Asia/Bangkok** จากruntime **a0973cc** รวม early bootstrap/ready ACK, transient auth/lock errors, foreground read queue และ deferred tools ตรวจSaved Headและimmutable sourceตรง **25/25** ทั้งคู่ Login/session recovery smokeผ่าน ไม่ส่งLoginหรือเขียนDB อ่าน [รายงานDeploy104](DEPLOYMENT-2026-10-30-V104.md) และ [implementation](LOADING-RESILIENCE-IMPLEMENTATION-2026-10-30.md) ก่อนรับช่วง; การอนุมัติDeploy104ใช้เสร็จแล้ว ไม่ใช่การอนุมัติbackfill/writeUATหรือเผยแพร่releaseถัดไป
 
 ## 1. สถานะคำสั่งและขอบเขตการอนุมัติ
 
-**สถานะล่าสุด: ผู้ใช้อนุมัติตรวจบัคและ Deploy แล้ว เผยแพร่ Version103 สำเร็จ29ต.ค.2026 เวลา21:09 Asia/Bangkok จาก runtime `c3dc7521ac0bd74cf7e2b052382e6a006c1243c3` รวมงานบิล รูปสินค้า100รายการ/skeleton และแพตช์ audit ไม่มีการเปลี่ยนข้อมูลย้อนหลัง**
+**ประวัติก่อน104:** ผู้ใช้อนุมัติตรวจบัคและ Deploy แล้ว เผยแพร่ Version103 สำเร็จ29ต.ค.2026 เวลา21:09 Asia/Bangkok จาก runtime `c3dc7521ac0bd74cf7e2b052382e6a006c1243c3` รวมงานบิล รูปสินค้า100รายการ/skeleton และแพตช์ audit ไม่มีการเปลี่ยนข้อมูลย้อนหลัง
 
-อ่าน [รายงาน Deployment103 ล่าสุด](DEPLOYMENT-2026-10-29-V103.md) ก่อนรับช่วง: 287 unit tests, 146 Browser groups, 10 backend-integrated Browser groups ผ่าน เทียบ Saved HeadและimmutableVersion103ตรง24/24ทั้งสองชุด Login/session recovery smokeผ่าน ไม่ส่งฟอร์มLoginหรือธุรกรรมเขียนDB ยังไม่ยืนยัน authenticated UAT/เวลาไม่เกิน10วินาที รายละเอียดข้อ4–6ด้านล่างเป็นแผนและเหตุผลตั้งต้น ไม่ใช่งานทั้งหมดที่ยังไม่เริ่ม อย่านำการอนุมัติDeploy103ที่ใช้เสร็จแล้วมาใช้กับreleaseถัดไป
+หลักฐาน [Deployment103รอบก่อน](DEPLOYMENT-2026-10-29-V103.md): 287 unit tests, 146 Browser groups, 10 backend-integrated Browser groups ผ่าน เทียบ Saved HeadและimmutableVersion103ตรง24/24ทั้งสองชุด Login/session recovery smokeผ่าน ไม่ส่งฟอร์มLoginหรือธุรกรรมเขียนDB ยังไม่ยืนยัน authenticated UAT/เวลาไม่เกิน10วินาที รายละเอียดข้อ4–6ด้านล่างเป็นแผนและเหตุผลตั้งต้น ไม่ใช่งานทั้งหมดที่ยังไม่เริ่ม อย่านำการอนุมัติDeploy103ที่ใช้เสร็จแล้วมาใช้กับreleaseถัดไป
 
 เอกสาร implementationเดิม: [บิล/ประวัติ/Dashboard](BILL-UX-IMPLEMENTATION-2026-10-29.md), [รูปสินค้า/100รายการ/skeleton](PRODUCT-IMAGES-SKELETON-2026-10-29.md) รวมเผยแพร่แล้วใน103 ใช้reviewbundleของc3dc752เป็นหลักฐานreleaseนี้ ห้ามนำbundle7155326หรือ3a82708ไปทับย้อนหลัง
 
