@@ -304,9 +304,10 @@ function switchTab(name) {
 
 /* ═══ โหลดโปรไฟล์ ═══ */
 function loadProfile() {
+  var stopProfile=syyStartLoading(document.querySelector('#panelProfile .card')),stopSecurity=syyStartLoading(document.getElementById('totpStatusBox'));
   callApi('authGetMyProfile', AUTH_TOKEN)
     .withSuccessHandler(function (res) {
-      if (!res.success) {
+      stopProfile();stopSecurity();if (!res.success) {
         window.top.location.href = WEB_APP_URL + '?page=login';
         return;
       }
@@ -314,7 +315,7 @@ function loadProfile() {
       renderProfile(res);
     })
     .withFailureHandler(function () {
-      document.getElementById('profFullName').innerText = 'โหลดข้อมูลไม่สำเร็จ';
+      stopProfile();stopSecurity();document.getElementById('profFullName').innerText = 'โหลดข้อมูลไม่สำเร็จ';
     })
     .run();
 }
@@ -583,7 +584,7 @@ function loadActivityLog() {
   if(activityLogLoading)return;
   activityLogLoading=true;
   var tbody = document.getElementById('logTableBody');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="6">⏳ กำลังโหลด...</td></tr>';
+  tbody.innerHTML = skeletonRows(6,5);
 
   callApi('getActivityLog', 200)
     .withSuccessHandler(function (data) {

@@ -763,10 +763,11 @@
     if(!status){
       status=frame.syyStatus=document.createElement('div');status.className='syy-frame-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
       status.syyTitle=document.createElement('strong');status.syyMessage=document.createElement('span');status.syyRetry=document.createElement('button');status.syyRetry.type='button';status.syyRetry.className='btn btn-primary';status.syyRetry.textContent='ลองเปิดหน้านี้อีกครั้ง';
-      status.syyRetry.addEventListener('click',function(){syyOpenFrame(frame,true);});status.append(status.syyTitle,status.syyMessage,status.syyRetry);frame.parentElement.appendChild(status);
+      status.syySkeleton=document.createElement('div');status.syySkeleton.style.cssText='width:min(960px,100%);max-height:65vh;overflow:hidden';status.syySkeleton.innerHTML=skeletonBlock('detail',6);
+      status.syyRetry.addEventListener('click',function(){syyOpenFrame(frame,true);});status.append(status.syyTitle,status.syyMessage,status.syySkeleton,status.syyRetry);frame.parentElement.appendChild(status);
     }
-    status.hidden=false;status.syyRetry.hidden=true;status.syyTitle.textContent='กำลังเปิดหน้า '+(LABEL_OF[frame.id.replace('iframe-','')]||'');status.syyMessage.textContent='กรุณารอสักครู่…';
-    function delayed(){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);status.syyTitle.textContent='ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent='ใช้เวลานานกว่าปกติหรือการเชื่อมต่อขัดข้อง สามารถลองเปิดหน้านี้อีกครั้งได้';status.syyRetry.hidden=false;}
+    status.hidden=false;status.syyRetry.hidden=true;status.syySkeleton.hidden=false;status.syyTitle.textContent='กำลังเปิดหน้า '+(LABEL_OF[frame.id.replace('iframe-','')]||'');status.syyMessage.textContent='กรุณารอสักครู่…';
+    function delayed(){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);status.syyTitle.textContent='ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent='ใช้เวลานานกว่าปกติหรือการเชื่อมต่อขัดข้อง สามารถลองเปิดหน้านี้อีกครั้งได้';status.syyRetry.hidden=false;status.syySkeleton.hidden=true;}
     frame.onerror=delayed;frame.syyOpenTimer=setTimeout(delayed,30000);
     frame.src=frame.dataset.src;
   }

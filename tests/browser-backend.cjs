@@ -80,33 +80,34 @@ async function main(){
  }
  async function check(name,fn){await fn();cases++;console.log('PASS: '+name);}
  const pages=[];
- await check('five Viewer pages share one cold query and render 50 of 10,000 products without images or editor permissions',async()=>{
+ await check('five Viewer pages share one cold query and render 100 of 10,000 products with batched image metadata and no editor permissions',async()=>{
   for(let i=0;i<5;i++){
    const page=await pageFor('Master_Products.html','viewer'+i);pages.push(page);
-   await page.waitForFunction(()=>!productLoading&&productsCache.length===50);
+   await page.waitForFunction(()=>!productLoading&&productsCache.length===100);
    assert.match(await page.locator('#productBody').innerText(),/อะไหล่ 0/);
    assert.equal(await page.locator('#productBody img').count(),0);
    assert.equal(await page.locator('#productBody .edit,#productBody .del').count(),0);
    assert.equal(await page.evaluate(()=>productsCache.some(x=>'Extra_Secret' in x)),false);
   }
-  assert.equal(reads.Master_Products,51);assert.equal(reads.Product_Images||0,0);
+  await pages[0].waitForFunction(()=>productsCache.every(p=>p.imageDataLoaded));assert.equal(reads.Master_Products,101);assert.equal(reads.Product_Images||0,100);
   assert.deepEqual(errors,[]);
  });
  await check('real signed cursor stays on page two, returns to cached page one and survives an image-only version change',async()=>{
   const page=pages[0];await page.locator('#btnNextPage').click();
   await page.waitForFunction(()=>!productLoading&&currentPage===2);
-  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');
-  const count=reads.Master_Products;store.c.clearCollectionCache_('Product_Images');
+  await page.waitForFunction(()=>productsCache.every(p=>p.imageDataLoaded));
+  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00100');
+  const count=reads.Master_Products,imageCount=reads.Product_Images;store.c.clearCollectionCache_('Product_Images');
   await page.locator('#btnPrevPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===1);
   await page.locator('#btnNextPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===2);
-  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');assert.equal(reads.Master_Products,count);
+  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00100');assert.equal(reads.Master_Products,count);assert.equal(reads.Product_Images,imageCount);
   await page.screenshot({path:path.join(output,'backend-viewer-page-two.png')});
  });
  await check('unchanged search finds the final product and full-catalog facets stay global while table images remain absent',async()=>{
   const page=pages[0];await page.locator('#tableSearchInput').fill('BC9999');await page.evaluate(()=>onSearchInput());
   await page.waitForFunction(()=>!productLoading&&productsCache.length===1&&productsCache[0].productCode==='P09999');
   const facet=await page.evaluate(()=>new Promise((resolve,reject)=>callApi('getProductCatalogFacets',[{includeImages:false},'partType'],resolve,reject)));
-  assert.deepEqual(facet.values.sort(),['เทียบ','แท้'].sort());assert.equal(reads.Product_Images||0,0);
+  assert.deepEqual(facet.values.sort(),['เทียบ','แท้'].sort());assert((reads.Product_Images||0)<=201);
   assert.equal(await page.locator('#productBody img').count(),0);
  });
  await check('Tax list avoids catalog until editor; POS reuses the validated stored catalog and keyboard reaches the final row',async()=>{

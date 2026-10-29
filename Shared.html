@@ -328,6 +328,29 @@ syyOnReady(function(){
 });
 
 /* ── Skeleton / Empty state ── */
+function skeletonBlock(kind,rows,label){
+  return '<div class="syy-skeleton-block syy-skeleton-'+esc(kind||'cards')+'" role="status" aria-label="'+esc(label||'กำลังโหลดข้อมูล')+'"><span class="syy-sr-only">'+esc(label||'กำลังโหลดข้อมูล')+'</span>'+Array.from({length:Math.min(8,Math.max(1,rows||3))},function(){return '<div class="syy-skeleton-item" aria-hidden="true"><span class="sk"></span><span class="sk"></span><span class="sk"></span></div>';}).join('')+'</div>';
+}
+// Cover only the requested data region. Keep its DOM, scroll and drafts intact.
+// Reference counting prevents an older read from hiding a newer read's skeleton.
+var syyLoadingRegions=new WeakMap();
+function syyStartLoading(element,options){
+  options=options||{};if(typeof element==='string')element=document.querySelector(element);if(!element)return function(){};
+  var table=element.closest('table'),host=table?table.closest('.table-wrap')||table.parentElement:element,state=syyLoadingRegions.get(host);
+  if(!state){var height=host.clientHeight,inset=table&&table.tHead?table.tHead.getBoundingClientRect().height:0,overlay=document.createElement('div');overlay.className='syy-loading-overlay';overlay.setAttribute('role','status');overlay.setAttribute('aria-label','กำลังโหลดข้อมูล');
+    var cols=table&&table.tHead?table.tHead.querySelectorAll('tr:first-child th').length:0;
+    overlay.innerHTML=cols?'<table aria-hidden="true"><tbody>'+skeletonRows(cols,6)+'</tbody></table><span class="syy-sr-only">กำลังโหลดข้อมูล</span>':skeletonBlock(options.kind||'cards',options.rows||3);
+    state={count:0,targets:[],overlay:overlay,minHeight:host.style.minHeight,busy:host.getAttribute('aria-busy')};syyLoadingRegions.set(host,state);host.classList.add('syy-loading-host');if(height<140)host.style.minHeight='180px';overlay.style.top=(host.scrollTop+inset)+'px';overlay.style.height=Math.max(140,height-inset)+'px';host.appendChild(overlay);host.setAttribute('aria-busy','true');
+    state.observer=new MutationObserver(function(){if(overlay.parentNode!==host)host.appendChild(overlay);if(element===host)Array.from(host.children).forEach(function(child){if(child!==overlay&&!state.targets.some(function(t){return t.element===child;})){state.targets.push({element:child,inert:child.inert});child.inert=true;}});});state.observer.observe(host,{childList:true});
+  }
+  var targets=element===host?Array.from(host.children).filter(function(child){return child!==state.overlay;}):[element];targets.forEach(function(target){if(!state.targets.some(function(t){return t.element===target;})){state.targets.push({element:target,inert:target.inert});target.inert=true;}});
+  state.count++;var done=false;return function(){if(done)return;done=true;if(--state.count)return;state.observer.disconnect();state.overlay.remove();host.style.minHeight=state.minHeight;host.classList.remove('syy-loading-host');if(state.busy===null)host.removeAttribute('aria-busy');else host.setAttribute('aria-busy',state.busy);state.targets.forEach(function(t){t.element.inert=t.inert;});syyLoadingRegions.delete(host);};
+}
+function syyReadLoading(fn,args){
+  var selectors={getBrands:'#tbodyMain',getCategories:'#tbodyMain',getVendorsFull:'#tbodyMain',getCustomersFull:'#tbodyMain',getCarsFull:'#tbodyMain',getZonesFull:'#tbodyMain',getAllProducts:'#productBody,#resultList',getProductCatalogPage:'#productBody',getQuotationPageData:'#listBody,#resultList',getQuotationListData:'#listBody',getTaxInvoicePageData:'#taxBody',getTaxInvoiceListData:'#taxBody',getDashboardBootstrap:'#dashKpiRow,#dashAlertRow,#dashChartSvgWrap,#dashCatBars,#dashFastMovers,#dashSlowMovers,#dashAging,#dashHealthBody',getStockMovementPage:'#mvBody',getStockMovementDetail:'#movementDetailBody,#dashBillBody',getBackupOverview:'#backupList',getActivityLog:'#logBody'};
+  if(fn==='getPurchaseOrderPageData')selectors[fn]=args&&args[0]&&args[0].section==='history'?'#historyTableBody':'#vendorGroupsContainer';
+  var stops=selectors[fn]?Array.from(document.querySelectorAll(selectors[fn])).map(function(element){return syyStartLoading(element);}):[];return function(){stops.forEach(function(stop){stop();});};
+}
 function skeletonRows(cols,rows){
   var out='';
   for(var r=0;r<(rows||4);r++){
@@ -695,6 +718,7 @@ function syySeedCatalog(packed,section,identity,sourceScopes,epoch){
  var record=syyReadCache.get(key);if(record)syyDiskCache.lookup(key).then(function(stamp){if(identity===syyCacheIdentity&&epoch===syyCacheEpoch(sourceScopes))return syyDiskCache.put(key,record,stamp);});
 }
 function callApi(fnName,args,onSuccess,onFailure,options){
+ if(typeof syyReadLoading==='function'&&/^(get|fetch)/.test(fnName)&&!(options&&options.loadingManaged)){var stopLoading=syyReadLoading(fnName,args);return callApi(fnName,args,function(data,info){stopLoading();if(onSuccess)onSuccess(data,info);},function(error){stopLoading();if(onFailure)onFailure(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(syyErrorMessage(error)));},Object.assign({},options,{loadingManaged:true}));}
  if(!/^(get|fetch)/.test(fnName))return syyCallApiRaw(fnName,args,function(data){if(data&&data.success!==false)syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onSuccess)onSuccess(data);},function(error){syyInvalidateReadScopes(syyWriteScopes(fnName,args),true);if(onFailure)onFailure(error);else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));});
  options=options||{};var policy=syyReadPolicy(fnName,args),canCache=syyEnsureCacheIdentity(),manual=options.manual===true||syyReadFresh,authoritative=options.authoritative===true;
  if(manual&&!authoritative)args=(args||[]).map(function(x){if(x&&typeof x==='object'&&!Array.isArray(x)&&Object.prototype.hasOwnProperty.call(x,'force'))return Object.assign({},x,{force:false});return x;});

@@ -7,6 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    .sk{display:block;width:75%;height:10px;border-radius:4px;background:linear-gradient(90deg,#eef1f5 25%,#f6f8fa 50%,#eef1f5 75%);background-size:200% 100%;animation:skm 1.2s linear infinite}@keyframes skm{from{background-position:200% 0}to{background-position:-200% 0}}@media(prefers-reduced-motion:reduce){.sk{animation:none}}
     :root { 
       --primary: #005088; 
       --primary-dark: #002e52;
@@ -731,7 +732,7 @@ function callGatewayApi(fnName, args, onSuccess, onFailure) {
 
 function loadTable() {
   var tbody = document.getElementById('userBody');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="7">⏳ กำลังโหลดข้อมูล...</td></tr>';
+  tbody.innerHTML = Array.from({length:5},function(){return '<tr>'+Array.from({length:7},function(){return '<td><span class="sk" aria-hidden="true"></span></td>';}).join('')+'</tr>';}).join('');
   document.getElementById('recordCount').innerText = 'กำลังโหลด...';
 
   callGatewayApi('getAllUsers', [], function(data) {

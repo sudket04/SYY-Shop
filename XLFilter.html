@@ -234,7 +234,7 @@ var XLF = (function () {
         var rows=getRowsFn(btn.dataset.xlfCol);
         if(!rows||typeof rows.then!=='function'){openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,rows,onChange);return;}
         var loading=document.createElement('div');loading.className='xlf-popover';loading.dataset.col=btn.dataset.xlfCol;loading.dataset.key=btn.dataset.xlfKey;loading.setAttribute('aria-busy','true');
-        loading.innerHTML='<div role="status" style="padding:18px;color:#64748b">กำลังโหลดตัวเลือก…</div>';document.body.appendChild(loading);openPop=loading;positionPopover(loading,btn);
+        loading.innerHTML=typeof skeletonBlock==='function'?skeletonBlock('cards',3,'กำลังโหลดตัวเลือก'):'<div role="status">กำลังโหลดตัวเลือก…</div>';document.body.appendChild(loading);openPop=loading;positionPopover(loading,btn);
         rows.then(function(value){if(openPop!==loading||!btn.isConnected)return;closePopover();openFilterPopover(btn,btn.dataset.xlfKey,btn.dataset.xlfCol,value,onChange);},function(error){
           if(openPop!==loading)return;loading.setAttribute('aria-busy','false');loading.firstChild.textContent=typeof syyErrorMessage==='function'?syyErrorMessage(error):'โหลดไม่สำเร็จ';
           var retry=document.createElement('button');retry.type='button';retry.className='xlf-sort-btn';retry.textContent='ลองอีกครั้ง';retry.onclick=function(){closePopover();btn.click();};loading.appendChild(retry);
