@@ -1531,77 +1531,29 @@
   }
 
   /* ── drawers: รายการเอกสาร / ดูข้อมูลสินค้า ── */
-  function dashGroupDocs(rows, filterFn){
-    var map={};
-    rows.filter(filterFn).forEach(function(r){
-      if(!map[r.docNo]) map[r.docNo]={docNo:r.docNo, billNo:r.billNo, ts:r.ts, items:0, qty:0, amtSell:0, amtCost:0, refNo:r.refNo, note:r.note, reasons:{}};
-      var g=map[r.docNo];
-      g.items++; g.qty+=r.qty; g.amtSell+=r.qty*num(r.unitPrice); g.amtCost+=r.qty*num(r.costPrice);
-      if(r.reason) g.reasons[r.reason]=true;
-    });
-    return Object.keys(map).map(function(k){return map[k];});
-  }
-
+  function dashGroupDocs(rows,filterFn){return syyGroupBillRows(rows.filter(filterFn));}
   function dashBuildDocList(){
-    var period=dashPeriod(), type=DASH.docType;
-    var costMap={}; DASH.products.forEach(function(p){ costMap[p.productCode]=num(p.costPrice); });
-    var cellL='padding:8px 14px;color:#334155', cellM='padding:8px 14px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--primary);white-space:nowrap',
-        cellR='padding:8px 14px;text-align:right;font-family:\'IBM Plex Mono\',monospace;color:var(--ink);white-space:nowrap',
-        cellD='padding:8px 14px;color:var(--muted);font-size:12px;white-space:nowrap';
-
-    if(type==='sales'){
-      var docs=dashGroupDocs(period.cur.rows, function(r){return r.type==='OUT' && (r.reason==='ขายหน้าร้าน'||r.reason==='ขาย Online');});
-      docs.sort(function(a,b){return b.amtSell-a.amtSell;});
-      return {icon:'฿', iconBg:'var(--primary-soft)', iconColor:'var(--primary)',
-        title:'รายการบิลขาย (Sales Invoices)', subtitle:period.periodLabel+' · เรียงตามยอดมากไปน้อย',
-        summary:[{label:'จำนวนบิลสุทธิ',value:period.cur.salesBills.toLocaleString()+' บิล'},
-                 {label:'ยอดขายรวม',value:'฿'+Math.round(period.cur.salesValue).toLocaleString()},
-                 {label:'เฉลี่ยต่อบิล',value:'฿'+Math.round(period.cur.salesBills?period.cur.salesValue/period.cur.salesBills:0).toLocaleString()}],
-        heads:[['เลขที่บิล','left'],['เวลา','left'],['หมายเหตุ/อ้างอิง','left'],['รายการ','right'],['ยอดรวม','right']],
-        rows:docs.map(function(d){ return [
-          {t:dashBillLink(d),s:cellM},{t:esc(d.ts.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'}))+' น.',s:cellD},
-          {t:esc(d.refNo||d.note||'—'),s:cellD},{t:d.items,s:cellR},{t:'฿'+Math.round(d.amtSell).toLocaleString(),s:cellR}]; }),
-        footNote:'แสดง '+docs.length+' บิล · ข้อมูลจาก Stock_Movements (Type=OUT, เหตุผล=ขายหน้าร้าน/Online)'};
-    }
-    if(type==='recv'){
-      var byDoc={};
-      period.cur.rows.filter(function(r){return r.type==='IN';}).forEach(function(r){
-        if(!byDoc[r.docNo]) byDoc[r.docNo]={docNo:r.docNo, ts:r.ts, items:0, qty:0, amt:0, refNo:r.refNo};
-        var g=byDoc[r.docNo]; g.items++; g.qty+=r.qty; g.amt+=r.qty*num(r.costPrice);
-      });
-      var docs2=Object.keys(byDoc).map(function(k){return byDoc[k];}).sort(function(a,b){return b.amt-a.amt;});
-      return {icon:'↓', iconBg:'var(--ok-bg)', iconColor:'var(--ok)',
-        title:'รายการรับเข้าสต๊อก (Goods Receipts)', subtitle:period.periodLabel+' · อ้างอิงใบสั่งซื้อ (PO)',
-        summary:[{label:'จำนวนใบรับ',value:docs2.length.toLocaleString()+' ใบ'},
-                 {label:'รับเข้ารวม',value:Math.round(period.cur.recvQty).toLocaleString()+' ชิ้น'},
-                 {label:'มูลค่ารวม',value:'฿'+Math.round(period.cur.recvValue).toLocaleString()}],
-        heads:[['เลขที่ใบรับ','left'],['อ้างอิง PO','left'],['ผู้จัดจำหน่าย','left'],['รายการ','right'],['จำนวน','right'],['มูลค่า','right']],
-        rows:docs2.map(function(d){ return [
-          {t:esc(d.docNo),s:cellM},{t:esc(d.refNo||'—'),s:cellD},{t:esc(DASH.poVendorMap[d.refNo]||'—'),s:cellL},
-          {t:d.items,s:cellR},{t:Math.round(d.qty).toLocaleString(),s:cellR},{t:'฿'+Math.round(d.amt).toLocaleString(),s:cellR}]; }),
-        footNote:'แสดง '+docs2.length+' ใบรับ · มูลค่าประเมินจากราคาทุนปัจจุบันของสินค้า · ข้อมูลจาก Stock_Movements (Type=IN)'};
-    }
-    var docs3=dashGroupDocs(period.cur.rows, function(r){return r.type==='OUT';});
-    docs3.sort(function(a,b){return b.qty-a.qty;});
-    return {icon:'↑', iconBg:'var(--warn-bg)', iconColor:'var(--warn)',
-      title:'รายการตัดสต๊อก (Stock Issues)', subtitle:period.periodLabel+' · ทุกเหตุผล (รวมยอดขายหน้าร้าน)',
-      summary:[{label:'ตัดออกรวม',value:Math.round(period.cur.issueQty).toLocaleString()+' ชิ้น'},
-               {label:'มูลค่าต้นทุน',value:'฿'+Math.round(period.cur.issueValue).toLocaleString()},
-               {label:'จำนวนใบเบิก',value:docs3.length.toLocaleString()+' ใบ'}],
-      heads:[['เลขที่ใบเบิก','left'],['รายการ','right'],['จำนวน','right'],['มูลค่าต้นทุน','right'],['เหตุผล','left']],
-      rows:docs3.map(function(d){ var reasons=Object.keys(d.reasons); return [
-        {t:esc(d.billNo||d.docNo),s:cellM},{t:d.items,s:cellR},{t:Math.round(d.qty).toLocaleString(),s:cellR},
-        {t:'฿'+Math.round(d.amtCost).toLocaleString(),s:cellR},{t:esc(reasons.length===1?reasons[0]:(reasons.length+' เหตุผล')),s:cellD}]; }),
-      footNote:'แสดง '+docs3.length+' ใบเบิก · ข้อมูลจาก Stock_Movements (Type=OUT ทุกเหตุผล)'};
+    var period=dashPeriod(),type=DASH.docType,sales=type==='sales',recv=type==='recv';
+    var docs=dashGroupDocs(period.cur.rows,function(row){return recv?row.type==='IN':row.type==='OUT'&&(!sales||row.reason==='ขายหน้าร้าน'||row.reason==='ขาย Online');});
+    function amount(doc){return sales?doc.amtSell:doc.amtCost;}
+    docs.sort(function(a,b){return (DASH.docSort==='amount'?amount(b)-amount(a):0)||(Number(b.ts)||0)-(Number(a.ts)||0)||a.key.localeCompare(b.key);});
+    var left='padding:9px 14px;color:#334155',mono=left+';font-family:monospace;white-space:nowrap',right=mono+';text-align:right';
+    var summary=sales?[{label:'จำนวนบิลสุทธิ',value:period.cur.salesBills.toLocaleString()+' บิล'},{label:'ยอดขายสุทธิในช่วง',value:money(period.cur.salesValue)},{label:'เฉลี่ยต่อบิลสุทธิ',value:money(period.cur.salesBills?period.cur.salesValue/period.cur.salesBills:0)}]:recv?[{label:'จำนวนใบรับ',value:docs.length.toLocaleString()+' ใบ'},{label:'รับเข้ารวม',value:period.cur.recvQty.toLocaleString()+' ชิ้น'},{label:'มูลค่ารับเข้า',value:money(period.cur.recvValue)}]:[{label:'ตัดออกรวม',value:period.cur.issueQty.toLocaleString()+' ชิ้น'},{label:'มูลค่าทุนสุทธิ',value:money(period.cur.issueValue)},{label:'รายการธุรกรรม',value:docs.length.toLocaleString()}];
+    return {icon:sales?'฿':recv?'↓':'↑',iconBg:'var(--primary-soft)',iconColor:'var(--primary)',title:sales?'รายการบิลขาย (Sales Invoices)':recv?'รายการรับเข้าสต๊อก (Goods Receipts)':'รายการตัดสต๊อก (Stock Issues)',subtitle:period.periodLabel+' · เวลาไทย · '+(DASH.docSort==='amount'?'เรียงตามยอดมากไปน้อย':'เรียงรายการล่าสุดก่อน'),summary:summary,
+      heads:[['เลขที่บิล','left'],['วันที่–เวลา','left'],['ผู้ทำรายการ','left'],['มูลค่าในช่วง','right'],['สถานะ','left'],['จัดการ','left']],
+      rows:docs.map(function(doc){var known=sales?doc.knownSell:doc.knownCost,action=['admin','staff'].includes(USER_ROLE)&&doc.docNo?'<button type="button" class="btn btn-ghost" data-sales-doc-action="'+esc(doc.docNo)+'" aria-label="ดูรายละเอียดบิล '+esc(syyBillLabel(doc))+'">ดูรายละเอียด</button>':'—';
+        return [{t:dashBillLink(doc),s:mono},{t:esc(doc.timeConsistent===false?'หลายเวลา · ดูรายละเอียด':syyBillDate(doc.timestamp)),s:mono},{t:esc(doc.user||'ไม่ระบุ'),s:left},{t:known?money(amount(doc)):'—',s:right},{t:syyBillStatusHtml(doc)+(!doc.consistent?'<small>ข้อมูลไม่สอดคล้อง</small>':''),s:left},{t:action,s:left}];}),
+      footNote:'แสดง '+docs.length+' ธุรกรรมในช่วงที่เลือก รวมรายการย้อนผลตามวันที่ทำจริง · มูลค่าบิลเต็มและบิลที่เกี่ยวข้องเปิดดูในรายละเอียด'};
   }
+  function dashChangeDocSort(value){DASH.docSort=value==='amount'?'amount':'time';DASH.docPage=1;dashRenderDrawers();}
+  function dashChangeDocPage(delta){var count=dashBuildDocList().rows.length;DASH.docPage=Math.max(1,Math.min(Math.ceil(count/50)||1,(DASH.docPage||1)+delta));dashRenderDrawers();}
 
-  // Bill labels are presentation only: detail requests always use the original Doc_No.
   var dashBillDoc='',dashBillPending=Object.create(null),dashBillFocus=null;
   function dashBillLink(d){
-    var label=esc(d.billNo||d.docNo||'—');
-    return ['admin','staff'].indexOf(USER_ROLE)>=0&&d.docNo?'<button type="button" class="sales-bill-link" data-sales-doc="'+esc(d.docNo)+'" aria-label="ดูรายละเอียดบิล '+label+'">'+label+'</button>':label;
+    var label=esc(syyBillLabel(d));
+    var link=['admin','staff'].indexOf(USER_ROLE)>=0&&d.docNo?'<button type="button" class="sales-bill-link" data-sales-doc="'+esc(d.docNo)+'" aria-label="ดูรายละเอียดบิล '+label+'">'+label+'</button>':label;return link+syyBillLegacyHtml(d);
   }
-  document.getElementById('dashDrawerRoot').addEventListener('click',function(e){var button=e.target.closest('[data-sales-doc]');if(button)dashOpenBill(button.dataset.salesDoc);});
+  document.getElementById('dashDrawerRoot').addEventListener('click',function(e){var button=e.target.closest('[data-sales-doc],[data-sales-doc-action]');if(button)dashOpenBill(button.dataset.salesDoc||button.dataset.salesDocAction);});
   function dashCloseBill(){dashBillDoc='';closeModal('dashBillModal');if(dashBillFocus&&dashBillFocus.isConnected)dashBillFocus.focus();}
   function dashOpenBill(docNo){
     if(['admin','staff'].indexOf(USER_ROLE)<0||!docNo)return;
@@ -1616,7 +1568,7 @@
       document.getElementById('dashBillBody').innerHTML=syyMovementDetailHtml(data);
     },function(err){delete dashBillPending[docNo];failed(syyErrorMessage(err));});
   }
-  function dashOpenDoc(type){ DASH.docType=type; dashRenderDrawers(); }
+  function dashOpenDoc(type){ DASH.docType=type;DASH.docPage=1; dashRenderDrawers(); }
   function dashCloseDoc(){ DASH.docType=null; dashRenderDrawers(); }
 
   function dashOpenProduct(code){ DASH.openCode=code; dashRenderDrawers(); dashRenderHealthTableOnly(); }
@@ -1665,19 +1617,19 @@
   function dashRenderDrawers(){
     var html='';
     if(DASH.docType){
-      var dl=dashBuildDocList();
+      var dl=dashBuildDocList(),docPages=Math.max(1,Math.ceil(dl.rows.length/50));DASH.docPage=Math.min(DASH.docPage||1,docPages);var docRows=dl.rows.slice((DASH.docPage-1)*50,DASH.docPage*50);
       html += '<div class="dash-drawer-mask" onclick="dashCloseDoc()"></div>'+
-        '<aside class="dash-drawer">'+
+        '<aside class="dash-drawer" style="width:min(1080px,100vw)">'+
           '<div class="dash-drawer-head"><span style="width:34px;height:34px;flex:none;border-radius:9px;background:'+dl.iconBg+';color:'+dl.iconColor+';font-size:16px;display:flex;align-items:center;justify-content:center">'+dl.icon+'</span>'+
           '<div style="min-width:0;flex:1"><div style="font-size:16px;font-weight:600;color:var(--ink);line-height:1.3">'+esc(dl.title)+'</div><div style="font-size:12.5px;color:var(--faint);margin-top:3px">'+esc(dl.subtitle)+'</div></div>'+
           '<button type="button" class="btn btn-icon btn-ghost" onclick="dashCloseDoc()">✕</button></div>'+
           '<div style="display:grid;grid-template-columns:repeat('+dl.summary.length+',1fr);gap:8px;padding:14px 18px;background:var(--bg);border-bottom:1px solid var(--line)">'+
             dl.summary.map(function(s){ return '<div class="dash-stat-tile"><div style="font-size:11px;color:var(--faint)">'+esc(s.label)+'</div><div class="dash-mono" style="font-size:18px;font-weight:600;color:var(--ink);margin-top:2px">'+s.value+'</div></div>'; }).join('')+
           '</div>'+
-          '<div class="dash-drawer-body"><table style="width:100%;font-size:12.5px"><thead><tr style="background:#fff;position:sticky;top:0">'+
+          '<div style="padding:8px 18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><label>เรียงตาม <select aria-label="เรียงรายการบิล" onchange="dashChangeDocSort(this.value)"><option value="time" '+(DASH.docSort!=="amount"?"selected":"")+'>ล่าสุดก่อน</option><option value="amount" '+(DASH.docSort==="amount"?"selected":"")+'>ยอดมากไปน้อย</option></select></label><button type="button" class="btn btn-ghost" onclick="dashChangeDocPage(-1)" '+(DASH.docPage<=1?'disabled':'')+'>ก่อนหน้า</button><span>หน้า '+DASH.docPage+' / '+docPages+'</span><button type="button" class="btn btn-ghost" onclick="dashChangeDocPage(1)" '+(DASH.docPage>=docPages?'disabled':'')+'>ถัดไป</button></div><div class="dash-drawer-body"><table style="width:100%;font-size:12.5px"><thead><tr style="background:#fff;position:sticky;top:0">'+
             dl.heads.map(function(h){ return '<th style="text-align:'+h[1]+';padding:9px 14px;font-weight:500;font-size:11.5px;color:var(--faint);border-bottom:1px solid var(--line);background:#fff;white-space:nowrap">'+esc(h[0])+'</th>'; }).join('')+
           '</tr></thead><tbody>'+
-            (dl.rows.length? dl.rows.map(function(row){ return '<tr style="border-bottom:1px solid var(--line-soft)">'+row.map(function(c){ return '<td style="'+c.s+'">'+c.t+'</td>'; }).join('')+'</tr>'; }).join('')
+            (docRows.length? docRows.map(function(row){ return '<tr style="border-bottom:1px solid var(--line-soft)">'+row.map(function(c){ return '<td style="'+c.s+'">'+c.t+'</td>'; }).join('')+'</tr>'; }).join('')
               : '<tr><td colspan="'+dl.heads.length+'"><div class="empty-state"><div class="ic">📭</div><div class="ti">ไม่มีรายการในช่วงนี้</div></div></td></tr>')+
           '</tbody></table></div>'+
           '<div class="dash-drawer-foot"><span style="font-size:11.5px;color:var(--faint)">'+esc(dl.footNote)+'</span><button type="button" class="btn btn-primary" onclick="dashCloseDoc()">ปิด</button></div>'+

@@ -168,6 +168,14 @@ async function main(){
    const count=requests.length;await page.evaluate(()=>loadTable());await page.waitForFunction(()=>syyUxBusy===0);assert.equal(requests.length,count,file);
   }
  });
+ await check('bill-level history uses real gateway counts, complete summaries and cached view pagination without detail N+1',async()=>{
+  const before=reads.Stock_Movements||0,page=await pageFor('StockIssue.html','staff','history');pages.push(page);
+  await page.waitForFunction(()=>mvPage.initialized&&!mvPage.busy&&movementBillRows().length===50);
+  assert.equal(await page.locator('#panelHistory thead th').count(),6);assert.equal(await page.locator('#mvBody tr').count(),50);assert.equal(reads.Stock_Movements-before,51);
+  assert.equal(await page.evaluate(()=>gatewayCalls.filter(x=>x==='getStockMovementDetail').length),0);assert.equal(await page.evaluate(()=>movementBillRows().every(x=>x.complete&&x.amtSell===200)),true);
+  await page.locator('#mvViewNext').click();await page.waitForFunction(()=>!mvPage.busy&&mvViewPage===2);const count=requests.length,documents=reads.Stock_Movements;assert.equal(await page.locator('#mvBody tr').count(),50);
+  await page.locator('#mvViewPrev').click();await page.locator('#mvViewNext').click();assert.equal(requests.length,count);assert.equal(reads.Stock_Movements,documents);assert.equal(await page.evaluate(()=>mvViewPage),2);
+ });
  await check('revoked session cannot open a new page from persisted cache',async()=>{
   sessions.delete('staff');const page=await pageFor('StockIssue.html');pages.push(page);
   await page.waitForFunction(()=>window.syyExpiryStarted===true&&syyUxBusy===0);

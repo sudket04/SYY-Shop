@@ -118,6 +118,68 @@ function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'
 function escJs(v){return esc(v).replace(/'/g,"\\'");}
 function num(v){return parseFloat(v)||0;}
 function money(n){return '฿ '+num(n).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});}
+/* Bill labels never generate or change historical identifiers. */
+function syyBillLabel(row){return String(row&&row.billNo||row&&row.docNo||'ไม่มีเลขบิล');}
+function syyBillLegacyHtml(row){
+  if(row.type==='IN'||row.reversal)return '';
+  var match=/^SI-(\d{8})-(\d{4,})$/.exec(String(row.billNo||'')),valid=false;
+  if(match){var day=match[1].slice(0,4)+'-'+match[1].slice(4,6)+'-'+match[1].slice(6),date=new Date(day+'T00:00:00Z'),sequence=Number(match[2]);valid=!isNaN(date.getTime())&&date.toISOString().slice(0,10)===day&&Number.isSafeInteger(sequence)&&sequence>0&&String(sequence).padStart(4,'0')===match[2];}
+  return valid?'':'<small style="display:block">เลขเดิม · ยังไม่ปรับย้อนหลัง</small>';
+}
+function syyBillDate(value){
+  if(value==null||String(value).trim()==='')return 'ไม่ระบุวันเวลา';
+  var date=new Date(value);if(isNaN(date.getTime()))return 'ไม่ระบุวันเวลา';
+  return new Intl.DateTimeFormat('th-TH',{timeZone:'Asia/Bangkok',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(date)+' น.';
+}
+function syyBillStatus(row){
+  if(row.reversal)return 'รายการย้อนผล';
+  return row.issueStatus==='cancelled'?'ยกเลิกแล้ว':row.issueStatus==='replaced'?'มีบิลทดแทน':!row.issueStatus||row.issueStatus==='active'?'ใช้งาน':'ไม่ทราบสถานะ';
+}
+function syyBillStatusHtml(row){return '<span class="badge '+(row.reversal||row.issueStatus==='cancelled'?'badge-danger':row.issueStatus==='replaced'?'badge-warn':'badge-info')+'">'+esc(syyBillStatus(row))+'</span>';}
+function syyRecordedNumber(row,key,flag){
+  var value=row&&row[key];return !row||flag&&Object.prototype.hasOwnProperty.call(row,flag)&&row[flag]!==true||value==null||String(value).trim()===''||!Number.isFinite(Number(value))?null:Number(value);
+}
+function syyGroupBillRows(rows,completeness){
+  var map=new Map();
+  (rows||[]).forEach(function(row){
+    var rawTime=row.timestamp||row.ts,time=new Date(rawTime),stamp=isNaN(time.getTime())?'':time.toISOString();
+    var key=JSON.stringify([row.docNo||'@'+row.id,row.type||'OUT',!!row.reversal]),g=map.get(key);
+    if(!g){g={key:key,id:row.id,docNo:row.docNo||'',billNo:row.billNo||'',type:row.type||'OUT',reversal:!!row.reversal,issueStatus:row.issueStatus||'active',timestamp:stamp,ts:new Date(stamp),timeConsistent:true,users:[],billNumbers:[],user:row.user||'',items:0,qty:0,amtSell:0,amtCost:0,knownSell:true,knownCost:true,refNo:row.refNo||'',note:row.note||'',reasons:Object.create(null),rows:[],consistent:true,complete:completeness?(!row.docNo||completeness[row.docNo]===true):true};map.set(key,g);}
+    if(g.billNo!==(row.billNo||'')||g.timestamp!==stamp||g.user!==(row.user||'')||g.issueStatus!==(row.issueStatus||'active'))g.consistent=false;
+    if(g.timestamp!==stamp)g.timeConsistent=false;if(!g.users.includes(row.user||''))g.users.push(row.user||'');g.user=g.users.length>1?'หลายผู้ทำรายการ':g.users[0];if(!g.billNumbers.includes(row.billNo||''))g.billNumbers.push(row.billNo||'');if(g.billNumbers.length>1)g.billNo='';
+    g.rows.push(row);g.items++;var qty=syyRecordedNumber(row,'qty','hasQty');if(qty===null){g.knownSell=false;g.knownCost=false;}else g.qty+=qty;
+    var price=syyRecordedNumber(row,'unitPrice','hasUnitPrice'),cost=syyRecordedNumber(row,'costPrice','hasCostPrice');
+    if(price===null||qty===null)g.knownSell=false;else g.amtSell+=qty*price;
+    if(cost===null||qty===null)g.knownCost=false;else g.amtCost+=qty*cost;
+    if(row.reason)g.reasons[row.reason]=true;
+  });
+  return Array.from(map.values()).map(function(group){if(!Number.isFinite(group.amtSell)||Math.abs(group.amtSell)>Number.MAX_SAFE_INTEGER)group.knownSell=false;if(!Number.isFinite(group.amtCost)||Math.abs(group.amtCost)>Number.MAX_SAFE_INTEGER)group.knownCost=false;return group;});
+}
+/* Local estimates use the same old-SKU cost rule as the authoritative correction. */
+function syyCorrectionTotals(original,items,catalog,action){
+  var old=syyGroupBillRows(original),oldSell=old.reduce(function(n,g){return n+g.amtSell;},0),oldKnown=(original||[]).length>0&&old.every(function(g){return g.knownSell;}),source=new Map(),stocks=new Map();
+  (original||[]).forEach(function(row){var code=row.productCode,entry=source.get(code)||{qty:0,cost:syyRecordedNumber(row,'costPrice','hasCostPrice')};entry.qty+=Number(row.qty)||0;if(entry.cost!==syyRecordedNumber(row,'costPrice','hasCostPrice'))entry.cost=null;source.set(code,entry);});
+  (catalog||[]).forEach(function(row){stocks.set(row.productCode,row);});
+  if(action==='amend')items=original;if(action==='cancel')items=[];
+  var result={qty:0,sell:0,cost:0,oldSell:oldKnown?oldSell:null,knownSell:true,knownCost:true,knownQty:true,valid:action!=='replace'||(items||[]).length>0,lineTotals:[],changes:[],items:(items||[]).length},next=new Map();
+  (items||[]).forEach(function(item){
+    var qty=syyRecordedNumber(item,'qty','hasQty'),price=syyRecordedNumber(item,'unitPrice','hasUnitPrice'),code=String(item.productCode||'').trim(),product=stocks.get(code),saved=source.get(code),cost=saved?saved.cost:syyRecordedNumber(product,'costPrice');
+    var valid=!!code&&qty!==null&&Number.isFinite(qty)&&qty>0&&price!==null&&Number.isFinite(price)&&price>=0&&!next.has(code);if(!valid)result.valid=false;
+    if(qty===null||qty<=0)result.knownQty=false;else result.qty+=qty;
+    if(qty===null||qty<=0||price===null||price<0){result.knownSell=false;result.lineTotals.push(null);}else{var amount=qty*price;result.sell+=amount;result.lineTotals.push(amount);}
+    if(cost===null||cost<0||qty===null||qty<=0)result.knownCost=false;else result.cost+=qty*cost;
+    if(code)next.set(code,qty===null?null:qty);
+  });
+  if(action!=='amend')Array.from(new Set(Array.from(source.keys()).concat(Array.from(next.keys())))).forEach(function(code){
+    var product=stocks.get(code),before=syyRecordedNumber(product,'currentStock'),nextQty=next.has(code)?next.get(code):0,delta=nextQty===null?null:(source.get(code)?.qty||0)-nextQty;
+    result.changes.push({productCode:code,before:before,delta:delta,after:before===null||delta===null?null:before+delta});
+  });
+  if(!Number.isFinite(result.sell)||!Number.isFinite(result.cost)||Math.abs(result.sell)>Number.MAX_SAFE_INTEGER||Math.abs(result.cost)>Number.MAX_SAFE_INTEGER){result.valid=false;result.knownSell=false;result.knownCost=false;}
+  if(!result.knownQty)result.qty=null;
+  result.sell=result.knownSell?result.sell:null;result.cost=result.knownCost?result.cost:null;result.profit=result.sell===null||result.cost===null?null:result.sell-result.cost;result.difference=result.sell===null||result.oldSell===null?null:result.sell-result.oldSell;
+  return result;
+}
+
 var TH_MONTHS=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 function thDate(iso,withTime){
   var d=new Date(iso);
@@ -616,7 +678,7 @@ function syyUnpackCatalog(data){
  if(!Array.isArray(data.fields)||!Array.isArray(data.rows)||data.fields.some(function(key){return typeof key!=='string';})||data.rows.some(function(row){return !Array.isArray(row)||row.length!==data.fields.length;}))throw Error('ข้อมูลสินค้าไม่ครบ กรุณาลองใหม่');
  return data.rows.map(function(values){var row={imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:''};data.fields.forEach(function(key,i){if(key!=='__proto__'&&key!=='constructor'&&key!=='prototype')row[key]=values[i];});row.id=row.productCode;return row;});
 }
-function syyDecodeRead(data){data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);if(data&&data.movements&&data.movements.movementFormat===1){var packed=data.movements,allowed=['id','docNo','billNo','issueStatus','reversal','billCountDelta','type','productCode','productName','qty','stockAfter','unitPrice','costPrice','reason','refNo','note','user','timestamp','committedAt'];if(!Array.isArray(packed.fields)||packed.fields.some(function(k){return !allowed.includes(k);})||!Array.isArray(packed.rows)||packed.rows.some(function(r){return !Array.isArray(r)||r.length!==packed.fields.length;}))throw Error('ข้อมูลประวัติไม่ครบ');data.movements=packed.rows.map(function(r){var m={};packed.fields.forEach(function(k,i){m[k]=r[i];});return m;});}return data;}
+function syyDecodeRead(data){data=syyUnpackCatalog(data);if(data&&data.products)data.products=syyUnpackCatalog(data.products);if(data&&data.movements&&data.movements.movementFormat===1){var packed=data.movements,allowed=['id','docNo','billNo','issueStatus','reversal','billCountDelta','type','productCode','productName','qty','hasQty','stockAfter','unitPrice','costPrice','hasUnitPrice','hasCostPrice','reason','refNo','note','user','timestamp','committedAt'];if(!Array.isArray(packed.fields)||packed.fields.some(function(k){return !allowed.includes(k);})||!Array.isArray(packed.rows)||packed.rows.some(function(r){return !Array.isArray(r)||r.length!==packed.fields.length;}))throw Error('ข้อมูลประวัติไม่ครบ');data.movements=packed.rows.map(function(r){var m={};packed.fields.forEach(function(k,i){m[k]=r[i];});return m;});}return data;}
 // Disk snapshots only prepare a bootstrap. The authenticated server must
 // validate owner/session/version/age before the page displays these products.
 function syyRestoreCatalog(done){
@@ -815,15 +877,16 @@ syyOnReady(function(){
     var rows=data.movements,complete=data.complete!==false;
     function values(key,format){var out=[];rows.forEach(function(m){var value=format?format(m[key]):String(m[key]||'');if(value&&out.indexOf(value)<0)out.push(value);});return out.join('\n')||'—';}
     function field(label,value){return '<div><span class="label">'+esc(label)+'</span><div class="value">'+esc(value)+'</div></div>';}
-    var totalQty=0,totalValue=0,priced=0;
+    var totalQty=0,totalValue=0,priced=0,knownQty=true;
     var lines=rows.map(function(m,i){
-      var qty=Math.abs(num(m.qty)),hasPrice=m.hasUnitPrice===true,value=hasPrice?num(m.unitPrice)*num(m.qty):null;
-      totalQty+=num(m.qty);if(hasPrice){priced++;totalValue+=value;}
+      var recordedQty=syyRecordedNumber(m,'qty','hasQty'),qty=recordedQty===null?null:Math.abs(recordedQty),recordedPrice=syyRecordedNumber(m,'unitPrice','hasUnitPrice'),hasPrice=m.hasUnitPrice===true&&recordedPrice!==null&&recordedPrice>=0&&recordedQty!==null,value=hasPrice?recordedPrice*recordedQty:null;
+      if(recordedQty===null)knownQty=false;else totalQty+=recordedQty;
+      if(hasPrice&&Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER){priced++;totalValue+=value;}else{hasPrice=false;value=null;}
       function stock(v){return v==null||v===''?'—':esc(v);}
-      return '<tr><td class="rownum">'+(i+1)+'</td><td class="product-name-cell">'+esc(m.productName||'—')+'<div><span class="pn-badge">'+esc(m.productCode||'—')+'</span></div></td><td class="text-center">'+(m.type==='IN'||m.reversal?'+':'−')+qty+'</td><td class="text-right">'+(hasPrice?money(m.unitPrice):'<span class="cell-empty">ไม่ได้บันทึก</span>')+'</td><td class="text-right">'+(value==null?'—':money(value))+'</td><td class="text-center">'+stock(m.stockBefore)+'</td><td class="text-center">'+stock(m.stockAfter)+'</td></tr>';
+      return '<tr><td class="rownum">'+(i+1)+'</td><td class="product-name-cell">'+esc(m.productName||'—')+'<div><span class="pn-badge">'+esc(m.productCode||'—')+'</span></div></td><td class="text-center">'+(qty===null?'—':(m.type==='IN'||m.reversal?'+':'−')+qty)+'</td><td class="text-right">'+(hasPrice?money(m.unitPrice):'<span class="cell-empty">ไม่ได้บันทึก</span>')+'</td><td class="text-right">'+(value==null?'—':money(value))+'</td><td class="text-center">'+stock(m.stockBefore)+'</td><td class="text-center">'+stock(m.stockAfter)+'</td></tr>';
     }).join('');
     var summaryLabel=complete&&!data.legacy?'ยอดรวมรายการ':'ยอดรวมเฉพาะบรรทัดที่แสดง';
-    var html='<div class="movement-meta">'+field('เลขที่บิล / รายการ',data.billNo||rows[0].billNo||data.docNo||'ไม่มีเลขรายการ (ข้อมูลเดิม)')+(data.billNo||rows[0].billNo?field('รหัสอ้างอิงระบบเดิม',data.docNo):'')+field('ประเภท',values('type',function(t){return t==='IN'?'รับสินค้าเข้า':'ตัดสต๊อก / ขายหน้าร้าน';}))+field('เวลาที่ทำรายการ',values('timestamp',formatTime||function(v){return thDate(v,true);}))+field('ผู้ทำรายการ',values('user'))+field('เหตุผล',values('reason'))+field('เลขอ้างอิง',values('refNo'))+field('ใบเสนอราคาที่เกี่ยวข้อง',values('quoteId'))+field('หมายเหตุ',values('note'))+'</div>';
+    var html='<div class="movement-meta">'+field('เลขที่บิล / รายการ',syyBillLabel({billNo:data.billNo||rows[0].billNo,docNo:data.docNo}))+(data.billNo||rows[0].billNo?field('รหัสอ้างอิงระบบเดิม',data.docNo):'')+field('ประเภท',values('type',function(t){return t==='IN'?'รับสินค้าเข้า':'ตัดสต๊อก / ขายหน้าร้าน';}))+field('เวลาที่ทำรายการ',values('timestamp',formatTime||syyBillDate))+field('ผู้ทำรายการ',values('user'))+field('เหตุผล',values('reason'))+field('เลขอ้างอิง',values('refNo'))+field('ใบเสนอราคาที่เกี่ยวข้อง',values('quoteId'))+field('หมายเหตุ',values('note'))+'</div>';
     if(rows[0].issueStatus&&rows[0].issueStatus!=='active')html+='<div class="alert alert-warn">สถานะ: '+esc(rows[0].issueStatus==='cancelled'?'ยกเลิกแล้ว':'มีบิลทดแทน')+(rows[0].replacedBy?' · รหัสบิลทดแทน '+esc(rows[0].replacedBy):'')+'</div>';
     if(data.correction)html+='<div class="alert">แก้ไขโดย '+esc(data.correction.user)+' · '+esc(data.correction.reason)+'<br>หมายเหตุเดิม: '+esc(data.correction.previousNote||'—')+' · อ้างอิงเดิม: '+esc(data.correction.previousRefNo||'—')+'</div>';
     if(rows.some(function(m){return m.reversal;}))html+='<div class="alert alert-warn">รายการย้อนผลบิล · มูลค่าหักจากยอดเดิม ยอดสต๊อกก่อน/หลังเป็นผลรวมของการแก้ไขทั้งชุด</div>';
@@ -833,7 +896,7 @@ syyOnReady(function(){
     if(data.legacy)html+='<div class="alert alert-warn">ข้อมูลเดิมไม่มีเลขรายการ จึงแสดงรายละเอียดเฉพาะบรรทัดที่เลือก</div>';
     if(!complete)html+='<div class="alert alert-warn">รายการนี้มีมากกว่า 1,000 บรรทัด ข้อมูลที่แสดงยังไม่ครบ กรุณาติดต่อผู้ดูแล</div>';
     html+='<p class="movement-scroll-hint">เลื่อนตารางซ้าย–ขวาเพื่อดูราคาและสต๊อก</p><div class="table-wrap"><table><thead><tr><th>#</th><th>สินค้า</th><th>จำนวน</th><th>ราคาต่อหน่วยที่บันทึก</th><th>มูลค่า</th><th>สต๊อกก่อนทำ</th><th>สต๊อกหลังทำ</th></tr></thead><tbody>'+lines+'</tbody></table></div>';
-    html+='<div class="movement-summary"><span>'+summaryLabel+' · '+rows.length+' บรรทัด / '+totalQty.toLocaleString('th-TH')+' ชิ้น</span><b>'+(priced===rows.length?money(totalValue)+' บาท':priced?'มูลค่าเฉพาะ '+priced+' บรรทัดที่บันทึกราคา: '+money(totalValue)+' บาท':'ไม่ได้บันทึกมูลค่า')+'</b></div>';
+    html+='<div class="movement-summary"><span>'+summaryLabel+' · '+rows.length+' บรรทัด / '+(knownQty?totalQty.toLocaleString('th-TH'):'ไม่ทราบจำนวนครบ')+' ชิ้น</span><b>'+(!Number.isFinite(totalValue)||Math.abs(totalValue)>Number.MAX_SAFE_INTEGER?'มูลค่าเกินขอบเขตที่แสดงได้':priced===rows.length?money(totalValue)+' บาท':priced?'มูลค่าเฉพาะ '+priced+' บรรทัดที่บันทึกราคา: '+money(totalValue)+' บาท':'ไม่ได้บันทึกมูลค่า')+'</b></div>';
     return html;
   }
 </script>
@@ -843,7 +906,7 @@ document.addEventListener('click',function(event){
  var link=event.target.closest('[data-related-doc]');if(link){var doc=link.dataset.relatedDoc;if(typeof dashOpenBill==='function')dashOpenBill(doc);else if(typeof requestMovementDetail==='function'){movementDetailDocNo=doc;requestMovementDetail(doc);}return;}
  var button=event.target.closest('[data-audit-doc]');if(!button||button.disabled)return;var box=button.closest('[data-syy-audit]');button.disabled=true;box.querySelector('.syy-audit-error').textContent='กำลังโหลดประวัติ…';
  callApi('getStockIssueCorrectionHistory',[button.dataset.auditDoc,{cursor:button.dataset.auditCursor||''}],function(data){if(!button.isConnected)return;button.disabled=false;if(!data||!Array.isArray(data.entries)){box.querySelector('.syy-audit-error').textContent='โหลดประวัติไม่ครบ กรุณาลองใหม่';return;}
-  box.querySelector('.syy-audit-error').textContent=data.entries.length?'':'ไม่มีประวัติเพิ่มเติม';box.querySelector('.syy-audit-rows').insertAdjacentHTML('beforeend',data.entries.map(function(row){var labels={amend:'แก้หมายเหตุ/อ้างอิง',replace:'ออกบิลทดแทน',cancel:'ยกเลิกบิล'};return '<div class="alert"><b>'+esc(labels[row.action]||row.action)+'</b> · '+esc(thDate(row.timestamp,true))+' · '+esc(row.user)+'<br>'+esc(row.reason)+'<br>หมายเหตุ: '+esc(row.previousNote||'—')+' → '+esc(row.note||'—')+'<br>อ้างอิง: '+esc(row.previousRefNo||'—')+' → '+esc(row.refNo||'—')+(row.replacementBillNo?'<br>บิลทดแทน '+esc(row.replacementBillNo):'')+'</div>';}).join(''));button.dataset.auditCursor=data.nextCursor||'';button.textContent='ดูประวัติก่อนหน้า';button.hidden=!data.nextCursor;
+  box.querySelector('.syy-audit-error').textContent=data.entries.length?'':'ไม่มีประวัติเพิ่มเติม';box.querySelector('.syy-audit-rows').insertAdjacentHTML('beforeend',data.entries.map(function(row){var labels={amend:'แก้หมายเหตุ/อ้างอิง',replace:'ออกบิลทดแทน',cancel:'ยกเลิกบิล'};return '<div class="alert"><b>'+esc(labels[row.action]||row.action)+'</b> · '+esc(syyBillDate(row.timestamp))+' · '+esc(row.user)+'<br>'+esc(row.reason)+'<br>หมายเหตุ: '+esc(row.previousNote||'—')+' → '+esc(row.note||'—')+'<br>อ้างอิง: '+esc(row.previousRefNo||'—')+' → '+esc(row.refNo||'—')+(row.replacementBillNo?'<br>บิลทดแทน '+esc(row.replacementBillNo):'')+'</div>';}).join(''));button.dataset.auditCursor=data.nextCursor||'';button.textContent='ดูประวัติก่อนหน้า';button.hidden=!data.nextCursor;
  },function(error){if(!button.isConnected)return;button.disabled=false;box.querySelector('.syy-audit-error').textContent=syyErrorMessage(error);});
 });
 var syyLibraries=Object.create(null);

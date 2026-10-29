@@ -90,6 +90,9 @@
   .stock-badge{border-radius:20px;padding:2px 10px;font-size:12px;font-weight:600;margin-top:5px;display:inline-block}
   .empty-box{text-align:center;color:var(--faint);padding:32px 12px;font-size:13.5px}
 
+  .correction-line-controls{display:flex;align-items:center;gap:10px;margin-top:9px;flex-wrap:wrap}.correction-code{max-width:260px;margin-top:6px}.correction-line-controls .qty-box input{width:80px}#correctionLines{max-height:48vh;overflow:auto;gap:14px}#correctionStockEstimate{margin-top:12px}#correctionTotals{margin-top:14px}#correctionOriginalLines{max-height:40vh;overflow:auto}
+  .correction-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:18px}.correction-workspace.readonly{grid-template-columns:1fr}.correction-catalog{padding:16px;align-self:start}.correction-basket-panel{min-width:0}.correction-basket-panel>.form-group{margin-top:12px}#correctionProductMatches{max-height:50vh;overflow:auto}#issueCorrectionModal .modal-box{max-height:94dvh;display:flex;flex-direction:column}#issueCorrectionModal .modal-body{min-height:0;overflow:auto}@media(max-width:760px){.correction-workspace{grid-template-columns:1fr}#correctionLines{max-height:44vh}}
+  #correctionMetadataGroup label{display:flex;align-items:center;gap:10px;min-height:44px}#correctionMetadataOnly{width:18px!important;min-width:18px!important;height:18px!important;min-height:18px!important;flex:none}@media(max-width:760px){.correction-basket-panel{order:0}.correction-catalog{order:1}}
   /* ── ตะกร้า ── */
   .basket-head{background:var(--primary);color:#fff;padding:13px 18px;display:flex;justify-content:space-between;align-items:center;border-radius:12px 12px 0 0}
   .basket-head b{font-size:15px;font-weight:600}
@@ -263,16 +266,14 @@
           <table>
             <thead>
               <tr>
-                <th>เลขรายการ · คลิกดูรายละเอียด</th><th>เวลา</th><th>ประเภท</th><th>สินค้า</th>
-                <th class="text-center">จำนวน</th><th class="text-center">คงเหลือหลังทำ</th>
-                <th class="text-right">มูลค่า</th><th>เหตุผล / อ้างอิง</th><th>ผู้ทำรายการ</th>
+                <th>เลขบิล</th><th>วันที่–เวลา</th><th>ประเภท</th><th class="text-right">มูลค่า</th><th>เหตุผล</th><th>จัดการ</th>
               </tr>
             </thead>
-            <tbody id="mvBody"><tr><td colspan="9">⏳ กำลังโหลด...</td></tr></tbody>
+            <tbody id="mvBody"><tr><td colspan="6">⏳ กำลังโหลด...</td></tr></tbody>
           </table>
         </div>
         <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <span id="mvPageStatus" role="status" aria-live="polite"></span>
+          <span id="mvPageStatus" role="status" aria-live="polite"></span><span id="mvViewStatus" role="status"></span><span><button type="button" class="btn btn-ghost" id="mvViewPrev" onclick="changeMovementView(-1)">ก่อนหน้า</button><button type="button" class="btn btn-ghost" id="mvViewNext" onclick="changeMovementView(1)">ถัดไป</button></span>
           <span style="display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" class="btn btn-ghost" id="mvMore" onclick="loadMovementPage(false)">โหลดเพิ่ม</button>
             <button type="button" class="btn btn-ghost" id="mvAll" onclick="loadMovementPage(true)">โหลดครบขอบเขตประวัติ</button>
@@ -859,6 +860,7 @@
     }catch(e){clearRememberedIssue();}
   }
   function confirmIssue(alsoInvoice) {
+    if(document.getElementById('issueCorrectionModal')?.classList.contains('active'))return;
     if (issueBusy || prefillBusy) return;
     if (!basket.length) { swyWarning('ยังไม่มีรายการ', 'ค้นหาสินค้าแล้วกด “+ เพิ่มสินค้า” ก่อน'); return; }
 
@@ -957,12 +959,13 @@
   }
 
   function loadMovements() {
+    var restoreView=Math.max(1,Number(mvViewPage)||1);
     movementDetailGeneration++;
     movementDetailCache = Object.create(null);
     movementDetailPending = Object.create(null);
     closeMovementDetail();
-    clearTimeout(mvSearchTimer);movements=[];
-    mvPage={generation:mvPage.generation+1,busy:false,cursor:'',complete:false,initialized:false,all:false,error:''};
+    clearTimeout(mvSearchTimer);movements=[];movementBillCompleteness=Object.create(null);mvViewPage=1;mvViewSignature=mvFilter+'|'+document.getElementById('mvSearchInput').value;
+    mvPage={generation:mvPage.generation+1,busy:false,cursor:'',complete:false,initialized:false,all:false,error:'',restoreView:restoreView};
     loadMovementPage(false);
   }
 
@@ -974,86 +977,67 @@
     var state=mvPage,searching=!!document.getElementById('mvSearchInput').value.trim()||mvFilter!=='all';
     document.getElementById('mvPageStatus').innerText=state.error||
       (state.busy?(searching?'กำลังค้นหาให้ครบประวัติล่าสุด '+MV_LIMIT+' รายการ…':'กำลังโหลดประวัติ…'):
-      state.complete?'โหลดครบขอบเขตประวัติแล้ว · '+movements.length+' รายการล่าสุด':'โหลดแล้ว '+movements.length+' รายการ · ค้นหาครอบคลุมประวัติล่าสุด '+MV_LIMIT+' รายการ');
+      state.complete?'โหลดครบขอบเขต 1,000 movement ล่าสุดที่มีแล้ว พร้อมสินค้าทั้งบิลที่พบ':'โหลดจุดอ้างอิงแล้ว '+(state.candidateLoaded||0)+' movement · ค้นหาขอบเขตล่าสุด '+MV_LIMIT+' movement และสินค้าทั้งบิล');
     ['mvMore','mvAll'].forEach(function(id){var btn=document.getElementById(id);btn.hidden=state.complete;btn.disabled=state.busy;});
     document.getElementById('mvMore').textContent=state.error?'ลองโหลดต่ออีกครั้ง':'โหลดเพิ่ม';
   }
   function loadMovementPage(all){
     if(all)mvPage.all=true;if(mvPage.busy||mvPage.complete)return;
     mvPage.busy=true;mvPage.error='';var generation=mvPage.generation;
-    if(!movements.length)document.getElementById('mvBody').innerHTML=skeletonRows(9,6);
+    if(!movements.length)document.getElementById('mvBody').innerHTML=skeletonRows(6,6);
     updateMovementPager();
-    callApi('getStockMovementPage',[{pageSize:mvPage.all?200:50,cursor:mvPage.cursor,view:generation}],function(data){
+    callApi('getStockMovementPage',[{pageSize:mvPage.all?200:50,cursor:mvPage.cursor,view:generation,billMode:true}],function(data){
       if(generation!==mvPage.generation)return;
       if(!data||!Array.isArray(data.movements)||!data.pageInfo||data.pageInfo.hasMore&&(!data.pageInfo.nextCursor||data.pageInfo.nextCursor===mvPage.cursor||!data.movements.length)){failed({message:'ข้อมูลประวัติไม่ครบ กรุณาลองใหม่'});return;}
       var seen={};movements.forEach(function(m){seen[m.id]=true;});data.movements.forEach(function(m){if(!seen[m.id]){movements.push(m);seen[m.id]=true;}});
-      mvPage.initialized=true;mvPage.busy=false;mvPage.cursor=data.pageInfo.nextCursor||'';mvPage.complete=!data.pageInfo.hasMore;
+      (data.billCompleteness||[]).forEach(function(bill){movementBillCompleteness[bill.docNo]=movementBillCompleteness[bill.docNo]===true||bill.complete===true;});mvPage.candidateLoaded=data.pageInfo.loaded||mvPage.candidateLoaded||movements.length;mvPage.initialized=true;mvPage.busy=false;mvPage.cursor=data.pageInfo.nextCursor||'';mvPage.complete=!data.pageInfo.hasMore;
       renderMovements();
-      if(!mvPage.complete&&(mvPage.all||mvFilter!=='all'||document.getElementById('mvSearchInput').value.trim()))loadMovementPage(true);
+      if(!mvPage.complete&&(mvPage.restoreView||mvPage.all||mvFilter!=='all'||document.getElementById('mvSearchInput').value.trim()))loadMovementPage(mvPage.all||mvFilter!=='all'||!!document.getElementById('mvSearchInput').value.trim());
     },failed);
     function failed(err){if(generation!==mvPage.generation)return;mvPage.busy=false;mvPage.error='โหลดประวัติยังไม่ครบ: '+syyErrorMessage(err);renderMovements();}
   }
 
   var TH_MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
-  function fmtTime(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return iso || '-';
-    return d.getDate() + ' ' + TH_MONTHS[d.getMonth()] + ' ' + (d.getFullYear() + 543) + ' ' +
-      String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  function fmtTime(iso){return syyBillDate(iso);}
+
+  var movementBillCompleteness=Object.create(null),mvViewPage=1,mvViewSignature='';
+  function movementBillRows(){
+    var query=document.getElementById('mvSearchInput').value.toLowerCase().trim();
+    return syyGroupBillRows(movements,movementBillCompleteness).filter(function(group){return (mvFilter==='all'||group.type===mvFilter)&&(!query||group.rows.some(function(row){return [row.billNo,row.docNo,row.productName,row.productCode,row.reason,row.refNo,row.user,row.note].map(function(v){return String(v||'').toLowerCase();}).join(' | ').includes(query);}));}).sort(function(a,b){return (Number(b.ts)||0)-(Number(a.ts)||0)||a.key.localeCompare(b.key);});
   }
-
-  function renderMovements() {
-    updateMovementPager();
-    var q = document.getElementById('mvSearchInput').value.toLowerCase().trim();
-    var rows = mvFilter === 'all' ? movements.slice() : movements.filter(function (m) { return m.type === mvFilter; });
-    if (q) {
-      rows = rows.filter(function (m) {
-        return [m.billNo, m.docNo, m.productName, m.productCode, m.reason, m.refNo, m.user, m.note]
-          .map(function (x) { return String(x || '').toLowerCase(); }).join(' | ').indexOf(q) > -1;
-      });
-    }
-
-    document.getElementById('mvCount').innerText = movements.length
-      ? 'แสดง ' + rows.length + ' จาก ' + movements.length + ' รายการล่าสุด'
-      : '';
-    if(!mvPage.complete)document.getElementById('mvCount').innerText+=' · ข้อมูลยังไม่ครบ';
-
-    var tbody = document.getElementById('mvBody');
-    if (!rows.length) {
-      if(!mvPage.complete){tbody.innerHTML=emptyStateHtml(9,{title:mvPage.error?'โหลดประวัติยังไม่ครบ':'กำลังเตรียมผลการค้นหา',sub:mvPage.error||'ผลการค้นหาจะครบเมื่อโหลดประวัติล่าสุดเสร็จ'});return;}
-      tbody.innerHTML = emptyStateHtml(9, movements.length
-        ? { title: 'ไม่พบรายการที่ตรงกับที่ค้นหา', sub: 'ลองลดคำค้นหรือเปลี่ยนตัวกรอง' }
-        : { icon: '📭', title: 'ยังไม่มีประวัติเข้า-ออก', sub: 'รายการจะขึ้นทันทีที่มีการตัดสต๊อกหรือรับของเข้า' });
-      return;
-    }
-    tbody.innerHTML = rows.map(function (m) {
-      var isIn = m.type === 'IN';
-      // Show recorded prices only; a missing legacy/receipt price is not a zero price.
-      var value = m.hasUnitPrice ? num(m.unitPrice) * num(m.qty) : null;
-      return '<tr>' +
-        '<td><button type="button" class="movement-link" data-movement-id="' + esc(m.id) + '" title="ดูรายละเอียดรายการ">' + esc(m.billNo || m.docNo || 'ดูบรรทัดนี้ · ไม่มีเลขรายการ') + '</button></td>' +
-        '<td style="white-space:nowrap">' + esc(fmtTime(m.timestamp)) + '</td>' +
-        '<td><span class="' + (isIn ? 'mv-in' : 'mv-out') + '">' + (m.reversal?'↩ ย้อนรายการ':isIn ? '📥 เข้า' : '📤 ออก') + '</span></td>' +
-        '<td>' + esc(m.productName) + ' <span class="pn-badge">' + esc(m.productCode) + '</span></td>' +
-        '<td class="text-center" style="font-weight:600;color:' + (isIn ? 'var(--ok)' : 'var(--danger-dark)') + '">' + (isIn||m.reversal ? '+' : '−') + Math.abs(num(m.qty)) + '</td>' +
-        '<td class="text-center">' + esc(m.stockAfter === '' || m.stockAfter == null ? '-' : m.stockAfter) + '</td>' +
-        '<td class="text-right mono">' + (value == null ? '<span class="cell-empty">—</span>' : money(value)) + '</td>' +
-        '<td>' + esc(m.reason || '-') + (m.refNo ? ' · <span class="mono" style="font-size:11.5px">' + esc(m.refNo) + '</span>' : '') + '</td>' +
-        '<td>' + esc(m.user || '-') + '</td>' +
-      '</tr>';
+  function changeMovementView(delta){
+    var count=movementBillRows().length;
+    if(delta>0&&mvViewPage*50>=count){if(!mvPage.complete&&!mvPage.busy){mvPage.nextView=true;loadMovementPage(false);}return;}
+    mvViewPage=Math.max(1,mvViewPage+delta);renderMovements();
+  }
+  function renderMovements(){
+    var signature=mvFilter+'|'+document.getElementById('mvSearchInput').value;if(signature!==mvViewSignature){mvViewSignature=signature;mvViewPage=1;mvPage.restoreView=0;}
+    var groups=movementBillRows(),totalPages=Math.max(1,Math.ceil(groups.length/50));mvViewPage=Math.min(mvViewPage,totalPages);
+    if(mvPage.restoreView&&(totalPages>=mvPage.restoreView||mvPage.complete)){mvViewPage=Math.min(mvPage.restoreView,totalPages);mvPage.restoreView=0;}
+    if(mvPage.nextView){if(mvViewPage<totalPages)mvViewPage++;mvPage.nextView=false;}
+    updateMovementPager();document.getElementById('mvCount').textContent=groups.length+' บิล'+(!mvPage.complete?' · ยังโหลดขอบเขตไม่ครบ':'');
+    document.getElementById('mvViewStatus').textContent='หน้า '+mvViewPage+' / '+totalPages+' · แสดงไม่เกิน 50 บิลต่อหน้า';
+    document.getElementById('mvViewPrev').disabled=mvViewPage<=1;document.getElementById('mvViewNext').disabled=mvPage.busy||(mvViewPage>=totalPages&&mvPage.complete);
+    var visible=groups.slice((mvViewPage-1)*50,mvViewPage*50),tbody=document.getElementById('mvBody');
+    if(!visible.length){tbody.innerHTML=emptyStateHtml(6,{title:mvPage.error?'โหลดประวัติยังไม่ครบ':mvPage.busy?'กำลังโหลดประวัติ':mvPage.complete?'ไม่พบรายการที่ตรงกับการค้นหา':'ยังไม่พบในข้อมูลที่โหลด',sub:mvPage.error||'ค้นหาครอบคลุม 1,000 movement ล่าสุด และเติมสินค้าทั้งบิลที่พบให้ครบ'});return;}
+    tbody.innerHTML=visible.map(function(group){
+      var allRows=movements.filter(function(row){return row.docNo&&row.docNo===group.docNo;}),editable=group.consistent&&canCorrectIssue({docNo:group.docNo,complete:group.complete,movements:allRows}),known=group.type==='IN'?group.knownCost:group.knownSell,value=group.type==='IN'?group.amtCost:group.amtSell;
+      var action='<button type="button" class="btn btn-ghost" data-movement-id="'+esc(group.id)+'" aria-label="ดูรายละเอียดบิล '+esc(syyBillLabel(group))+'" title="ดูรายละเอียด">ดู</button>';
+      if(editable)action+='<button type="button" class="btn btn-ghost" data-movement-id="'+esc(group.id)+'" data-mv-action="replace" aria-label="แก้ไขบิล '+esc(syyBillLabel(group))+'" title="แก้ไขรายการสินค้า">✎</button><button type="button" class="btn btn-danger" data-movement-id="'+esc(group.id)+'" data-mv-action="cancel" aria-label="ยกเลิกบิล '+esc(syyBillLabel(group))+'" title="ยกเลิกบิล">ยกเลิก</button>';
+      return '<tr><td><button type="button" class="movement-link" data-movement-id="'+esc(group.id)+'">'+esc(syyBillLabel(group))+'</button>'+syyBillLegacyHtml(group)+'<div>'+syyBillStatusHtml(group)+(!group.consistent?'<span class="badge badge-warn">ข้อมูลไม่สอดคล้อง</span>':'')+'</div></td><td style="white-space:nowrap">'+esc(group.timeConsistent===false?'หลายเวลา · ดูรายละเอียด':syyBillDate(group.timestamp))+'</td><td>'+esc(group.reversal?'ย้อนรายการ':group.type==='IN'?'รับเข้า':'ตัดออก')+'</td><td class="text-right mono">'+(group.complete&&known?money(value):'<span class="cell-empty">—</span><small style="display:block">'+(group.complete?'ไม่ทราบราคาที่บันทึก':'ข้อมูลบิลยังไม่ครบ')+'</small>')+'</td><td>'+esc(Object.keys(group.reasons).join(', ')||'—')+'</td><td><div style="display:flex;gap:6px;flex-wrap:wrap">'+action+'</div></td></tr>';
     }).join('');
   }
 
   var movementDetailCache = Object.create(null), movementDetailPending = Object.create(null);
-  var movementDetailGeneration = 0, movementDetailDocNo = '';
+  var movementDetailGeneration = 0, movementDetailDocNo = '',movementDetailAction='';
   document.getElementById('mvBody').addEventListener('click',function(e){
     var button=e.target.closest('[data-movement-id]');
-    if(button)openMovementDetail(button.dataset.movementId);
+    if(button)openMovementDetail(button.dataset.movementId,button.dataset.mvAction||'');
   });
-  function closeMovementDetail(){movementDetailDocNo='';closeModal('movementDetailModal');}
-  function openMovementDetail(id){
+  function closeMovementDetail(){movementDetailDocNo='';movementDetailAction='';closeModal('movementDetailModal');}
+  function openMovementDetail(id,action){
     var row=movements.find(function(m){return m.id===id;});if(!row)return;
-    movementDetailDocNo=row.docNo||'';
+    movementDetailDocNo=row.docNo||'';movementDetailAction=action||'';
     openModal('movementDetailModal');
     if(!row.docNo){renderMovementDetail({docNo:'',movements:[row],complete:true,legacy:true});return;}
     requestMovementDetail(row.docNo);
@@ -1083,11 +1067,12 @@
   var correctionSource=null,correctionPayload=null,correctionBusy=false,correctionUncertain=false;
   var correctionStore=syyStorageKey('draft','stockCorrection');
   function canCorrectIssue(data){
-    return USER_ROLE==='admin'&&data&&data.complete!==false&&data.movements.length>0&&data.movements.length<=200&&data.movements.every(function(m){return m.type==='OUT'&&!m.reversal&&(!m.issueStatus||m.issueStatus==='active');});
+    return USER_ROLE==='admin'&&data&&data.docNo&&data.complete!==false&&data.movements.length>0&&data.movements.length<=200&&syyGroupBillRows(data.movements).length===1&&syyGroupBillRows(data.movements)[0].consistent&&data.movements.every(function(m){return m.type==='OUT'&&m.hasQty!==false&&Number.isFinite(Number(m.qty))&&Number(m.qty)>0&&!m.reversal&&(!m.issueStatus||m.issueStatus==='active');});
   }
   function renderMovementDetail(data){
     correctionSource=data;document.getElementById('movementDetailBody').innerHTML=syyMovementDetailHtml(data,fmtTime);
     if(canCorrectIssue(data))document.getElementById('movementDetailBody').insertAdjacentHTML('beforeend','<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px"><button type="button" class="btn btn-primary" onclick="openIssueCorrection(\'replace\')">แก้ไขรายการสินค้า</button><button type="button" class="btn btn-danger" onclick="openIssueCorrection(\'cancel\')">ยกเลิกบิล</button></div><p class="text-muted">การแก้ไขเก็บบิลเดิมและประวัติ โดยคืนผลเดิมแล้วออกบิลทดแทนเมื่อเปลี่ยนรายการสินค้า</p>');
+    if(movementDetailAction){var action=movementDetailAction;movementDetailAction='';if(canCorrectIssue(data))openIssueCorrection(action);else toast('รายการนี้เปิดดูได้ แต่ไม่สามารถแก้ไขหรือยกเลิกได้','warn');}
   }
   function correctionModal(){
     var modal=document.getElementById('issueCorrectionModal');if(modal)return modal;
@@ -1103,10 +1088,10 @@
       '<div class="form-group"><label for="correctionRef">เลขอ้างอิง</label><input id="correctionRef" maxlength="500"></div>',
       '<div class="form-group"><label for="correctionNote">หมายเหตุ</label><textarea id="correctionNote" maxlength="4000"></textarea></div>',
       '<section id="correctionItems"><p>สินค้าทั้งหมดในบิล · แก้จำนวน / ราคา หรือลบเฉพาะแถวได้ การลบทุกแถวต้องใช้ยกเลิกบิล</p>',
-      '<div class="table-wrap"><table><thead><tr><th>รหัสสินค้า / ชื่อสินค้า</th><th>จำนวน</th><th>ราคาต่อหน่วย</th><th>จัดการ</th></tr></thead><tbody id="correctionLines"></tbody></table></div>',
+      '<div class="card correction-basket"><div class="basket-head"><b>รายการที่จะตัดออก</b><span id="correctionBasketMeta" style="white-space:nowrap;font-size:12px"></span></div><div class="basket-body" id="correctionLines"></div></div>',
       '<div class="form-group"><label for="correctionProductSearch">เพิ่มสินค้าในบิล · ค้นจากรายการสินค้าที่โหลดแล้ว</label><input id="correctionProductSearch" type="search" placeholder="ค้นหารหัส / ชื่อ / P/N / บาร์โค้ด" autocomplete="off"><div id="correctionProductMatches" aria-live="polite"></div></div>',
       '<button type="button" class="btn btn-ghost" id="correctionAdd">+ เพิ่มบรรทัดด้วยรหัสสินค้า</button></section>',
-      '</div><div id="correctionPreview" role="status" aria-live="polite"></div></div>',
+      '<div id="correctionOriginalLines" class="basket-body" hidden></div><div id="correctionTotals" class="totals" aria-live="polite"><div class="row"><span>จำนวนที่ตัดออก</span><b id="correctionSumQty">—</b></div><div class="row"><span>ต้นทุนประมาณการ</span><b id="correctionSumCost">—</b></div><div class="row"><span>กำไรขั้นต้นประมาณการ</span><b id="correctionSumProfit">—</b></div><div class="row"><span>ยอดบิลเดิม</span><b id="correctionOldSell">—</b></div><div class="row"><span>ผลต่างยอดขาย</span><b id="correctionDifference">—</b></div><div class="grand"><span>ยอดขายรวมใหม่</span><span id="correctionSumSell">—</span></div></div><div id="correctionStockEstimate" class="preview-box"></div></div><div id="correctionPreview" role="status" aria-live="polite"></div></div>',
       '<div class="modal-footer" style="flex-wrap:wrap"><button type="button" class="btn btn-ghost" onclick="closeIssueCorrection()">ปิด</button>',
       '<button type="button" class="btn btn-ghost" id="correctionBackToEdit" hidden>กลับไปแก้ไข</button>',
       '<button type="button" class="btn btn-danger" id="correctionCancelBill">ยกเลิกบิล</button>',
@@ -1115,12 +1100,19 @@
       '<button type="button" class="btn btn-danger" id="correctionCancelConfirm" hidden disabled>ยืนยันยกเลิกบิล</button></div></div>'
     ].join('');
     document.body.appendChild(modal);
+    var workspace=document.createElement('div');workspace.id='correctionWorkspace';workspace.className='correction-workspace';
+    var catalog=document.createElement('section');catalog.id='correctionCatalog';catalog.className='card correction-catalog';var heading=document.createElement('h3');heading.textContent='ค้นหาและเพิ่มสินค้า';catalog.appendChild(heading);
+    catalog.append(modal.querySelector('#correctionProductSearch').closest('.form-group'),modal.querySelector('#correctionAdd'));
+    var basketPanel=document.createElement('section');basketPanel.className='correction-basket-panel';
+    ['correctionItems','correctionOriginalLines','correctionTotals','correctionStockEstimate','correctionMetadataGroup'].forEach(function(id){basketPanel.appendChild(modal.querySelector('#'+id));});
+    ['correctionReason','correctionIssueReason','correctionRef','correctionNote'].forEach(function(id){basketPanel.appendChild(modal.querySelector('#'+id).closest('.form-group'));});
+    workspace.append(catalog,basketPanel);modal.querySelector('#correctionForm').appendChild(workspace);
     modal.querySelector('#correctionAdd').onclick=function(){if(correctionBusy||correctionUncertain)return;addCorrectionLine({});correctionChanged();};
     modal.querySelector('#correctionProductSearch').oninput=renderCorrectionMatches;
     modal.querySelector('#correctionProductMatches').onclick=function(event){
       var button=event.target.closest('[data-correction-product]');if(!button||correctionBusy||correctionUncertain)return;
       var product=products.find(function(p){return p.productCode===button.dataset.correctionProduct;});if(!product)return;
-      var existing=Array.from(document.querySelectorAll('#correctionLines tr')).find(function(row){return row.querySelector('.correction-code').value.trim()===product.productCode;});
+      var existing=Array.from(document.querySelectorAll('#correctionLines .correction-line')).find(function(row){return row.querySelector('.correction-code').value.trim()===product.productCode;});
       if(existing){var qty=existing.querySelector('.correction-qty');qty.value=num(qty.value)+1;qty.focus();}
       else addCorrectionLine({productCode:product.productCode,productName:product.productName,qty:1,unitPrice:product.sellingPrice});
       modal.querySelector('#correctionProductSearch').value='';renderCorrectionMatches();correctionChanged();
@@ -1144,13 +1136,24 @@
     box.innerHTML=matches.length?matches.map(function(p){return '<button type="button" class="btn btn-ghost" data-correction-product="'+esc(p.productCode)+'" style="display:block;text-align:left;width:100%;white-space:normal">'+esc(p.productCode)+' · '+esc(p.productName)+' · '+money(p.sellingPrice)+'</button>';}).join(''):'<p>ไม่พบสินค้าในข้อมูลที่โหลดแล้ว สามารถเพิ่มบรรทัดด้วยรหัสสินค้าเพื่อตรวจบน Server ได้</p>';
   }
   function addCorrectionLine(item){
-    if(document.querySelectorAll('#correctionLines tr').length>=200){toast('รองรับไม่เกิน 200 รายการต่อบิล','warn');return;}
-    var tr=document.createElement('tr');
-    tr.innerHTML='<td><input aria-label="รหัสสินค้า" class="correction-code" value="'+esc(item.productCode||'')+'"><div class="correction-name"></div></td><td><input aria-label="จำนวนทดแทน" class="correction-qty" type="number" min="0" step="any" required value="'+esc(item.qty==null?'':item.qty)+'"></td><td><input aria-label="ราคาทดแทน" class="correction-price" type="number" min="0" step="any" required value="'+esc(item.unitPrice==null?'':item.unitPrice)+'"></td><td><button type="button" class="btn btn-danger" aria-label="ลบรายการสินค้า">ลบ</button></td>';
-    var code=tr.querySelector('.correction-code'),name=tr.querySelector('.correction-name');name.textContent=item.productName||'';
+    if(document.querySelectorAll('#correctionLines .correction-line').length>=200){toast('รองรับไม่เกิน 200 รายการต่อบิล','warn');return;}
+    var card=document.createElement('div');card.className='b-line correction-line';
+    card.innerHTML='<div class="b-line-top"><div style="min-width:0;flex:1"><div class="b-name correction-name"></div><input aria-label="รหัสสินค้า" class="correction-code form-control" value="'+esc(item.productCode||'')+'" placeholder="รหัสสินค้า"></div><button type="button" class="btn-x" aria-label="ลบรายการสินค้า">✕</button></div><div class="correction-line-controls"><div class="qty-box"><button type="button" aria-label="ลดจำนวนสินค้า" data-step="-1">−</button><input aria-label="จำนวนทดแทน" class="correction-qty" type="number" min="0.000001" step="any" required value="'+esc(item.qty==null?'':item.qty)+'"><button type="button" aria-label="เพิ่มจำนวนสินค้า" data-step="1">+</button></div><span>ชิ้น ×</span><label>ราคา <input aria-label="ราคาทดแทน" class="correction-price price-input" type="number" min="0" step="any" required value="'+esc(item.unitPrice==null?'':item.unitPrice)+'"></label><span class="b-total correction-line-total">—</span></div>';
+    var code=card.querySelector('.correction-code'),name=card.querySelector('.correction-name');name.textContent=item.productName||'ระบุสินค้า';
     code.oninput=function(){var p=products.find(function(p){return p.productCode===code.value.trim();});name.textContent=p?p.productName:'ระบบจะตรวจรหัสสินค้าเมื่อกดตรวจผล';};
-    Array.from(tr.cells).forEach(function(cell,i){cell.dataset.label=['รหัสสินค้า / ชื่อสินค้า','จำนวน','ราคาต่อหน่วย',''][i];});
-    tr.querySelector('button').onclick=function(){if(correctionBusy||correctionUncertain)return;tr.remove();correctionChanged();};document.getElementById('correctionLines').appendChild(tr);
+    card.querySelector('.btn-x').onclick=function(){if(correctionBusy||correctionUncertain)return;card.remove();correctionChanged();};
+    card.querySelectorAll('[data-step]').forEach(function(button){button.onclick=function(){if(correctionBusy||correctionUncertain)return;var input=card.querySelector('.correction-qty'),next=Number(input.value)+Number(button.dataset.step);if(!Number.isFinite(next)||next<=0){toast('จำนวนต้องมากกว่า 0 ใช้ปุ่มลบเพื่อนำสินค้าออก','warn');return;}input.value=next;correctionChanged();};});
+    document.getElementById('correctionLines').appendChild(card);
+  }
+  function correctionItemsValue(){return Array.from(document.querySelectorAll('#correctionLines .correction-line')).map(function(row){return {productCode:row.querySelector('.correction-code').value.trim(),qty:row.querySelector('.correction-qty').value,unitPrice:row.querySelector('.correction-price').value};});}
+  function renderCorrectionTotals(){
+    if(!document.getElementById('correctionTotals'))return;
+    var original=correctionSource&&correctionSource.movements||[],action=document.getElementById('correctionAction').value,items=correctionItemsValue(),result=syyCorrectionTotals(original,items,products,action),cards=document.querySelectorAll('#correctionLines .correction-line');
+    cards.forEach(function(card,i){var qty=syyRecordedNumber(items[i],'qty'),price=syyRecordedNumber(items[i],'unitPrice');card.querySelector('.correction-line-total').textContent=qty===null||qty<=0||price===null||price<0?'—':money(qty*price);});
+    function show(id,value,currency){document.getElementById(id).textContent=value===null?'—':currency?money(value):value.toLocaleString('th-TH',{maximumFractionDigits:6})+' ชิ้น';}
+    document.getElementById('correctionBasketMeta').textContent=result.items+' รายการ';show('correctionSumQty',result.qty,false);show('correctionSumCost',result.cost,true);show('correctionSumProfit',result.profit,true);show('correctionSumSell',result.sell,true);show('correctionOldSell',result.oldSell,true);show('correctionDifference',result.difference,true);
+    document.getElementById('correctionStockEstimate').innerHTML='<b>ผลสต๊อกประมาณการจากข้อมูลที่โหลดแล้ว</b>'+(!result.valid&&action==='replace'?'<p>กรอกรหัส จำนวน และราคาให้ครบ โดยจำนวนต้องมากกว่า 0 และไม่ซ้ำรหัสสินค้า</p>':'')+result.changes.map(function(change){return '<p>'+esc(change.productCode)+' · '+(change.before===null?'รอตรวจสต๊อกบน Server':esc(change.before)+' → '+(change.after===null?'—':esc(change.after))+' ('+(change.delta>0?'+':'')+esc(change.delta==null?'—':change.delta)+')')+(change.after!==null&&change.after<0?' · สต๊อกไม่พอ ต้องตรวจข้อมูลก่อนบันทึก':'')+'</p>';}).join('')+'<small>กดตรวจผลก่อนดำเนินการ เพื่อยืนยันสต๊อกปัจจุบันและข้อมูลบิลบน Server</small>';
+    var readonly=document.getElementById('correctionOriginalLines');readonly.innerHTML=action==='replace'?'':original.map(function(row){return '<div class="b-line"><div class="b-name">'+esc(row.productName||row.productCode)+'</div><div class="b-sub">'+esc(row.productCode)+'</div><div>'+esc(row.qty)+' ชิ้น × '+(syyRecordedNumber(row,'unitPrice','hasUnitPrice')===null?'—':money(row.unitPrice))+'<span class="b-total">'+(syyRecordedNumber(row,'unitPrice','hasUnitPrice')===null?'—':money(Number(row.qty)*Number(row.unitPrice)))+'</span></div></div>';}).join('');readonly.hidden=action==='replace';
   }
   function lockCorrection(locked){
     document.querySelectorAll('#correctionForm input,#correctionForm textarea,#correctionForm select,#correctionForm button').forEach(function(el){el.disabled=locked;});
@@ -1160,7 +1163,7 @@
     var action=document.getElementById('correctionAction').value,cancel=action==='cancel';
     document.getElementById('correctionTitle').textContent=cancel?'ยกเลิกบิลและคืนสต๊อก · Admin':'แก้ไขรายการสินค้า · Admin';
     document.getElementById('correctionModeLabel').textContent=cancel?'ยกเลิกทั้งบิล: คืนสต๊อกตามรายการเดิม และเก็บประวัติไว้ตรวจสอบ':action==='amend'?'แก้เฉพาะหมายเหตุ / อ้างอิง โดยไม่เปลี่ยนจำนวนสินค้าหรือมูลค่า':'แก้ไขรายการ: คืนผลสต๊อกเดิมและออกบิลทดแทน พร้อมตรวจยอดสุทธิก่อนบันทึก';
-    document.getElementById('correctionItems').hidden=action!=='replace';document.getElementById('correctionMetadataGroup').hidden=cancel;
+    document.getElementById('correctionItems').hidden=action!=='replace';document.getElementById('correctionCatalog').hidden=action!=='replace';document.getElementById('correctionWorkspace').classList.toggle('readonly',action!=='replace');document.getElementById('correctionMetadataGroup').hidden=cancel;
     document.getElementById('correctionIssueReason').closest('.form-group').hidden=action!=='replace';
     ['correctionRef','correctionNote'].forEach(function(id){document.getElementById(id).closest('.form-group').hidden=cancel;});
     document.getElementById('correctionConfirm').hidden=cancel;document.getElementById('correctionCancelConfirm').hidden=!cancel;
@@ -1171,11 +1174,11 @@
     if(correctionBusy||correctionUncertain)return;correctionMode();correctionPayload=null;
     document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionConfirm').textContent='บันทึกการแก้ไข';
     document.getElementById('correctionCancelConfirm').disabled=true;document.getElementById('correctionCancelConfirm').textContent='ยืนยันยกเลิกบิล';
-    document.getElementById('correctionPreview').textContent='ข้อมูลเปลี่ยน กรุณาตรวจผลก่อนดำเนินการ';
+    document.getElementById('correctionPreview').textContent='ข้อมูลเปลี่ยน กรุณาตรวจผลก่อนดำเนินการ';renderCorrectionTotals();
   }
   function openIssueCorrection(mode){
     if(!canCorrectIssue(correctionSource))return;correctionModal();if(correctionUncertain){openModal('issueCorrectionModal');return;}
-    var first=correctionSource.movements[0];document.getElementById('correctionBill').textContent='เลขรายการ '+(correctionSource.billNo||correctionSource.docNo)+' · '+correctionSource.movements.length+' รายการ';
+    var first=correctionSource.movements[0];document.getElementById('correctionBill').textContent='เลขรายการ '+syyBillLabel(correctionSource)+' · '+correctionSource.movements.length+' รายการ';
     document.getElementById('correctionIssueReason').innerHTML=document.getElementById('inpReason').innerHTML;
     document.getElementById('correctionIssueReason').value=first.reason||'ขายหน้าร้าน';document.getElementById('correctionRef').value=first.refNo||'';document.getElementById('correctionNote').value=first.note||'';
     document.getElementById('correctionLines').innerHTML='';correctionSource.movements.forEach(addCorrectionLine);
@@ -1187,12 +1190,13 @@
   function previewIssueCorrection(){
     if(correctionBusy||correctionUncertain||!correctionSource)return;
     var action=document.getElementById('correctionAction').value;
-    var items=action==='replace'?Array.from(document.querySelectorAll('#correctionLines tr')).map(function(row){return {productCode:row.querySelector('.correction-code').value.trim(),qty:row.querySelector('.correction-qty').value,unitPrice:row.querySelector('.correction-price').value};}):[];
+    var items=action==='replace'?correctionItemsValue():[];
     if(action==='replace'&&!items.length){document.getElementById('correctionPreview').textContent='ต้องมีสินค้าอย่างน้อย 1 รายการ หากต้องการลบทั้งบิลให้ใช้ปุ่มยกเลิกบิล';return;}
     if(action==='replace'&&items.some(function(item,i){return !item.productCode||!item.qty.trim()||!item.unitPrice.trim()||!Number.isFinite(Number(item.qty))||Number(item.qty)<=0||!Number.isFinite(Number(item.unitPrice))||Number(item.unitPrice)<0||items.some(function(other,j){return i!==j&&other.productCode===item.productCode;});})){document.getElementById('correctionPreview').textContent='ตรวจรหัสสินค้าไม่ให้ซ้ำ จำนวนต้องมากกว่า 0 และกรอกราคาต่อหน่วยตั้งแต่ 0 ขึ้นไป';return;}
+    var previewRevision=syyDataRevision();
     var payload={requestId:crypto.randomUUID(),docNo:correctionSource.docNo,revision:Number(correctionSource.movements[0].issueRevision)||0,action:action,correctionReason:document.getElementById('correctionReason').value,reason:document.getElementById('correctionIssueReason').value,refNo:document.getElementById('correctionRef').value,note:document.getElementById('correctionNote').value,items:items};
     correctionPayload=null;document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionCancelConfirm').disabled=true;correctionBusy=true;lockCorrection(true);document.getElementById('correctionPreview').textContent='กำลังตรวจบิลและสต๊อกปัจจุบัน…';
-    callApi('getStockIssueCorrectionPreview',[payload],function(data){correctionBusy=false;lockCorrection(false);if(!data||!data.previewToken){document.getElementById('correctionPreview').textContent='ผลตรวจไม่ครบ กรุณาลองใหม่';return;}
+    callApi('getStockIssueCorrectionPreview',[payload],function(data){correctionBusy=false;lockCorrection(false);if(previewRevision!==syyDataRevision()){correctionChanged();document.getElementById('correctionPreview').textContent='ข้อมูลสินค้าเปลี่ยนระหว่างตรวจผล กรุณาตรวจใหม่';return;}if(!data||!data.previewToken){document.getElementById('correctionPreview').textContent='ผลตรวจไม่ครบ กรุณาลองใหม่';return;}
       correctionPayload=Object.assign(payload,{previewToken:data.previewToken});document.getElementById('correctionPreview').innerHTML='<div class="alert alert-warn">'+esc(data.warning)+'</div><p>มูลค่าเดิม '+money(data.oldAmount)+' · '+(action==='amend'?'ไม่เปลี่ยนมูลค่า':action==='cancel'?'ยกเลิกทั้งบิลและคืนสต๊อก':'มูลค่าทดแทน '+money(data.newAmount))+'</p>'+data.changes.map(function(x){return '<p>'+esc(x.productCode)+' · '+esc(x.productName||'')+' · สต๊อกปัจจุบัน '+esc(x.before)+' → '+esc(x.after)+' ('+(x.delta>=0?'+':'')+esc(x.delta)+')</p>';}).join('');correctionSubmitButton().disabled=false;
     },function(error){correctionBusy=false;lockCorrection(false);document.getElementById('correctionPreview').textContent=syyErrorMessage(error);});
   }
@@ -1207,11 +1211,11 @@
     },function(error){correctionBusy=false;correctionFailed(syyErrorMessage(error),true);});
   }
   function correctionFailed(message,uncertain){correctionUncertain=uncertain;lockCorrection(uncertain);document.getElementById('correctionPreview').textContent=message+(uncertain?' · กดยืนยันตรวจคำขอเดิม ห้ามสร้างรายการใหม่':' · ตรวจรายละเอียดและตัวอย่างใหม่');document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionCancelConfirm').disabled=true;var button=correctionSubmitButton();button.disabled=!uncertain;button.textContent=uncertain?'ตรวจผลคำขอเดิม':document.getElementById('correctionAction').value==='cancel'?'ยืนยันยกเลิกบิล':'บันทึกการแก้ไข';if(!uncertain){correctionPayload=null;try{sessionStorage.removeItem(correctionStore);}catch(e){}}}
-  syyOnReady(function(){if(USER_ROLE!=='admin')return;try{var saved=JSON.parse(sessionStorage.getItem(correctionStore)||'null');if(saved&&saved.url===WEB_APP_URL&&saved.payload&&saved.payload.requestId){correctionModal();correctionPayload=saved.payload;document.getElementById('correctionBill').textContent='คำขอเดิม: '+correctionPayload.docNo;document.getElementById('correctionAction').value=correctionPayload.action;document.getElementById('correctionMetadataOnly').checked=correctionPayload.action==='amend';document.getElementById('correctionIssueReason').innerHTML=document.getElementById('inpReason').innerHTML;document.getElementById('correctionIssueReason').value=correctionPayload.reason||'ขายหน้าร้าน';document.getElementById('correctionReason').value=correctionPayload.correctionReason;document.getElementById('correctionRef').value=correctionPayload.refNo;document.getElementById('correctionNote').value=correctionPayload.note;(correctionPayload.items||[]).forEach(addCorrectionLine);correctionMode();correctionUncertain=true;correctionFailed('มีคำขอแก้ไขที่ยังไม่ยืนยันผล',true);openModal('issueCorrectionModal');}}catch(e){}});
+  syyOnReady(function(){if(USER_ROLE!=='admin')return;try{var saved=JSON.parse(sessionStorage.getItem(correctionStore)||'null');if(saved&&saved.url===WEB_APP_URL&&saved.payload&&saved.payload.requestId){correctionModal();correctionPayload=saved.payload;document.getElementById('correctionBill').textContent='คำขอเดิม: '+correctionPayload.docNo;document.getElementById('correctionAction').value=correctionPayload.action;document.getElementById('correctionMetadataOnly').checked=correctionPayload.action==='amend';document.getElementById('correctionIssueReason').innerHTML=document.getElementById('inpReason').innerHTML;document.getElementById('correctionIssueReason').value=correctionPayload.reason||'ขายหน้าร้าน';document.getElementById('correctionReason').value=correctionPayload.correctionReason;document.getElementById('correctionRef').value=correctionPayload.refNo;document.getElementById('correctionNote').value=correctionPayload.note;(correctionPayload.items||[]).forEach(addCorrectionLine);correctionMode();renderCorrectionTotals();correctionUncertain=true;correctionFailed('มีคำขอแก้ไขที่ยังไม่ยืนยันผล',true);openModal('issueCorrectionModal');}}catch(e){}});
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('issueCorrectionModal')?.classList.contains('active')){e.preventDefault();e.stopImmediatePropagation();closeIssueCorrection();}},true);
 </script>
 <script>
-function reconcileStockBasket(){basket.forEach(function(line){var product=products.find(function(p){return p.productCode===line.productCode;});if(product){line.stock=num(product.currentStock);line.productName=product.productName;line.minStock=num(product.minStock);}});updateCounts();renderResults();renderBasket();}
+function reconcileStockBasket(){basket.forEach(function(line){var product=products.find(function(p){return p.productCode===line.productCode;});if(product){line.stock=num(product.currentStock);line.productName=product.productName;line.minStock=num(product.minStock);}});updateCounts();renderResults();renderBasket();if(document.getElementById('issueCorrectionModal')?.classList.contains('active')&&!correctionBusy&&!correctionUncertain)correctionChanged();}
 syyRegisterFreshness({reload:loadProducts,canRefresh:function(){return !issueBusy&&!issueUncertain()&&!prefillBusy;},
   stock:function(stocks){syyApplyStockRows(products,stocks);reconcileStockBasket();},product:function(product,deleted){syyApplyProductRows(products,product,deleted);buildCategoryFilter();reconcileStockBasket();}});
 </script>
@@ -1223,7 +1227,7 @@ syyOnReady(function(){syyDraftRegister('stockissue',{
 });});
 </script>
 <script>
-syyOnReady(function(){syyViewRegister('stockissue',function(){return {search:searchInputEl.value,category:document.getElementById('filterCategory').value,stockFilter:stockFilter,mvFilter:mvFilter,tab:document.getElementById('panelHistory').classList.contains('active')?'history':'issue',scroll:window.scrollY};},function(v){searchInputEl.value=v.search||'';document.getElementById('filterCategory').value=v.category||'';stockFilter=v.stockFilter||'all';mvFilter=v.mvFilter||'all';renderResults();switchTab(v.tab==='history'?'history':'issue');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
+syyOnReady(function(){syyViewRegister('stockissue',function(){return {search:searchInputEl.value,category:document.getElementById('filterCategory').value,stockFilter:stockFilter,mvFilter:mvFilter,historySearch:document.getElementById('mvSearchInput').value,historyPage:mvViewPage,tab:document.getElementById('panelHistory').classList.contains('active')?'history':'issue',scroll:window.scrollY};},function(v){searchInputEl.value=v.search||'';document.getElementById('filterCategory').value=v.category||'';stockFilter=v.stockFilter||'all';mvFilter=v.mvFilter||'all';document.getElementById('mvSearchInput').value=v.historySearch||'';mvViewPage=Math.max(1,Math.min(100,Number(v.historyPage)||1));mvViewSignature=mvFilter+'|'+document.getElementById('mvSearchInput').value;renderResults();switchTab(v.tab==='history'?'history':'issue');requestAnimationFrame(function(){window.scrollTo(0,v.scroll||0);});});});
 </script>
 </body>
 </html>

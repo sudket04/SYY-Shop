@@ -4221,6 +4221,10 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
       return { success: false, message: "รูปแบบข้อมูลคำขอไม่ถูกต้อง" };
     }
     var a = args || [];
+    // Completing bills may include lines outside the recent-history window.
+    // Keep the same staff boundary as the existing full-detail endpoint.
+    if(fnName==='getStockMovementPage'&&a[0]&&a[0].billMode===true&&userRank<ROLE_RANK.staff)
+      return {success:false,message:'สิทธิ์ของคุณไม่เพียงพอสำหรับดูรายละเอียดทั้งบิล'};
 
     if (fnName === "saveMasterData" && SAVE_MASTER_ALLOWED.indexOf(a[0]) === -1) {
       return { success: false, message: "ไม่อนุญาตให้บันทึกข้อมูลลงชุดข้อมูลนี้" };
@@ -5210,6 +5214,7 @@ function logStockIn_(additions, reason, refNo, callerUsername) {
 function stockMovementDto_(document) {
   var f = document.fields || {};
   var recordedPrice = parseFirestoreValue_(f.Unit_Price);
+  var recordedCost = parseFirestoreValue_(f.Cost_Price);
   return {
     id          : document.name.split("/").pop(),
     docNo       : parseFirestoreValue_(f.Doc_No),
@@ -5226,11 +5231,13 @@ function stockMovementDto_(document) {
     productCode : parseFirestoreValue_(f.Product_Code),
     productName : parseFirestoreValue_(f.Product_Name),
     qty         : parseFloat(parseFirestoreValue_(f.Qty)) || 0,
+    hasQty      : !!f.Qty && parseFirestoreValue_(f.Qty)!=='' && parseFirestoreValue_(f.Qty)!=null && Number.isFinite(Number(parseFirestoreValue_(f.Qty))),
     stockBefore : parseFirestoreValue_(f.Stock_Before),
     stockAfter  : parseFirestoreValue_(f.Stock_After),
     unitPrice   : parseFloat(parseFirestoreValue_(f.Unit_Price)) || 0,
     costPrice   : parseFloat(parseFirestoreValue_(f.Cost_Price)) || 0,
     hasUnitPrice: !!f.Unit_Price && recordedPrice !== "" && recordedPrice != null && isFinite(Number(recordedPrice)) && Number(recordedPrice) >= 0,
+    hasCostPrice: !!f.Cost_Price && recordedCost !== "" && recordedCost != null && isFinite(Number(recordedCost)) && Number(recordedCost) >= 0,
     reason      : parseFirestoreValue_(f.Reason),
     refNo       : parseFirestoreValue_(f.Ref_No),
     quoteId     : parseFirestoreValue_(f.Quote_Id),
@@ -5336,8 +5343,49 @@ function queryMovementPage_(field,from,options,cap){
 }
 function getStockMovementPage_(options){
  var page=queryMovementPage_('Timestamp','',options,1000);
+ if(options&&options.billMode===true)return completeMovementBillPage_(page);
  return {movements:page.docs.map(stockMovementDto_),pageInfo:page.pageInfo};
 }
+
+// Candidate browsing retains its signed 1,000-movement snapshot. Batch IN
+// queries complete only the selected bills at that same readTime, never a
+// collection scan or one query per visible row. Oversized batches stay explicit.
+function completeMovementBillPage_(page){
+ var scopes=[STOCK_MOVEMENT_COLLECTION],age=60000,version='',now=Date.now(),rows=Object.create(null),complete=Object.create(null),byDoc=Object.create(null),candidate=Object.create(null),pending=[];
+ try{version=readCacheVersion_(scopes);}catch(e){}
+ page.docs.forEach(function(doc){var row=stockMovementDto_(doc);rows[row.id]=row;var no=row.docNo;
+   if(typeof no!=='string'||!no.trim()||no.length>160||/[\x00-\x1f\x7f]/.test(no))return;
+   if(!candidate[no])candidate[no]=[];candidate[no].push(row);
+   if(Object.prototype.hasOwnProperty.call(byDoc,no))return;
+   var key='bill-snapshot-v1:'+page.pageInfo.readTime+':'+no,cached=readResultCache_(key,scopes,age);byDoc[no]=key;
+   if(cached&&cached.docNo===no&&cached.complete===true&&Array.isArray(cached.movements)){complete[no]=true;cached.movements.forEach(function(m){rows[m.id]=m;});}else pending.push(no);
+ });
+ function query(batch){return {from:[{collectionId:STOCK_MOVEMENT_COLLECTION}],where:{fieldFilter:{field:{fieldPath:'Doc_No'},op:'IN',value:{arrayValue:{values:batch.map(function(no){return {stringValue:no};})}}}}};}
+ function request(body,aggregate){return {url:'https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:'+(aggregate?'runAggregationQuery':'runQuery'),method:'post',headers:getAuthHeader_(),muteHttpExceptions:true,payload:JSON.stringify(body)};}
+ function keep(no,group,isComplete){complete[no]=isComplete;group.forEach(function(row){rows[row.id]=row;});if(isComplete&&version)writeResultCache_(byDoc[no],scopes,{docNo:no,complete:true,movements:group},age,version,now);}
+ var batches=[],countRequests=[],needsRows=[];
+ for(var i=0;i<pending.length;i+=10){var batch=pending.slice(i,i+10),known=batch.reduce(function(n,no){return n+candidate[no].length;},0);batches.push({names:batch,known:known});countRequests.push(request({readTime:page.pageInfo.readTime,structuredAggregationQuery:{structuredQuery:query(batch),aggregations:[{alias:'line_count',count:{upTo:String(known+1)}}]}},true));}
+ // Each batch only counts up to known rows + one. Equality proves that the
+ // candidate rows already contain every matching line at the pinned snapshot.
+ if(countRequests.length)UrlFetchApp.fetchAll(countRequests).forEach(function(response,index){
+   if(response.getResponseCode()!==200)throw new Error('ตรวจความครบของบิลไม่สำเร็จ กรุณาลองใหม่');
+   var answer=JSON.parse(response.getContentText()),results=(Array.isArray(answer)?answer:[answer]).filter(function(r){return r.result&&r.result.aggregateFields&&r.result.aggregateFields.line_count;}),batch=batches[index];
+   if(results.length!==1)throw new Error('ผลตรวจจำนวนบรรทัดไม่ครบ');
+   var count=Number(parseFirestoreValue_(results[0].result.aggregateFields.line_count));
+   if(!Number.isSafeInteger(count)||count<batch.known)throw new Error('จำนวนบรรทัดไม่ตรงกับ snapshot');
+   if(count===batch.known)batch.names.forEach(function(no){keep(no,candidate[no],true);});else needsRows.push(batch.names);
+ });
+ var budget=needsRows.length?Math.max(100,Math.floor(2000/needsRows.length)):0,requests=needsRows.map(function(batch){var q=query(batch);q.limit=budget+1;return request({readTime:page.pageInfo.readTime,structuredQuery:q},false);});
+ if(requests.length)UrlFetchApp.fetchAll(requests).forEach(function(response,index){
+   if(response.getResponseCode()!==200)throw new Error('โหลดสรุปบิลไม่ครบ กรุณาลองใหม่');
+   var documents=JSON.parse(response.getContentText()).filter(function(r){return !!r.document;}),truncated=documents.length>budget,groups=Object.create(null);
+   needsRows[index].forEach(function(no){groups[no]=[];});
+   documents.slice(0,budget).forEach(function(entry){var row=stockMovementDto_(entry.document);if(!Object.prototype.hasOwnProperty.call(groups,row.docNo))throw new Error('ข้อมูลบิลไม่ตรงกับคำขอ');groups[row.docNo].push(row);});
+   needsRows[index].forEach(function(no){var group=groups[no];keep(no,group,!truncated&&group.length>0&&group.length<=1000);});
+ });
+ return {movements:Object.keys(rows).map(function(id){return rows[id];}),billCompleteness:Object.keys(byDoc).map(function(no){return {docNo:no,complete:complete[no]===true};}),pageInfo:page.pageInfo};
+}
+
 
 function fetchAllStockMovements_() {
   var out = [];
@@ -5388,9 +5436,12 @@ function mapDashboardMovementRow_(row) {
     productCode : parseFirestoreValue_(f.Product_Code) || "",
     productName : parseFirestoreValue_(f.Product_Name) || "",
     qty         : parseFloat(parseFirestoreValue_(f.Qty)) || 0,
+    hasQty      : !!f.Qty && parseFirestoreValue_(f.Qty)!=='' && parseFirestoreValue_(f.Qty)!=null && Number.isFinite(Number(parseFirestoreValue_(f.Qty))),
     stockAfter  : parseFloat(parseFirestoreValue_(f.Stock_After)) || 0,
     unitPrice   : parseFloat(parseFirestoreValue_(f.Unit_Price)) || 0,
     costPrice   : f.Cost_Price ? Number(parseFirestoreValue_(f.Cost_Price)) : null,
+    hasUnitPrice: !!f.Unit_Price && parseFirestoreValue_(f.Unit_Price)!=='' && parseFirestoreValue_(f.Unit_Price)!=null && Number.isFinite(Number(parseFirestoreValue_(f.Unit_Price))) && Number(parseFirestoreValue_(f.Unit_Price))>=0,
+    hasCostPrice: !!f.Cost_Price && parseFirestoreValue_(f.Cost_Price)!=='' && parseFirestoreValue_(f.Cost_Price)!=null && Number.isFinite(Number(parseFirestoreValue_(f.Cost_Price))) && Number(parseFirestoreValue_(f.Cost_Price))>=0,
     committedAt : parseFirestoreValue_(f.Committed_At) || "",
     reason      : parseFirestoreValue_(f.Reason) || "",
     refNo       : parseFirestoreValue_(f.Ref_No) || "",
@@ -5444,7 +5495,7 @@ function buildPoVendorMapForMovements_(movements) {
 }
 
 function packDashboardMovements_(movements){
-  var fields=['id','docNo','billNo','issueStatus','reversal','billCountDelta','type','productCode','productName','qty','stockAfter','unitPrice','costPrice','committedAt','reason','refNo','note','user','timestamp'];
+  var fields=['id','docNo','billNo','issueStatus','reversal','billCountDelta','type','productCode','productName','qty','hasQty','stockAfter','unitPrice','costPrice','hasUnitPrice','hasCostPrice','committedAt','reason','refNo','note','user','timestamp'];
   return {movementFormat:1,fields:fields,rows:movements.map(function(m){return fields.map(function(k){return m[k];});})};
 }
 function dashboardCatalogVersion_(){
@@ -5456,7 +5507,7 @@ function getDashboardBootstrap_(options){
   options=options||{};var now=new Date(),current=Number(businessDate_().slice(0,4)),year=Number(options.year)||current;
   if(!Number.isInteger(year)||year<current-4||year>current)throw new Error('ปีไม่ถูกต้อง');
   var start=dashboardRangeStart_(year),healthStart=dashboardRangeStart_(current),end=year===current?now.toISOString():new Date(Date.UTC(year+1,0,1)-7*3600000-1).toISOString();
-  var snapshot=cachedReadResult_('dashboard-correction-v1:'+current+':'+year,[STOCK_MOVEMENT_COLLECTION],60000,function(){
+  var snapshot=cachedReadResult_('dashboard-correction-v2:'+current+':'+year,[STOCK_MOVEMENT_COLLECTION],60000,function(){
     var ranges=[{start:start,end:end}];
     if(year<current){if(Date.parse(end)+1>=Date.parse(healthStart))ranges[0].end=now.toISOString();else ranges.push({start:healthStart,end:now.toISOString()});}
     var movements=[],readTime='';ranges.forEach(function(range){var rows=queryDashboardMovementsRange_(range.start,range.end,false,readTime);readTime=readTime||rows.readTime;movements=movements.concat(rows);});
@@ -5475,7 +5526,7 @@ function getDashboardDelta_(sinceIso,options) {
   var since=String(sinceIso||'').trim(),time=Date.parse(since);
   if(!since||since.length>64||isNaN(time)||time>Date.now()+60000||Date.now()-time>900000)return {success:false,fullRefresh:true,message:'กรุณาโหลดข้อมูลล่าสุดเพื่อเริ่มซิงก์ใหม่'};
   options=options||{};
-  return cachedReadResult_('dashboard-delta-correction-v1:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
+  return cachedReadResult_('dashboard-delta-correction-v2:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
 }
 function getDashboardDeltaUncached_(since,time,options){
   options=options||{};var page=queryMovementPage_('Committed_At',new Date(time-60000).toISOString(),{pageSize:200,cursor:options.cursor},null);

@@ -68,6 +68,13 @@ function setup(options={}){
     if(u.pathname.endsWith(':rollback')){snapshots.delete(body.transaction);return reply(200,{});}
     if(u.pathname.endsWith(':batchGet'))return reply(200,body.documents.map(name=>docs.has(keyFor(name))?{found:docs.get(keyFor(name))}:{missing:name}));
     if(u.pathname.endsWith(':commit'))return commit(body.writes);
+    if(u.pathname.endsWith(':runAggregationQuery')){
+      const agg=body.structuredAggregationQuery,q=agg.structuredQuery,col=q.from[0].collectionId,store=body.readTime?snapshots.get(body.readTime)||docs:docs;
+      let list=[...store].filter(([key])=>key.startsWith((project!=='syy-shop'?project+'::':'')+col+'/')).map(([,doc])=>doc);
+      const filter=q.where.fieldFilter,want=c.parseFirestoreValue_(filter.value);list=list.filter(doc=>filter.op==='IN'?want.includes(c.parseFirestoreValue_(doc.fields[filter.field.fieldPath])):c.parseFirestoreValue_(doc.fields[filter.field.fieldPath])===want);
+      const fields={};for(const item of agg.aggregations){if(!item.count)throw Error('Unsupported aggregation fixture');fields[item.alias]={integerValue:String(Math.min(list.length,Number(item.count.upTo)||Infinity))};}
+      return reply(200,[{result:{aggregateFields:fields},readTime:body.readTime||c.readTime}]);
+    }
     if(u.pathname.endsWith(':runQuery')){
       const q=body.structuredQuery,col=q.from[0].collectionId;
       const store=body.readTime?snapshots.get(body.readTime)||docs:docs;
