@@ -24,4 +24,4 @@
 - หลักฐาน `test-results/2026-10-29-release-{unit,browser,reads}.log`, `2026-10-29-frame-backend-browser.log`, `2026-10-29-history-*.log`
 - Files Changed รอบนี้: StockIssue.html, tests/browser.cjs และรายงานนี้ งานโหลดหน้าถูก commit/push แยกไว้ใน `1746ee2`
 
-ยังไม่ได้ทดสอบธุรกรรมจริงหรือยืนยันเวลาโหลดใน session จริง ผล Sync/Deploy จะบันทึกในรายงาน deployment แยกหลังตรวจ published source
+Deployแล้วใน [Version102](DEPLOYMENT-2026-10-29-V102.md) ตรวจ saved/published Sourceตรง24/24ไฟล์ ยังไม่ได้ทดสอบธุรกรรมจริงหรือยืนยันเวลาโหลดใน session จริง

@@ -20,4 +20,4 @@
 - Unit **279/279**, Browser **133/133** กลุ่ม และเพิ่ม cross-origin wrapper regression อีก **1/1** กลุ่ม; backend-integrated browser **9/9** กลุ่ม ด้วย Firestore จำลอง
 - Syntax70 scripts/manifest และ diff whitespace ตรวจผ่าน หลักฐาน `test-results/2026-10-29-frame-*.log`
 
-ไฟล์ runtime: Code.gs, login.html, UiSystem.html, Shared.html, index.html และ initializer ของ13หน้าอื่น การเปลี่ยนหน้าประวัติและผล Deploy จะรายงานแยกหลังปิดงานนี้
+ไฟล์ runtime: Code.gs, login.html, UiSystem.html, Shared.html, index.html และ initializer ของ13หน้าอื่น Deployพร้อมตัวแก้ไขประวัติแล้วใน [Version102](DEPLOYMENT-2026-10-29-V102.md) ตรวจ saved/published Sourceตรง24/24ไฟล์และเส้นทางLogin/sessionใช้ไม่ได้บนเว็บจริงผ่าน โดยไม่ส่งLoginหรือเขียนDB
