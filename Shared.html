@@ -143,7 +143,7 @@ function syyGroupBillRows(rows,completeness){
   var map=new Map();
   (rows||[]).forEach(function(row){
     var rawTime=row.timestamp||row.ts,time=new Date(rawTime),stamp=isNaN(time.getTime())?'':time.toISOString();
-    var key=JSON.stringify([row.docNo||'@'+row.id,row.type||'OUT',!!row.reversal]),g=map.get(key);
+    var key=JSON.stringify([row.docNo?'document':'movement',row.docNo||row.id,row.type||'OUT',!!row.reversal]),g=map.get(key);
     if(!g){g={key:key,id:row.id,docNo:row.docNo||'',billNo:row.billNo||'',type:row.type||'OUT',reversal:!!row.reversal,issueStatus:row.issueStatus||'active',timestamp:stamp,ts:new Date(stamp),timeConsistent:true,users:[],billNumbers:[],user:row.user||'',items:0,qty:0,amtSell:0,amtCost:0,knownSell:true,knownCost:true,refNo:row.refNo||'',note:row.note||'',reasons:Object.create(null),rows:[],consistent:true,complete:completeness?(!row.docNo||completeness[row.docNo]===true):true};map.set(key,g);}
     if(g.billNo!==(row.billNo||'')||g.timestamp!==stamp||g.user!==(row.user||'')||g.issueStatus!==(row.issueStatus||'active'))g.consistent=false;
     if(g.timestamp!==stamp)g.timeConsistent=false;if(!g.users.includes(row.user||''))g.users.push(row.user||'');g.user=g.users.length>1?'หลายผู้ทำรายการ':g.users[0];if(!g.billNumbers.includes(row.billNo||''))g.billNumbers.push(row.billNo||'');if(g.billNumbers.length>1)g.billNo='';

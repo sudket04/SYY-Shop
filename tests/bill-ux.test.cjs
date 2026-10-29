@@ -26,6 +26,9 @@ test('bill presentation keeps internal identity, legacy labels, real actors and 
  const groups=c.syyGroupBillRows([original[0],{...original[0],id:'in',type:'IN'},{...original[0],id:'rev',reversal:true},{id:'legacy-1',qty:1},{id:'legacy-2',qty:1}]);assert.equal(groups.length,5);
 });
 function movements(s,no,count,prefix='M'){for(let i=0;i<count;i++)s.put('Stock_Movements/'+prefix+String(i).padStart(4,'0'),{Doc_No:no,Bill_No:'SI-20261028-0003',Type:'OUT',Timestamp:'2026-10-28T05:00:00Z',Product_Code:'P'+i,Product_Name:'Part '+i,Qty:1,Unit_Price:2.25,Cost_Price:1,User:'saved-user'});}
+test('a missing legacy document number cannot collide with a real document prefixed by @',()=>{
+ const c=presentation(),groups=c.syyGroupBillRows([{...original[0],id:'legacy',docNo:'',qty:5},{...original[0],id:'actual',docNo:'@legacy',qty:2}],{'@legacy':true});assert.equal(groups.length,2);assert.equal(groups.find(g=>g.docNo==='@legacy').qty,2);assert.equal(groups.find(g=>!g.docNo).qty,5);
+});
 function queries(s){return s.calls.filter(x=>x.url.endsWith(':runQuery')).map(x=>JSON.parse(x.options.payload));}
 function counts(s){return s.calls.filter(x=>x.url.endsWith(':runAggregationQuery')).map(x=>JSON.parse(x.options.payload));}
 test('bill browsing completes a split bill in one batched snapshot query and reuses its per-bill cache on continuation',()=>{
