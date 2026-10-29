@@ -2,11 +2,11 @@
 
 ## 1. สถานะคำสั่งและขอบเขตการอนุมัติ
 
-**สถานะล่าสุด: ผู้ใช้สั่ง “ทำต่อ” หลังเอกสารนี้ จึงอนุมัติ implementation ตามขอบเขตแล้ว พัฒนาและทดสอบชุด Source เสร็จที่ runtime commit `715532687293e66d6f3d68be744b8d82732a5a7f` แต่ยังไม่ Sync Apps Script, Deploy รอบใหม่ หรือเปลี่ยนข้อมูลย้อนหลัง**
+**สถานะล่าสุด: ผู้ใช้อนุมัติตรวจบัคและ Deploy แล้ว เผยแพร่ Version103 สำเร็จ29ต.ค.2026 เวลา21:09 Asia/Bangkok จาก runtime `c3dc7521ac0bd74cf7e2b052382e6a006c1243c3` รวมงานบิล รูปสินค้า100รายการ/skeleton และแพตช์ audit ไม่มีการเปลี่ยนข้อมูลย้อนหลัง**
 
-อ่าน [ผลพัฒนาและงานค้างล่าสุด](BILL-UX-IMPLEMENTATION-2026-10-29.md) ก่อนรับช่วง: 286 unit tests, 140 Browser groups, 10 backend-integrated Browser groups ผ่าน และมี review bundle 24 ไฟล์ที่ตรวจ checksum แล้ว การอ่านระบบจริงพบ session หมดอายุ จึงยังยืนยัน authenticated UAT/เวลาไม่เกิน10วินาทีไม่ได้ รายละเอียดข้อ4–6ด้านล่างเป็นแผนและเหตุผลตั้งต้น ไม่ใช่งานทั้งหมดที่ยังไม่เริ่ม อย่านำการอนุมัติ Deploy ที่ใช้ไปแล้วกับ Version102 มาใช้อนุมัติ release ถัดไป
+อ่าน [รายงาน Deployment103 ล่าสุด](DEPLOYMENT-2026-10-29-V103.md) ก่อนรับช่วง: 287 unit tests, 146 Browser groups, 10 backend-integrated Browser groups ผ่าน เทียบ Saved HeadและimmutableVersion103ตรง24/24ทั้งสองชุด Login/session recovery smokeผ่าน ไม่ส่งฟอร์มLoginหรือธุรกรรมเขียนDB ยังไม่ยืนยัน authenticated UAT/เวลาไม่เกิน10วินาที รายละเอียดข้อ4–6ด้านล่างเป็นแผนและเหตุผลตั้งต้น ไม่ใช่งานทั้งหมดที่ยังไม่เริ่ม อย่านำการอนุมัติDeploy103ที่ใช้เสร็จแล้วมาใช้กับreleaseถัดไป
 
-งานต่อจากบิล: ผู้ใช้สั่งปรับรูปสินค้า/100รายการต่อหน้า/skeleton แล้ว เสร็จที่ runtime `3a82708895dce542966675205a5a18cbc97cf406` ซึ่งรวมงานบิลเดิม ผลล่าสุด286 unit/144 Browser/10 backend Browser ผ่าน ดู [รายงานชุดล่าสุด](PRODUCT-IMAGES-SKELETON-2026-10-29.md) และใช้ review bundle ของ3a82708สำหรับ release ถัดไป ยังไม่ Sync/Deploy/เขียน DB จริง
+เอกสาร implementationเดิม: [บิล/ประวัติ/Dashboard](BILL-UX-IMPLEMENTATION-2026-10-29.md), [รูปสินค้า/100รายการ/skeleton](PRODUCT-IMAGES-SKELETON-2026-10-29.md) รวมเผยแพร่แล้วใน103 ใช้reviewbundleของc3dc752เป็นหลักฐานreleaseนี้ ห้ามนำbundle7155326หรือ3a82708ไปทับย้อนหลัง
 
 ข้อกำหนดที่ผู้ใช้ยืนยัน:
 
@@ -24,12 +24,12 @@ Workspace: `C:\Users\sudket\Documents\ChatGPT\SYY-Shop`
 
 | รายการ | Baseline / หลักฐาน |
 |---|---|
-| Runtime ล่าสุดที่ยืนยันในรายงาน | Version102 วันที่29ต.ค.2026 เวลา07:05 Asia/Bangkok |
-| Runtime SHA | `568ffb474c71cd99d706b476975ee8f715fbd6d0` |
-| แพตช์เริ่มโหลดหน้า/session | `1746ee2` รวมอยู่ใน runtime568ffb4 |
+| Runtime ล่าสุดที่ยืนยันในรายงาน | Version103 วันที่29ต.ค.2026 เวลา21:09 Asia/Bangkok |
+| Runtime SHA | `c3dc7521ac0bd74cf7e2b052382e6a006c1243c3` |
+| แพตช์เริ่มโหลดหน้า/session | `1746ee2` รวมอยู่ในVersion103ด้วย |
 | เอกสารก่อนเริ่ม handoff รอบนี้ | main `c70b7e272054925a0f5a8dbdf3eeeaf68a8e1ec6` |
-| Source verification เดิม | Saved Headและ immutable Version102 เทียบตรง24/24ไฟล์ |
-| ผลทดสอบ release เดิม | 279 unit tests, 135 Browser groups, 9 backend-integrated Browser groups; syntax70 scripts/manifest และ read model ผ่าน |
+| Source verification ล่าสุด | Saved Headและ immutable Version103 เทียบตรง24/24ไฟล์ทั้งสองชุด |
+| ผลทดสอบ release ล่าสุด | 287 unit tests, 146 Browser groups, 10 backend-integrated Browser groups; syntax70 scripts/manifest และ read model ผ่าน |
 | Smoke จริงที่ผ่าน | หน้า Login และการกดกลับ Login จาก protected route ที่ไม่มี session โดยไม่ส่ง Login form |
 | ยังไม่ผ่านการยืนยันจริง | เมนูหลัง Login, เวลาโหลดจริงทุกหน้า, ธุรกรรม correction บน Production และเปอร์เซ็นต์ Reads ลดจริง |
 
@@ -37,7 +37,7 @@ Workspace: `C:\Users\sudket\Documents\ChatGPT\SYY-Shop`
 
 [Apps Script Editor เดิม](https://script.google.com/home/projects/16P76qalO_UL1fqbI6mjSDPz0MwUI82f0ZlEXrGkvOsGdCRINM05CuORP/edit)
 
-สถานะข้างต้นมาจากรายงานที่ยืนยันไว้ ไม่ได้เปิดตรวจ deployment สดในงานจัดทำเอกสารนี้ ให้ตรวจ live state/remote changes ก่อน implementation หรือ release รอบถัดไป
+สถานะล่าสุดข้างต้นยืนยันจาก UI และ Source ของ Version103 ในรอบ Deploy นี้ เป็นหลักฐานตามเวลาตรวจ ให้ตรวจ live state/remote changes ก่อน implementation หรือ release รอบถัดไป
 
 ไฟล์นอกขอบเขตที่ต้องรักษา: `docs/SYSTEM-AUDIT-2026-10-11.md` เป็น untracked ที่มีมาก่อน ห้าม stage ทับ ลบ หรือรวมกับงานนี้โดยอัตโนมัติ
 
@@ -247,7 +247,7 @@ git diff --check
 2. เมื่ออนุมัติimplementationแล้ว แบ่งงานให้ตรวจย้อนกลับได้ เช่น sharedbillpresentation → editorlivecalc → historygroup/pagination → Dashboard → regression
 3. Commit/Pushเฉพาะไฟล์ที่ตั้งใจบนmain ไม่ใช้forcepush ไม่ใส่credentials/.clasp/dependencies/test-resultsในcommit
 4. เตรียม reviewbundleด้วย `npm run release:prepare` และverifyด้วย `node scripts/prepare-release.cjs --verify <directory>`
-5. **รออนุมัติ Production deployment รอบใหม่** หลังมีชุดSourceและผลทดสอบที่ตรวจได้ การอนุมัติVersion102จบไปแล้ว
+5. **รออนุมัติ Production deployment รอบใหม่** หลังมีชุดSourceและผลทดสอบที่ตรวจได้ การอนุมัติVersion103จบไปแล้ว
 6. เมื่ออนุมัติ ให้เทียบ/สำรองSourceจริงก่อนSync รักษาmanualchanges ตรวจsavedHeadและimmutablepublishedVersionกับbundleครบทุกไฟล์ คงURL/owner/access/scopes/Triggerเดิม
 7. ตรวจLogin smokeโดยไม่ส่งฟอร์ม และauthenticatedread-only UATตามsessionที่ได้รับ ไม่มีธุรกรรมเขียนจริง/Backfillแฝงในrelease
 8. รายงาน Files Changed, Root Cause, Tests, Firestore Read/Write impact, Runtime SHA, main SHA, Version/URL/เวลาDeploy และข้อจำกัด/งานค้างที่ยังไม่ผ่าน
@@ -269,19 +269,18 @@ git diff --check
 
 - ยืนยันเมนูหลังLogin/การโหลดไม่เกิน10วินาทีจากsessionจริง พร้อมcold/warmbaseline
 - ตรวจRead/Writeusageจริงและการmonitorตามขอบเขตที่ตกลง ไม่รับรองเปอร์เซ็นต์ที่ยังไม่มีหลักฐาน
-- Backup: รายงานVersion102บันทึกTrigger1รายการและerrorย้อนหลัง83.33% ณเวลาตรวจ ไม่ใช่สถานะสดและไม่ใช่หลักฐานBackupสำเร็จ ไม่รันBackup/Restoreหรือเปลี่ยนTriggerเพื่อทดสอบUIชุดนี้
+- Backup: รอบDeploy103ตรวจTrigger1รายการ dailyBackupJob_ ครั้งล่าสุด28ต.ค.22:02:30 และerrorย้อนหลัง83.33% เป็นประวัติก่อนDeploy ไม่ใช่หลักฐานBackup103สำเร็จ ไม่รันBackup/Restoreหรือเปลี่ยนTriggerเพื่อทดสอบUIชุดนี้
 
 ## 9. Prompt สำหรับ Codex ที่รับช่วง
 
 ```text
 รับช่วง SYY-Shop ที่ C:\Users\sudket\Documents\ChatGPT\SYY-Shop
-อ่าน AGENTS.md, docs/BILL-UX-IMPLEMENTATION-2026-10-29.md, docs/CODEX-HANDOFF-BILLS-UX-2026-10-29.md และ docs/DEPLOYMENT-2026-10-29-V102.md ก่อน
-ผู้ใช้สั่งทำต่อแล้ว implementationเสร็จที่715532687293e66d6f3d68be744b8d82732a5a7f มีผล286unit/140Browser/10backend Browserและreviewbundle24ไฟล์ ห้ามทำงานเดิมซ้ำ ห้ามSync/Deploy/Backfillจากเอกสารนี้เพียงอย่างเดียว
-Productionที่ยืนยันในรายงานเดิมคือVersion102 runtime568ffb4 รวม1746ee2 ยังไม่ได้Deploy7155326 ให้ตรวจlive stateและremote changesก่อนrelease
-งานที่ทำแล้ว: editorแบบตะกร้าพร้อมlive totals/stock delta, ประวัติหนึ่งแถวต่อบิล5คอลัมน์+Action/ยอดครบจากboundedCOUNTและbatchINsnapshot/cache, Dashboardวันเวลาไทย/ผู้ทำเดิม/สถานะ/เงิน2ตำแหน่ง, คงcache/security/paginationและpreview/retry/audit
-งานค้าง: อนุมัติDeployรอบใหม่, authenticatedread-onlyUATและวัดเวลาcold/warmจริง ขณะตรวจsessionเดิมหมดอายุ ไม่ได้ส่งLoginform ไม่มีหลักฐานรับรองทุกหน้าไม่เกิน10วินาทีหรือเปอร์เซ็นต์Readsจริง
+อ่าน AGENTS.md, docs/DEPLOYMENT-2026-10-29-V103.md, docs/PRODUCT-IMAGES-SKELETON-2026-10-29.md และ docs/CODEX-HANDOFF-BILLS-UX-2026-10-29.md ก่อน
+Productionล่าสุดที่ยืนยันคือVersion103 runtimec3dc7521ac0bd74cf7e2b052382e6a006c1243c3 เผยแพร่29ต.ค.2026เวลา21:09ไทย SavedHeadและimmutable103ตรง24/24ทั้งสองชุด ผล287unit/146Browser/10backend Browserผ่าน ห้ามทำงานเดิมหรือDeploybundleเก่าทับ
+งานบิล7155326และรูปสินค้า100รายการ/skeleton3a82708รวมใน103แล้ว รวมแก้cache retryค้าง, แยกidentitylegacyและprojectionmetadataรูปให้ปลอดภัย คงค้นหา/XLFilter, role, preview/CAS/retry/auditเดิม
+งานค้างจริง: authenticatedread-onlyUAT, วัดcold/warm/Readsจริง และตรวจผลBackupรอบใหม่ ไม่ได้ส่งLoginformหรือธุรกรรมเขียนDB ไม่มีหลักฐานรับรองทุกหน้าไม่เกิน10วินาทีหรือเปอร์เซ็นต์Readsจริง
 CorrectionเฉพาะAdminและOUT active บิลรับเข้าอ่านอย่างเดียว ไม่มีStaging อ่านProductionผ่านระบบเดิมได้แต่ห้ามเขียน/แก้/ลบDBจริงระหว่างทดสอบ คงค้นหา/XLFilterและarchitectureเดิม
 งานแก้ไขเพิ่มเติมที่ได้รับอนุมัติให้ทดสอบและCommit/Push mainตามAGENTS โดยไม่ถามGitapprovalซ้ำ แยกFirestoreimpact/commit/สถานะDeployและงานที่ยังไม่ผ่านการตรวจจริง
-การDeployใหม่ การbackfillเลขย้อนหลัง และการเพิ่มschema/index/IAM/summarywrite ต้องแยกขอบเขตและขออนุมัติให้ถูกประเภท ห้ามตีความการอนุมัติDeploy102ที่ทำเสร็จแล้วเป็นอนุมัติรอบใหม่
+การDeployใหม่ การbackfillเลขย้อนหลัง และการเพิ่มschema/index/IAM/summarywrite ต้องแยกขอบเขตและขออนุมัติให้ถูกประเภท ห้ามตีความการอนุมัติDeploy103ที่ทำเสร็จแล้วเป็นอนุมัติรอบใหม่
 รักษา docs/SYSTEM-AUDIT-2026-10-11.md ที่เป็นuntrackedเดิมไว้นอกcommit
 ```
