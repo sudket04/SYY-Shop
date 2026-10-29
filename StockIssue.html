@@ -1082,45 +1082,122 @@
   }
   var correctionSource=null,correctionPayload=null,correctionBusy=false,correctionUncertain=false;
   var correctionStore=syyStorageKey('draft','stockCorrection');
+  function canCorrectIssue(data){
+    return USER_ROLE==='admin'&&data&&data.complete!==false&&data.movements.length>0&&data.movements.length<=200&&data.movements.every(function(m){return m.type==='OUT'&&!m.reversal&&(!m.issueStatus||m.issueStatus==='active');});
+  }
   function renderMovementDetail(data){
     correctionSource=data;document.getElementById('movementDetailBody').innerHTML=syyMovementDetailHtml(data,fmtTime);
-    if(USER_ROLE==='admin'&&data.complete!==false&&data.movements.length&&data.movements.every(function(m){return m.type==='OUT'&&!m.reversal&&(!m.issueStatus||m.issueStatus==='active');}))
-      document.getElementById('movementDetailBody').insertAdjacentHTML('beforeend','<p><button type="button" class="btn btn-primary" onclick="openIssueCorrection()">แก้ไข / ยกเลิกบิลนี้</button></p>');
+    if(canCorrectIssue(data))document.getElementById('movementDetailBody').insertAdjacentHTML('beforeend','<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px"><button type="button" class="btn btn-primary" onclick="openIssueCorrection(\'replace\')">แก้ไขรายการสินค้า</button><button type="button" class="btn btn-danger" onclick="openIssueCorrection(\'cancel\')">ยกเลิกบิล</button></div><p class="text-muted">การแก้ไขเก็บบิลเดิมและประวัติ โดยคืนผลเดิมแล้วออกบิลทดแทนเมื่อเปลี่ยนรายการสินค้า</p>');
   }
   function correctionModal(){
     var modal=document.getElementById('issueCorrectionModal');if(modal)return modal;
     modal=document.createElement('div');modal.id='issueCorrectionModal';modal.className='modal-overlay';
-    modal.innerHTML='<div class="modal-box" style="width:900px"><div class="modal-header"><span class="modal-title">แก้ไขบิลตัดสต๊อก · Admin</span><button type="button" class="modal-close" aria-label="ปิดการแก้ไขบิล" onclick="closeIssueCorrection()">×</button></div><div class="modal-body"><div id="correctionForm"><p id="correctionBill"></p><div class="form-group"><label for="correctionAction">การดำเนินการ</label><select id="correctionAction"><option value="amend">แก้หมายเหตุ / อ้างอิง</option><option value="replace">ย้อนผลเดิมและออกบิลทดแทน</option><option value="cancel">ยกเลิกบิลและคืนสต๊อก</option></select></div><div class="form-group"><label for="correctionReason">เหตุผลการแก้ไข *</label><textarea id="correctionReason" maxlength="1000" minlength="5" required></textarea></div><div class="form-group"><label for="correctionIssueReason">เหตุผลของบิลทดแทน</label><select id="correctionIssueReason"></select></div><div class="form-group"><label for="correctionRef">เลขอ้างอิง</label><input id="correctionRef" maxlength="500"></div><div class="form-group"><label for="correctionNote">หมายเหตุ</label><textarea id="correctionNote" maxlength="4000"></textarea></div><p>รายการทดแทน: รหัสสินค้า / จำนวน / ราคาขายต่อหน่วย · ลบรายการที่ไม่ใช้ได้ (ราคาตรวจและบันทึกโดย Admin)</p><div class="table-wrap"><table><thead><tr><th>รหัสสินค้า</th><th>จำนวน</th><th>ราคา</th><th>ลบ</th></tr></thead><tbody id="correctionLines"></tbody></table></div><button type="button" class="btn btn-ghost" id="correctionAdd">+ เพิ่มบรรทัด</button></div><div id="correctionPreview" role="status" aria-live="polite"></div></div><div class="modal-footer"><button type="button" class="btn btn-ghost" onclick="closeIssueCorrection()">ปิด</button><button type="button" class="btn btn-ghost" id="correctionPreviewButton">ตรวจผลก่อนบันทึก</button><button type="button" class="btn btn-primary" id="correctionConfirm" disabled>ยืนยันแก้ไข</button></div></div>';
+    modal.innerHTML=[
+      '<div class="modal-box" style="width:1000px" role="dialog" aria-modal="true" aria-labelledby="correctionTitle">',
+      '<div class="modal-header"><span class="modal-title" id="correctionTitle">แก้ไขรายการสินค้า · Admin</span><button type="button" class="modal-close" aria-label="ปิดการแก้ไขบิล" onclick="closeIssueCorrection()">×</button></div>',
+      '<div class="modal-body"><div id="correctionForm"><p id="correctionBill"></p><input type="hidden" id="correctionAction" value="replace">',
+      '<p id="correctionModeLabel" role="status"></p>',
+      '<div class="form-group" id="correctionMetadataGroup"><label><input type="checkbox" id="correctionMetadataOnly"> แก้เฉพาะหมายเหตุ / อ้างอิง ไม่เปลี่ยนรายการสินค้า</label></div>',
+      '<div class="form-group"><label for="correctionReason">เหตุผลการแก้ไข / ยกเลิก *</label><textarea id="correctionReason" maxlength="1000" minlength="5" required></textarea></div>',
+      '<div class="form-group"><label for="correctionIssueReason">เหตุผลของบิลทดแทน</label><select id="correctionIssueReason"></select></div>',
+      '<div class="form-group"><label for="correctionRef">เลขอ้างอิง</label><input id="correctionRef" maxlength="500"></div>',
+      '<div class="form-group"><label for="correctionNote">หมายเหตุ</label><textarea id="correctionNote" maxlength="4000"></textarea></div>',
+      '<section id="correctionItems"><p>สินค้าทั้งหมดในบิล · แก้จำนวน / ราคา หรือลบเฉพาะแถวได้ การลบทุกแถวต้องใช้ยกเลิกบิล</p>',
+      '<div class="table-wrap"><table><thead><tr><th>รหัสสินค้า / ชื่อสินค้า</th><th>จำนวน</th><th>ราคาต่อหน่วย</th><th>จัดการ</th></tr></thead><tbody id="correctionLines"></tbody></table></div>',
+      '<div class="form-group"><label for="correctionProductSearch">เพิ่มสินค้าในบิล · ค้นจากรายการสินค้าที่โหลดแล้ว</label><input id="correctionProductSearch" type="search" placeholder="ค้นหารหัส / ชื่อ / P/N / บาร์โค้ด" autocomplete="off"><div id="correctionProductMatches" aria-live="polite"></div></div>',
+      '<button type="button" class="btn btn-ghost" id="correctionAdd">+ เพิ่มบรรทัดด้วยรหัสสินค้า</button></section>',
+      '</div><div id="correctionPreview" role="status" aria-live="polite"></div></div>',
+      '<div class="modal-footer" style="flex-wrap:wrap"><button type="button" class="btn btn-ghost" onclick="closeIssueCorrection()">ปิด</button>',
+      '<button type="button" class="btn btn-ghost" id="correctionBackToEdit" hidden>กลับไปแก้ไข</button>',
+      '<button type="button" class="btn btn-danger" id="correctionCancelBill">ยกเลิกบิล</button>',
+      '<button type="button" class="btn btn-ghost" id="correctionPreviewButton">ตรวจผลก่อนบันทึก</button>',
+      '<button type="button" class="btn btn-primary" id="correctionConfirm" disabled>บันทึกการแก้ไข</button>',
+      '<button type="button" class="btn btn-danger" id="correctionCancelConfirm" hidden disabled>ยืนยันยกเลิกบิล</button></div></div>'
+    ].join('');
     document.body.appendChild(modal);
-    modal.querySelector('#correctionAdd').onclick=function(){addCorrectionLine({});correctionChanged();};
-    modal.querySelector('#correctionPreviewButton').onclick=previewIssueCorrection;modal.querySelector('#correctionConfirm').onclick=commitIssueCorrection;
-    modal.querySelector('#correctionForm').addEventListener('input',correctionChanged);modal.querySelector('#correctionForm').addEventListener('change',correctionChanged);
+    modal.querySelector('#correctionAdd').onclick=function(){if(correctionBusy||correctionUncertain)return;addCorrectionLine({});correctionChanged();};
+    modal.querySelector('#correctionProductSearch').oninput=renderCorrectionMatches;
+    modal.querySelector('#correctionProductMatches').onclick=function(event){
+      var button=event.target.closest('[data-correction-product]');if(!button||correctionBusy||correctionUncertain)return;
+      var product=products.find(function(p){return p.productCode===button.dataset.correctionProduct;});if(!product)return;
+      var existing=Array.from(document.querySelectorAll('#correctionLines tr')).find(function(row){return row.querySelector('.correction-code').value.trim()===product.productCode;});
+      if(existing){var qty=existing.querySelector('.correction-qty');qty.value=num(qty.value)+1;qty.focus();}
+      else addCorrectionLine({productCode:product.productCode,productName:product.productName,qty:1,unitPrice:product.sellingPrice});
+      modal.querySelector('#correctionProductSearch').value='';renderCorrectionMatches();correctionChanged();
+    };
+    modal.querySelector('#correctionMetadataOnly').onchange=function(){if(correctionBusy||correctionUncertain)return;modal.querySelector('#correctionAction').value=this.checked?'amend':'replace';correctionChanged();};
+    modal.querySelector('#correctionCancelBill').onclick=function(){if(correctionBusy||correctionUncertain)return;modal.querySelector('#correctionAction').value='cancel';correctionChanged();};
+    modal.querySelector('#correctionBackToEdit').onclick=function(){if(correctionBusy||correctionUncertain)return;modal.querySelector('#correctionAction').value=modal.querySelector('#correctionMetadataOnly').checked?'amend':'replace';correctionChanged();};
+    modal.querySelector('#correctionPreviewButton').onclick=previewIssueCorrection;
+    modal.querySelector('#correctionConfirm').onclick=function(){if(correctionPayload&&correctionPayload.action!=='cancel')commitIssueCorrection();};
+    modal.querySelector('#correctionCancelConfirm').onclick=function(){if(correctionPayload&&correctionPayload.action==='cancel')commitIssueCorrection();};
+    modal.querySelector('#correctionForm').addEventListener('input',function(event){if(event.target.id!=='correctionProductSearch')correctionChanged();});modal.querySelector('#correctionForm').addEventListener('change',function(event){if(event.target.id!=='correctionProductSearch')correctionChanged();});
     return modal;
   }
-  function addCorrectionLine(item){var tr=document.createElement('tr');tr.innerHTML='<td><input aria-label="รหัสสินค้า" class="correction-code" value="'+esc(item.productCode||'')+'"></td><td><input aria-label="จำนวนทดแทน" class="correction-qty" type="number" min="0" step="any" value="'+esc(item.qty==null?'':item.qty)+'"></td><td><input aria-label="ราคาทดแทน" class="correction-price" type="number" min="0" step="any" value="'+esc(item.unitPrice==null?'':item.unitPrice)+'"></td><td><button type="button" class="btn btn-ghost" aria-label="ลบบรรทัด">×</button></td>';Array.from(tr.cells).forEach(function(cell,i){cell.dataset.label=['รหัสสินค้า','จำนวน','ราคาต่อหน่วย',''][i];});tr.querySelector('button').onclick=function(){tr.remove();correctionChanged();};document.getElementById('correctionLines').appendChild(tr);}
-  function lockCorrection(locked){document.querySelectorAll('#correctionForm input,#correctionForm textarea,#correctionForm select,#correctionForm button').forEach(function(el){el.disabled=locked;});document.getElementById('correctionPreviewButton').disabled=locked;}
-  function correctionMode(){var action=document.getElementById('correctionAction').value,table=document.getElementById('correctionLines').closest('.table-wrap');table.style.display=action==='replace'?'':'none';table.previousElementSibling.style.display=table.style.display;document.getElementById('correctionAdd').style.display=table.style.display;document.getElementById('correctionIssueReason').closest('.form-group').style.display=table.style.display;['correctionRef','correctionNote'].forEach(function(id){document.getElementById(id).closest('.form-group').style.display=action==='cancel'?'none':'';});}
-  function correctionChanged(){if(correctionBusy||correctionUncertain)return;correctionMode();correctionPayload=null;document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionConfirm').textContent='ยืนยันแก้ไข';document.getElementById('correctionPreview').textContent='ข้อมูลเปลี่ยน กรุณาตรวจผลก่อนบันทึก';}
-  function openIssueCorrection(){
-    if(USER_ROLE!=='admin'||!correctionSource)return;correctionModal();if(correctionUncertain){openModal('issueCorrectionModal');return;}
-    var first=correctionSource.movements[0];document.getElementById('correctionBill').textContent='เลขที่บิล '+(correctionSource.billNo||correctionSource.docNo);
+  function renderCorrectionMatches(){
+    var query=document.getElementById('correctionProductSearch').value.trim().toLowerCase(),box=document.getElementById('correctionProductMatches');
+    if(!query){box.innerHTML='';return;}
+    var matches=[];for(var i=0;i<products.length&&matches.length<20;i++){
+      var p=products[i];if(p.status==='Inactive')continue;
+      if([p.productCode,p.productName,p.partNumber,p.barcode].join(' ').toLowerCase().includes(query))matches.push(p);
+    }
+    box.innerHTML=matches.length?matches.map(function(p){return '<button type="button" class="btn btn-ghost" data-correction-product="'+esc(p.productCode)+'" style="display:block;text-align:left;width:100%;white-space:normal">'+esc(p.productCode)+' · '+esc(p.productName)+' · '+money(p.sellingPrice)+'</button>';}).join(''):'<p>ไม่พบสินค้าในข้อมูลที่โหลดแล้ว สามารถเพิ่มบรรทัดด้วยรหัสสินค้าเพื่อตรวจบน Server ได้</p>';
+  }
+  function addCorrectionLine(item){
+    if(document.querySelectorAll('#correctionLines tr').length>=200){toast('รองรับไม่เกิน 200 รายการต่อบิล','warn');return;}
+    var tr=document.createElement('tr');
+    tr.innerHTML='<td><input aria-label="รหัสสินค้า" class="correction-code" value="'+esc(item.productCode||'')+'"><div class="correction-name"></div></td><td><input aria-label="จำนวนทดแทน" class="correction-qty" type="number" min="0" step="any" required value="'+esc(item.qty==null?'':item.qty)+'"></td><td><input aria-label="ราคาทดแทน" class="correction-price" type="number" min="0" step="any" required value="'+esc(item.unitPrice==null?'':item.unitPrice)+'"></td><td><button type="button" class="btn btn-danger" aria-label="ลบรายการสินค้า">ลบ</button></td>';
+    var code=tr.querySelector('.correction-code'),name=tr.querySelector('.correction-name');name.textContent=item.productName||'';
+    code.oninput=function(){var p=products.find(function(p){return p.productCode===code.value.trim();});name.textContent=p?p.productName:'ระบบจะตรวจรหัสสินค้าเมื่อกดตรวจผล';};
+    Array.from(tr.cells).forEach(function(cell,i){cell.dataset.label=['รหัสสินค้า / ชื่อสินค้า','จำนวน','ราคาต่อหน่วย',''][i];});
+    tr.querySelector('button').onclick=function(){if(correctionBusy||correctionUncertain)return;tr.remove();correctionChanged();};document.getElementById('correctionLines').appendChild(tr);
+  }
+  function lockCorrection(locked){
+    document.querySelectorAll('#correctionForm input,#correctionForm textarea,#correctionForm select,#correctionForm button').forEach(function(el){el.disabled=locked;});
+    ['correctionPreviewButton','correctionCancelBill','correctionBackToEdit'].forEach(function(id){document.getElementById(id).disabled=locked;});
+  }
+  function correctionMode(){
+    var action=document.getElementById('correctionAction').value,cancel=action==='cancel';
+    document.getElementById('correctionTitle').textContent=cancel?'ยกเลิกบิลและคืนสต๊อก · Admin':'แก้ไขรายการสินค้า · Admin';
+    document.getElementById('correctionModeLabel').textContent=cancel?'ยกเลิกทั้งบิล: คืนสต๊อกตามรายการเดิม และเก็บประวัติไว้ตรวจสอบ':action==='amend'?'แก้เฉพาะหมายเหตุ / อ้างอิง โดยไม่เปลี่ยนจำนวนสินค้าหรือมูลค่า':'แก้ไขรายการ: คืนผลสต๊อกเดิมและออกบิลทดแทน พร้อมตรวจยอดสุทธิก่อนบันทึก';
+    document.getElementById('correctionItems').hidden=action!=='replace';document.getElementById('correctionMetadataGroup').hidden=cancel;
+    document.getElementById('correctionIssueReason').closest('.form-group').hidden=action!=='replace';
+    ['correctionRef','correctionNote'].forEach(function(id){document.getElementById(id).closest('.form-group').hidden=cancel;});
+    document.getElementById('correctionConfirm').hidden=cancel;document.getElementById('correctionCancelConfirm').hidden=!cancel;
+    document.getElementById('correctionCancelBill').hidden=cancel;document.getElementById('correctionBackToEdit').hidden=!cancel;
+    document.getElementById('correctionPreviewButton').textContent=cancel?'ตรวจผลก่อนยกเลิกบิล':'ตรวจผลก่อนบันทึก';
+  }
+  function correctionChanged(){
+    if(correctionBusy||correctionUncertain)return;correctionMode();correctionPayload=null;
+    document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionConfirm').textContent='บันทึกการแก้ไข';
+    document.getElementById('correctionCancelConfirm').disabled=true;document.getElementById('correctionCancelConfirm').textContent='ยืนยันยกเลิกบิล';
+    document.getElementById('correctionPreview').textContent='ข้อมูลเปลี่ยน กรุณาตรวจผลก่อนดำเนินการ';
+  }
+  function openIssueCorrection(mode){
+    if(!canCorrectIssue(correctionSource))return;correctionModal();if(correctionUncertain){openModal('issueCorrectionModal');return;}
+    var first=correctionSource.movements[0];document.getElementById('correctionBill').textContent='เลขรายการ '+(correctionSource.billNo||correctionSource.docNo)+' · '+correctionSource.movements.length+' รายการ';
     document.getElementById('correctionIssueReason').innerHTML=document.getElementById('inpReason').innerHTML;
     document.getElementById('correctionIssueReason').value=first.reason||'ขายหน้าร้าน';document.getElementById('correctionRef').value=first.refNo||'';document.getElementById('correctionNote').value=first.note||'';
-    document.getElementById('correctionLines').innerHTML='';correctionSource.movements.forEach(addCorrectionLine);document.getElementById('correctionReason').value='';document.getElementById('correctionAction').value='amend';lockCorrection(false);correctionChanged();openModal('issueCorrectionModal');
+    document.getElementById('correctionLines').innerHTML='';correctionSource.movements.forEach(addCorrectionLine);
+    document.getElementById('correctionReason').value='';document.getElementById('correctionMetadataOnly').checked=false;document.getElementById('correctionProductSearch').value='';renderCorrectionMatches();
+    document.getElementById('correctionAction').value=mode==='cancel'?'cancel':'replace';lockCorrection(false);correctionChanged();openModal('issueCorrectionModal');
   }
   function closeIssueCorrection(){if(correctionBusy){toast('กำลังตรวจผลการบันทึก กรุณารอ','warn');return;}closeModal('issueCorrectionModal');}
+  function correctionSubmitButton(){return document.getElementById(document.getElementById('correctionAction').value==='cancel'?'correctionCancelConfirm':'correctionConfirm');}
   function previewIssueCorrection(){
     if(correctionBusy||correctionUncertain||!correctionSource)return;
     var action=document.getElementById('correctionAction').value;
     var items=action==='replace'?Array.from(document.querySelectorAll('#correctionLines tr')).map(function(row){return {productCode:row.querySelector('.correction-code').value.trim(),qty:row.querySelector('.correction-qty').value,unitPrice:row.querySelector('.correction-price').value};}):[];
+    if(action==='replace'&&!items.length){document.getElementById('correctionPreview').textContent='ต้องมีสินค้าอย่างน้อย 1 รายการ หากต้องการลบทั้งบิลให้ใช้ปุ่มยกเลิกบิล';return;}
+    if(action==='replace'&&items.some(function(item,i){return !item.productCode||!item.qty.trim()||!item.unitPrice.trim()||!Number.isFinite(Number(item.qty))||Number(item.qty)<=0||!Number.isFinite(Number(item.unitPrice))||Number(item.unitPrice)<0||items.some(function(other,j){return i!==j&&other.productCode===item.productCode;});})){document.getElementById('correctionPreview').textContent='ตรวจรหัสสินค้าไม่ให้ซ้ำ จำนวนต้องมากกว่า 0 และกรอกราคาต่อหน่วยตั้งแต่ 0 ขึ้นไป';return;}
     var payload={requestId:crypto.randomUUID(),docNo:correctionSource.docNo,revision:Number(correctionSource.movements[0].issueRevision)||0,action:action,correctionReason:document.getElementById('correctionReason').value,reason:document.getElementById('correctionIssueReason').value,refNo:document.getElementById('correctionRef').value,note:document.getElementById('correctionNote').value,items:items};
-    correctionPayload=null;document.getElementById('correctionConfirm').disabled=true;correctionBusy=true;lockCorrection(true);document.getElementById('correctionPreview').textContent='กำลังตรวจบิลและสต๊อกปัจจุบัน…';
+    correctionPayload=null;document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionCancelConfirm').disabled=true;correctionBusy=true;lockCorrection(true);document.getElementById('correctionPreview').textContent='กำลังตรวจบิลและสต๊อกปัจจุบัน…';
     callApi('getStockIssueCorrectionPreview',[payload],function(data){correctionBusy=false;lockCorrection(false);if(!data||!data.previewToken){document.getElementById('correctionPreview').textContent='ผลตรวจไม่ครบ กรุณาลองใหม่';return;}
-      correctionPayload=Object.assign(payload,{previewToken:data.previewToken});document.getElementById('correctionPreview').innerHTML='<div class="alert alert-warn">'+esc(data.warning)+'</div><p>มูลค่าเดิม '+money(data.oldAmount)+' · '+(action==='amend'?'ไม่เปลี่ยนมูลค่า':'มูลค่าทดแทน '+money(data.newAmount))+'</p>'+data.changes.map(function(x){return '<p>'+esc(x.productCode)+' · '+esc(x.productName||'')+' · สต๊อกปัจจุบัน '+esc(x.before)+' → '+esc(x.after)+' ('+(x.delta>=0?'+':'')+esc(x.delta)+')</p>';}).join('');document.getElementById('correctionConfirm').disabled=false;
+      correctionPayload=Object.assign(payload,{previewToken:data.previewToken});document.getElementById('correctionPreview').innerHTML='<div class="alert alert-warn">'+esc(data.warning)+'</div><p>มูลค่าเดิม '+money(data.oldAmount)+' · '+(action==='amend'?'ไม่เปลี่ยนมูลค่า':action==='cancel'?'ยกเลิกทั้งบิลและคืนสต๊อก':'มูลค่าทดแทน '+money(data.newAmount))+'</p>'+data.changes.map(function(x){return '<p>'+esc(x.productCode)+' · '+esc(x.productName||'')+' · สต๊อกปัจจุบัน '+esc(x.before)+' → '+esc(x.after)+' ('+(x.delta>=0?'+':'')+esc(x.delta)+')</p>';}).join('');correctionSubmitButton().disabled=false;
     },function(error){correctionBusy=false;lockCorrection(false);document.getElementById('correctionPreview').textContent=syyErrorMessage(error);});
   }
   function commitIssueCorrection(){
-    if(correctionBusy||!correctionPayload)return;correctionBusy=true;lockCorrection(true);document.getElementById('correctionConfirm').disabled=true;
+    if(correctionBusy||!correctionPayload)return;correctionBusy=true;lockCorrection(true);document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionCancelConfirm').disabled=true;
     try{sessionStorage.setItem(correctionStore,JSON.stringify({url:WEB_APP_URL,payload:correctionPayload}));}catch(e){}
     callApi('correctStockIssue',[correctionPayload],function(result){correctionBusy=false;
       if(!result||!result.success){correctionFailed(result&&result.message||'ยังไม่ยืนยันผล',!result||!!result.uncertain);return;}
@@ -1129,8 +1206,8 @@
       swySuccess('บันทึกการแก้ไขแล้ว',result.replacementBillNo?'บิลทดแทน '+esc(result.replacementBillNo):'เก็บประวัติและผลสต๊อกเรียบร้อย');
     },function(error){correctionBusy=false;correctionFailed(syyErrorMessage(error),true);});
   }
-  function correctionFailed(message,uncertain){correctionUncertain=uncertain;lockCorrection(uncertain);document.getElementById('correctionPreview').textContent=message+(uncertain?' · กดยืนยันตรวจคำขอเดิม ห้ามสร้างรายการใหม่':' · ตรวจรายละเอียดและตัวอย่างใหม่');document.getElementById('correctionConfirm').disabled=!uncertain;document.getElementById('correctionConfirm').textContent=uncertain?'ตรวจผลคำขอเดิม':'ยืนยันแก้ไข';if(!uncertain){correctionPayload=null;try{sessionStorage.removeItem(correctionStore);}catch(e){}}}
-  syyOnReady(function(){if(USER_ROLE!=='admin')return;try{var saved=JSON.parse(sessionStorage.getItem(correctionStore)||'null');if(saved&&saved.url===WEB_APP_URL&&saved.payload&&saved.payload.requestId){correctionModal();correctionPayload=saved.payload;document.getElementById('correctionBill').textContent='คำขอเดิม: '+correctionPayload.docNo;document.getElementById('correctionAction').value=correctionPayload.action;document.getElementById('correctionReason').value=correctionPayload.correctionReason;document.getElementById('correctionRef').value=correctionPayload.refNo;document.getElementById('correctionNote').value=correctionPayload.note;(correctionPayload.items||[]).forEach(addCorrectionLine);correctionMode();correctionUncertain=true;correctionFailed('มีคำขอแก้ไขที่ยังไม่ยืนยันผล',true);openModal('issueCorrectionModal');}}catch(e){}});
+  function correctionFailed(message,uncertain){correctionUncertain=uncertain;lockCorrection(uncertain);document.getElementById('correctionPreview').textContent=message+(uncertain?' · กดยืนยันตรวจคำขอเดิม ห้ามสร้างรายการใหม่':' · ตรวจรายละเอียดและตัวอย่างใหม่');document.getElementById('correctionConfirm').disabled=true;document.getElementById('correctionCancelConfirm').disabled=true;var button=correctionSubmitButton();button.disabled=!uncertain;button.textContent=uncertain?'ตรวจผลคำขอเดิม':document.getElementById('correctionAction').value==='cancel'?'ยืนยันยกเลิกบิล':'บันทึกการแก้ไข';if(!uncertain){correctionPayload=null;try{sessionStorage.removeItem(correctionStore);}catch(e){}}}
+  syyOnReady(function(){if(USER_ROLE!=='admin')return;try{var saved=JSON.parse(sessionStorage.getItem(correctionStore)||'null');if(saved&&saved.url===WEB_APP_URL&&saved.payload&&saved.payload.requestId){correctionModal();correctionPayload=saved.payload;document.getElementById('correctionBill').textContent='คำขอเดิม: '+correctionPayload.docNo;document.getElementById('correctionAction').value=correctionPayload.action;document.getElementById('correctionMetadataOnly').checked=correctionPayload.action==='amend';document.getElementById('correctionIssueReason').innerHTML=document.getElementById('inpReason').innerHTML;document.getElementById('correctionIssueReason').value=correctionPayload.reason||'ขายหน้าร้าน';document.getElementById('correctionReason').value=correctionPayload.correctionReason;document.getElementById('correctionRef').value=correctionPayload.refNo;document.getElementById('correctionNote').value=correctionPayload.note;(correctionPayload.items||[]).forEach(addCorrectionLine);correctionMode();correctionUncertain=true;correctionFailed('มีคำขอแก้ไขที่ยังไม่ยืนยันผล',true);openModal('issueCorrectionModal');}}catch(e){}});
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('issueCorrectionModal')?.classList.contains('active')){e.preventDefault();e.stopImmediatePropagation();closeIssueCorrection();}},true);
 </script>
 <script>
