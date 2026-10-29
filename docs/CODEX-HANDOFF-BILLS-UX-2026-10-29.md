@@ -2,9 +2,9 @@
 
 ## 1. สถานะคำสั่งและขอบเขตการอนุมัติ
 
-**เอกสารนี้เป็นงานวิเคราะห์/ส่งต่อ ผู้ใช้สั่งให้รอคำสั่งก่อนดำเนินการ ยังไม่ใช่การอนุมัติแก้ runtime, Sync Apps Script, Deploy รอบใหม่ หรือเปลี่ยนข้อมูลย้อนหลัง**
+**สถานะล่าสุด: ผู้ใช้สั่ง “ทำต่อ” หลังเอกสารนี้ จึงอนุมัติ implementation ตามขอบเขตแล้ว พัฒนาและทดสอบชุด Source เสร็จที่ runtime commit `715532687293e66d6f3d68be744b8d82732a5a7f` แต่ยังไม่ Sync Apps Script, Deploy รอบใหม่ หรือเปลี่ยนข้อมูลย้อนหลัง**
 
-คำสั่งล่าสุดคือให้สรุปสิ่งที่ต้องปรับอย่างละเอียดเพื่อส่งต่อให้ Codex ทำต่อ งานในรายการด้านล่างต้องเสนอขอบเขตให้ชัดและรอคำสั่งเริ่ม implementation อย่านำการอนุมัติ Deploy ที่ใช้ไปแล้วกับ Version102 มาใช้อนุมัติ release ถัดไป
+อ่าน [ผลพัฒนาและงานค้างล่าสุด](BILL-UX-IMPLEMENTATION-2026-10-29.md) ก่อนรับช่วง: 286 unit tests, 140 Browser groups, 10 backend-integrated Browser groups ผ่าน และมี review bundle 24 ไฟล์ที่ตรวจ checksum แล้ว การอ่านระบบจริงพบ session หมดอายุ จึงยังยืนยัน authenticated UAT/เวลาไม่เกิน10วินาทีไม่ได้ รายละเอียดข้อ4–6ด้านล่างเป็นแผนและเหตุผลตั้งต้น ไม่ใช่งานทั้งหมดที่ยังไม่เริ่ม อย่านำการอนุมัติ Deploy ที่ใช้ไปแล้วกับ Version102 มาใช้อนุมัติ release ถัดไป
 
 ข้อกำหนดที่ผู้ใช้ยืนยัน:
 
@@ -58,7 +58,7 @@ Workspace: `C:\Users\sudket\Documents\ChatGPT\SYY-Shop`
 6. การรวมรายการจาก movement page ที่โหลดไม่ครบอาจทำให้ยอดต่อบิลขาดหาย จึงห้ามแก้เพียงซ่อนคอลัมน์หรือ group เฉพาะหน้า50movement
 7. ยังไม่มีผลวัด authenticated runtime ที่รองรับคำกล่าวว่าทุกหน้าไม่เกิน10วินาที หรือ Reads ลดจริงกี่เปอร์เซ็นต์
 
-## 4. แผนงานตามลำดับความสำคัญ หลังได้รับคำสั่งเริ่ม
+## 4. แผนและเกณฑ์ตั้งต้น — ตรวจสถานะที่ทำแล้วจากรายงานผลพัฒนา
 
 ### P0 — ยืนยันการเปิดหน้าและข้อมูลจริงแบบอ่านอย่างเดียว
 
@@ -273,12 +273,13 @@ git diff --check
 
 ```text
 รับช่วง SYY-Shop ที่ C:\Users\sudket\Documents\ChatGPT\SYY-Shop
-อ่าน AGENTS.md, docs/CODEX-HANDOFF-BILLS-UX-2026-10-29.md และ docs/DEPLOYMENT-2026-10-29-V102.md ก่อน
-ผู้ใช้ขอสรุปส่งต่องานและสั่งให้รอคำสั่งก่อน implementation ขณะนี้ห้ามแก้ runtime/Sync/Deploy/Backfillจากเอกสารนี้เพียงอย่างเดียว ให้ตรวจสถานะและรอคำสั่งเริ่มที่ชัดเจน
-Baselineที่ยืนยันคือVersion102 runtime568ffb4 รวม1746ee2 มีตัวแก้/ยกเลิกบิลและretry/auditอยู่แล้ว อย่าทำซ้ำ
-งานเพิ่มเติมที่ต้องเตรียม: หน้าแก้ไขใช้รูปแบบรายการที่จะตัดออกพร้อมlive totals/stock delta, ประวัติหนึ่งแถวต่อบิล5คอลัมน์+Actionพร้อมยอดครบ, Dashboardเลขบิล/วันที่เวลาไทย/ผู้ทำรายการ/สถานะ/เงิน2ตำแหน่ง, คงcache/security/paginationและวัดperformanceจริง
+อ่าน AGENTS.md, docs/BILL-UX-IMPLEMENTATION-2026-10-29.md, docs/CODEX-HANDOFF-BILLS-UX-2026-10-29.md และ docs/DEPLOYMENT-2026-10-29-V102.md ก่อน
+ผู้ใช้สั่งทำต่อแล้ว implementationเสร็จที่715532687293e66d6f3d68be744b8d82732a5a7f มีผล286unit/140Browser/10backend Browserและreviewbundle24ไฟล์ ห้ามทำงานเดิมซ้ำ ห้ามSync/Deploy/Backfillจากเอกสารนี้เพียงอย่างเดียว
+Productionที่ยืนยันในรายงานเดิมคือVersion102 runtime568ffb4 รวม1746ee2 ยังไม่ได้Deploy7155326 ให้ตรวจlive stateและremote changesก่อนrelease
+งานที่ทำแล้ว: editorแบบตะกร้าพร้อมlive totals/stock delta, ประวัติหนึ่งแถวต่อบิล5คอลัมน์+Action/ยอดครบจากboundedCOUNTและbatchINsnapshot/cache, Dashboardวันเวลาไทย/ผู้ทำเดิม/สถานะ/เงิน2ตำแหน่ง, คงcache/security/paginationและpreview/retry/audit
+งานค้าง: อนุมัติDeployรอบใหม่, authenticatedread-onlyUATและวัดเวลาcold/warmจริง ขณะตรวจsessionเดิมหมดอายุ ไม่ได้ส่งLoginform ไม่มีหลักฐานรับรองทุกหน้าไม่เกิน10วินาทีหรือเปอร์เซ็นต์Readsจริง
 CorrectionเฉพาะAdminและOUT active บิลรับเข้าอ่านอย่างเดียว ไม่มีStaging อ่านProductionผ่านระบบเดิมได้แต่ห้ามเขียน/แก้/ลบDBจริงระหว่างทดสอบ คงค้นหา/XLFilterและarchitectureเดิม
-เมื่อได้รับอนุมัติแก้โค้ด ให้implementและทดสอบแบบจำลองอย่างละเอียด Commit/Push mainตามAGENTS โดยไม่ถามGitapprovalซ้ำ แล้วรายงานผล/Firestoreimpact/commit/สถานะDeploy
+งานแก้ไขเพิ่มเติมที่ได้รับอนุมัติให้ทดสอบและCommit/Push mainตามAGENTS โดยไม่ถามGitapprovalซ้ำ แยกFirestoreimpact/commit/สถานะDeployและงานที่ยังไม่ผ่านการตรวจจริง
 การDeployใหม่ การbackfillเลขย้อนหลัง และการเพิ่มschema/index/IAM/summarywrite ต้องแยกขอบเขตและขออนุมัติให้ถูกประเภท ห้ามตีความการอนุมัติDeploy102ที่ทำเสร็จแล้วเป็นอนุมัติรอบใหม่
 รักษา docs/SYSTEM-AUDIT-2026-10-11.md ที่เป็นuntrackedเดิมไว้นอกcommit
 ```
