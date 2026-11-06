@@ -176,3 +176,24 @@ Artifacts หลัก: `test-results/quality-baseline-*.log`, `quality-unit-fin
 7. ก่อน future sync/deploy ต้องตรวจ Git ↔ fresh Saved Head พร้อม complete inventory อีกครั้ง เก็บ manual changes และให้ผู้ใช้สั่ง Deploy แยก
 
 **สถานะรอบนี้: SOURCE IMPROVEMENTS + AUTOMATED VALIDATION; NOT DEPLOYED. ยังไม่ประกาศว่าจบ Master Plan V2 ทั้งหมดหรือผ่าน authenticated Production UAT.**
+
+## รอบต่อเนื่อง — 7 พฤศจิกายน 2026
+
+Baseline `1f0d959444da3ea3d4b711892e1a1717209da52d`; fetch แล้วตรงกับ `origin/main` ก่อนแก้ งานนี้ยังใช้ local fixtures เท่านั้น ไม่มี Production API/DB, Login, Trigger, Backup/Restore, Sync หรือ Deploy
+
+| งาน | Root cause / สิ่งที่ปรับ | ผลและผลกระทบ |
+|---|---|---|
+| Shared icon upgrade | ตัวแปลงไอคอนใช้ `innerHTML` กับ text node ทั้งก้อน ทำให้ข้อความที่ escape มาแล้วถูก parse ซ้ำเมื่อมี emoji; เพิ่ม regression ก่อนแก้ พบ `<img>`/`<b>` ถูกสร้างจริงใน fixture | ใช้ text nodes สำหรับข้อความ และ parse เฉพาะ SVG คงที่จาก allowlist; ทดสอบ explicit upgrade ซ้ำและ MutationObserver ไม่เพิ่มรูป/script จาก payload ไม่อ้างว่าพบ exploit ใน Production |
+| PO / print sinks | ปิด raw output ของเลข PO/quantity/cost/received quantity/ยอดและสถานะผิดรูปแบบ, print quantity และ date fallback ของ Invoice/Quote; `escHtml` เดิมไม่ encode quotes และทำ 0 หาย | reuse shared escaping; ค่า 0 ยังแสดงถูกต้อง; สถานะที่ไม่รู้จักแสดงเป็นข้อความ ไม่มี dropdown ที่เลือก Pending โดยปริยาย; status ที่รองรับและ backend rules เดิมไม่เปลี่ยน |
+| Car picker keyboard | ตัวเปิดและ Select/Clear เป็น click-only controls; เพิ่ม native buttons, expanded state, Enter/Space/ลูกศร, Escape ปิดเฉพาะ picker, focus หลังโหลดเพิ่ม/ลบ chip และป้องกัน Enter ใน search ส่งฟอร์ม | ยังค้นหาครบ loaded set 1,000 รุ่นใน fixture, window 200/400, เลือกเฉพาะผลที่แสดงและรักษา hidden IDs; ไม่มี RPC จากการเลือก/ค้นหา/คีย์บอร์ด |
+| Form errors | เพิ่ม summary พร้อมปุ่มไปช่องผิดใน Product และ Master 6 หน้า (Cars ใช้ duplicate-code rule เดิม); Invoice ใช้ validation เดิมรวม field/line errors | รักษา input/draft/คำอธิบายเดิมใน aria-describedby; การ blur ด้วยค่าเดิมไม่ลบ custom error; reset/แก้ไขล้างสถานะ; summary อยู่ใน modal scroller เพื่อให้ footer มือถือยังอยู่ในจอ ไม่เพิ่ม required/min/กติกาบัญชีใหม่ |
+
+Runtime ที่แก้ในรอบนี้: `Shared.html`, `UiSystem.html`, `Styles.html`, `Master_Products.html`, Master อีก 6 หน้า, `Purchase_Orders.html`, `Quotation.html`, `Master_Tax_Invoice.html` (13 ไฟล์) พร้อม `tests/support/quality-followup.cjs` และการเรียกผ่าน suite เดิม ไม่มี backend/write-path changes
+
+หลักฐาน: `test-results/quality-followup-before.log` (regression แสดงปัญหา icon ก่อนแก้), `quality-followup-targeted.log`, `quality-followup-unit.log`, `quality-followup-browser-full.log`, `quality-followup-backend.log`, `quality-followup-checks.json`. 4 browser groups ใหม่ตรวจ hostile fields/print, keyboard, native/manual form errors รวม mobile footer และ 0 RPC เพิ่มจาก UI interactions; Full suite และสถานะ release ให้ยึดผลจบด้านล่าง
+
+งานค้างเรียงต่อ: source-to-sink review ของ chart/tooltip/export ที่ยังไม่ครอบคลุม, typography computed-style inventory และ progressive disclosure ของฟอร์มซับซ้อน, จากนั้น manual scanner/keyboard/AT/zoom/UAT ตามข้อ 3 ข้างบน; การวัด billed reads/latency จริงยังต้องแยก Staging และ owner decisions เดิมยังค้าง ไม่รวมอยู่ในการแก้รอบนี้
+
+ผลจบรอบนี้: **Unit 304/304, Browser เต็ม 173 กลุ่ม, Backend-integrated 10/10, Syntax 53 scripts + manifest, read model และ diff whitespace ผ่าน**. Axe เดิม 30 route/state scans และเพิ่มอีก 2 error-state scans ของ Product/Invoice: 0 findings ในขอบเขต automated tags ที่ตรวจ (`quality-followup-accessibility.json`); ยังไม่ใช่ manual WCAG certification
+
+**Firestore impact รอบต่อเนื่อง: ไม่มี query/write-path changes, ไม่มี RPC เพิ่มจาก UI interactions ที่ทดสอบ และไม่มีการเรียก Production DB/API. สถานะ: SOURCE VALIDATED; NOT SYNCED / NOT DEPLOYED.**

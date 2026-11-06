@@ -1132,7 +1132,7 @@ function clearFieldError(fieldId) {
   if (errEl) errEl.classList.remove('show');
 }
 function clearAllErrors() {
-  document.querySelectorAll('#itemBasket .is-invalid').forEach(function(field){field.classList.remove('is-invalid');field.removeAttribute('aria-invalid');});
+  document.querySelectorAll('#itemBasket .is-invalid').forEach(function(field){syyClearInvalid(field,true);});
   ['modalInvoiceDate', 'modalBuyerName', 'modalBuyerTaxId'].forEach(clearFieldError);
   document.getElementById('err_items').classList.remove('show');
 }
@@ -1155,15 +1155,17 @@ function validateForm() {
     var name=row.querySelector('.item-name'),qty=row.querySelector('.item-qty'),price=row.querySelector('.item-price');
     if(!name.value.trim()&&!price.value.trim())return;
     var field=!name.value.trim()?name:!qty.value.trim()||!Number.isFinite(Number(qty.value))||Number(qty.value)<=0?qty:!price.value.trim()||!Number.isFinite(Number(price.value))||Number(price.value)<0?price:null;
-    if(field){field.classList.add('is-invalid');field.setAttribute('aria-invalid','true');field.setAttribute('aria-label','รายการต้องมีชื่อ จำนวนมากกว่า 0 และราคาตั้งแต่ 0');ok=false;}
+    if(field){syyInvalid(field,'รายการต้องมีชื่อ จำนวนมากกว่า 0 และราคาตั้งแต่ 0',false);ok=false;}
   });
   var items = collectItems();
   if (!items.length) {
     document.getElementById('err_items').classList.add('show');
+    syyInvalid(document.querySelector('#itemBasket .item-name'),'กรุณาเพิ่มรายการสินค้า/บริการอย่างน้อย 1 รายการ',false);
     ok = false;
   }
 
-  if(!ok){var first=document.querySelector('#invoiceModal .is-invalid');if(first){first.focus();first.scrollIntoView({block:'center'});}else document.querySelector('#itemBasket input')?.focus();}
+  syyValidationSummary('#invoiceModal .modal-body',!ok);
+  if(!ok&&!document.querySelector('#invoiceModal .is-invalid'))document.querySelector('#itemBasket input')?.focus();
   return ok;
 }
 
@@ -1321,7 +1323,7 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage,offset) {
     return '<tr>' +
       '<td class="col-no">' + runningNo + '</td>' +
       '<td>' + esc(it.name) + '</td>' +
-      '<td class="col-qty">' + it.qty + '</td>' +
+      '<td class="col-qty">' + esc(it.qty) + '</td>' +
       '<td class="col-unit">' + esc(it.unit || '-') + '</td>' +
       '<td class="col-price">' + fmtMoneyPlain(it.unitPrice) + '</td>' +
       '<td class="col-amount">' + fmtMoneyPlain(it.qty * it.unitPrice) + '</td>' +
@@ -1358,7 +1360,7 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage,offset) {
       '</div>' +
       '<div class="print-no-box">เลขที่ ' + esc(item.invoiceNo) + '</div>' +
     '</div>' +
-    '<div class="print-meta-row">วันที่ ' + thaiDateLong(item.invoiceDate) + '</div>' +
+    '<div class="print-meta-row">วันที่ ' + esc(thaiDateLong(item.invoiceDate)) + '</div>' +
     '<div class="print-parties">' +
       '<div class="row"><b>นามผู้ซื้อ</b><span>' + esc(item.buyerName || '—')+(item.buyerBranch&&item.buyerBranch!=='ไม่ระบุ'?' ('+esc(item.buyerBranch)+')':'') + '</span>' +
         '<span style="margin-left:auto;"><b>เลขประจำตัวผู้เสียภาษี</b> ' + esc(item.buyerTaxId || '—') + '</span></div>' +

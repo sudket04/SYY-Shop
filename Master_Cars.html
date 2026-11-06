@@ -61,7 +61,7 @@
       <span id="modalTitle">🚗 เพิ่มข้อมูลรถยนต์</span>
       <button class="modal-close" onclick="closeModal('editModal')">×</button>
     </div>
-    <form id="mainForm" onsubmit="handleSubmit(event)">
+    <form id="mainForm" data-syy-error-summary onsubmit="handleSubmit(event)">
       <div class="modal-body">
         <div class="section-label">ข้อมูลรถยนต์</div>
         <div class="form-grid">
@@ -325,6 +325,7 @@
     e.preventDefault();
     var alertEl=document.getElementById('modalAlert');
     alertEl.className='modal-alert';
+    syyResetValidation(document.getElementById('mainForm'));
 
     var inputModelCode = document.getElementById('fModelCode').value.trim();
     if(inputModelCode !== ''){
@@ -335,6 +336,7 @@
       if(isDuplicate){
         alertEl.className='modal-alert error';
         alertEl.innerText='รหัสรุ่น "'+inputModelCode+'" มีอยู่ในระบบแล้ว';
+        syyInvalid('fModelCode',alertEl.innerText,false);syyValidationSummary('#mainForm',true);
         return;
       }
     }

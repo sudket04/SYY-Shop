@@ -939,8 +939,8 @@ function buildQuoteHead(ctx) {
       '<div class="print-no-box">' +
         '<div style="border:1px solid var(--primary);border-radius:6px;padding:6px 9px;font-size:11.5px;color:var(--primary);font-weight:600;text-align:center" class="mono">เลขที่ ' + esc(ctx.quoteNo) + '</div>' +
         '<div style="font-size:11px;color:#475569;margin-top:6px;line-height:1.8">' +
-          '<div style="display:flex;justify-content:space-between"><span>วันที่</span><span>' + ctx.quoteDateTxt + '</span></div>' +
-          '<div style="display:flex;justify-content:space-between"><span>ยืนราคาถึง</span><span>' + ctx.validUntilTxt + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between"><span>วันที่</span><span>' + esc(ctx.quoteDateTxt) + '</span></div>' +
+          '<div style="display:flex;justify-content:space-between"><span>ยืนราคาถึง</span><span>' + esc(ctx.validUntilTxt) + '</span></div>' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -987,7 +987,7 @@ function buildQuotePage(ctx, pageItems, pageNo, totalPages, isLastPage,offset) {
     return '<tr>' +
       '<td class="text-center" style="color:var(--faint)">' + runningNo + '</td>' +
       '<td>' + esc(b.productName) + '<div class="mono" style="font-size:10.5px;color:var(--faint);margin-top:2px">' + esc(b.productCode) + (b.partNumber ? ' · P/N ' + esc(b.partNumber) : '') + '</div></td>' +
-      '<td class="text-center">' + b.qty + '</td>' +
+      '<td class="text-center">' + esc(b.qty) + '</td>' +
       '<td class="text-right mono">' + moneyPlain(b.unitPrice) + '</td>' +
       '<td class="text-right mono">' + moneyPlain(b.qty * b.unitPrice) + '</td>' +
     '</tr>';

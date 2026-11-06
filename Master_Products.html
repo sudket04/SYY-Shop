@@ -52,7 +52,7 @@
   .multi-select-box{border:1px solid #cbd5e1;border-radius:6px;padding:8px 10px;min-height:38px;cursor:pointer;background:#fafafa;box-sizing:border-box}
   .multi-select-box:hover{border-color:#a5b4fc}
   .chips-container{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:20px}
-  .car-chip{background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:20px;padding:2px 6px 2px 10px;font-size:12px;display:flex;align-items:center;gap:6px}
+  .car-chip{background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:20px;padding:2px 6px 2px 10px;font-size:13px;display:flex;align-items:center;gap:6px}
   .car-chip .remove-chip{cursor:pointer;font-weight:700;color:#6366f1;padding:0 2px}
   .car-chip .remove-chip:hover{color:#312e81}
   .placeholder-text{color:#94a3b8;font-size:12px}
@@ -62,7 +62,7 @@
   .multi-dropdown-search{width:100%;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:12px;box-sizing:border-box}
   .multi-dropdown-search:focus{border-color:var(--primary)}
   .multi-dropdown-actions{display:flex;gap:8px;padding:6px 10px;font-size:11px;border-bottom:1px solid #f1f5f9;background:#fafbff}
-  .dd-action-link{color:#4338ca;cursor:pointer;font-weight:600}
+  .dd-action-link{color:#4338ca;cursor:pointer;font-weight:600;font-family:inherit;font-size:13px;border:0;background:transparent;min-height:36px;padding:4px 8px}
   .dd-action-link:hover{text-decoration:underline}
   .dd-action-sep{color:#cbd5e1}
   .multi-dropdown-item{padding:8px 12px;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
@@ -165,7 +165,7 @@
         <span id="modalTitle">🛒 เพิ่มข้อมูลสินค้า</span>
         <button class="modal-close" onclick="closeProductModal()">×</button>
       </div>
-      <form id="productForm" onsubmit="handleSubmit(event)">
+      <form id="productForm" data-syy-error-summary onsubmit="handleSubmit(event)">
         <div class="modal-body">
 
           <div class="section-label">ข้อมูลสินค้า</div>
@@ -235,20 +235,21 @@
             <div class="form-group full">
               <label>🚗 รุ่นรถที่ใช้ <span id="carSelectedCount" class="car-count-badge"></span></label>
               <div id="carMultiBox" class="multi-select-box" onclick="toggleCarDropdown(event)">
+                <button type="button" id="carPickerToggle" class="dd-action-link" aria-expanded="false" aria-controls="carDropdownList" onclick="toggleCarDropdown(event)">เลือกรุ่นรถที่ใช้</button>
                 <div id="carChips" class="chips-container">
                   <span class="placeholder-text">⏳ กำลังโหลด...</span>
                 </div>
               </div>
-              <div id="carDropdownList" class="multi-dropdown-list">
+              <div id="carDropdownList" class="multi-dropdown-list" role="group" aria-label="ตัวเลือกรุ่นรถ" onkeydown="onCarPickerKey(event)">
                 <div class="multi-dropdown-search-wrap" onclick="event.stopPropagation()">
                   <input type="text" id="carSearchInput" class="multi-dropdown-search"
                          placeholder="🔍 ค้นหารุ่นรถ..."
                          oninput="renderCarDropdownList(this.value)">
                 </div>
                 <div class="multi-dropdown-actions" onclick="event.stopPropagation()">
-                  <span class="dd-action-link" onclick="selectAllCars(event)">เลือกทั้งหมดที่แสดง</span>
+                  <button type="button" class="dd-action-link" onclick="selectAllCars(event)">เลือกทั้งหมดที่แสดง</button>
                   <span class="dd-action-sep">|</span>
-                  <span class="dd-action-link" onclick="clearAllCars(event)">🗑️ ล้างทั้งหมด</span>
+                  <button type="button" class="dd-action-link" onclick="clearAllCars(event)">🗑️ ล้างทั้งหมด</button>
                 </div>
                 <div id="carDropdownItems"></div>
               </div>
@@ -1107,7 +1108,7 @@
     document.getElementById('inp_zoneId').value     = '';
 
     document.getElementById('modalAlert').style.display = 'none';
-    document.getElementById('carDropdownList').classList.remove('show');
+    closeCarDropdown(false);
     updateImageSectionForEdit(null, '', [], 0);
 
     var btn = document.getElementById('modalBtnSave');
@@ -1617,19 +1618,25 @@
     var list     = document.getElementById('carDropdownList');
     var willOpen = !list.classList.contains('show');
     list.classList.toggle('show');
+    document.getElementById('carPickerToggle').setAttribute('aria-expanded',String(willOpen));
 
     if (willOpen) {
       var searchInput = document.getElementById('carSearchInput');
       searchInput.value = '';
       renderCarDropdownList('');
-      setTimeout(function() { searchInput.focus(); }, 50);
+      searchInput.focus();
     }
   }
 
-  document.addEventListener('click', function() {
-    var list = document.getElementById('carDropdownList');
-    if (list) list.classList.remove('show');
-  });
+  function closeCarDropdown(restoreFocus){var list=document.getElementById('carDropdownList'),toggle=document.getElementById('carPickerToggle');if(list)list.classList.remove('show');if(toggle){toggle.setAttribute('aria-expanded','false');if(restoreFocus)toggle.focus();}}
+  function onCarPickerKey(event){
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeCarDropdown(true);return;}
+    var options=Array.from(document.querySelectorAll('#carDropdownItems input[data-id]')),index=options.indexOf(event.target);
+    if(event.target.id==='carSearchInput'&&event.key==='Enter'){event.preventDefault();if(options[0])options[0].focus();return;}
+    if((event.key==='ArrowDown'||event.key==='ArrowUp')&&(index>=0||event.target.id==='carSearchInput')){event.preventDefault();event.stopPropagation();var next=index<0?0:Math.max(0,Math.min(options.length-1,index+(event.key==='ArrowDown'?1:-1)));if(options[next])options[next].focus();}
+  }
+  document.addEventListener('click',function(event){if(!event.target.closest('#carMultiBox,#carDropdownList'))closeCarDropdown(false);});
+  document.addEventListener('focusin',function(event){if(!event.target.closest('#carMultiBox,#carDropdownList'))closeCarDropdown(false);});
 
   function filterCars(keyword) {
     if (!keyword) return carOptionsCache;
@@ -1672,7 +1679,7 @@
       };
       itemsBox.appendChild(row);
     });
-    if(filtered.length>carDropdownLimit){var more=document.createElement('button');more.type='button';more.className='btn btn-ghost';more.textContent='แสดง '+carDropdownLimit+' จาก '+filtered.length+' รุ่น · โหลดเพิ่มอีก 200';more.onclick=function(event){event.stopPropagation();carDropdownLimit+=200;renderCarDropdownList(keyword);};itemsBox.appendChild(more);}
+    if(filtered.length>carDropdownLimit){var more=document.createElement('button');more.type='button';more.className='btn btn-ghost';more.textContent='แสดง '+carDropdownLimit+' จาก '+filtered.length+' รุ่น · โหลดเพิ่มอีก 200';more.onclick=function(event){event.stopPropagation();var focused=document.activeElement===more,offset=carDropdownLimit;carDropdownLimit+=200;renderCarDropdownList(keyword);if(focused){var next=itemsBox.querySelectorAll('input[data-id]')[offset];if(next)next.focus();}};itemsBox.appendChild(more);}
   }
 
   function toggleCarSelection(id, isChecked) {
@@ -1721,8 +1728,10 @@
       chip.innerHTML = esc(name) + ' <button type="button" class="remove-chip" aria-label="ลบรุ่นรถ '+esc(name)+'" data-id="' + esc(id) + '">✕</button>';
       chip.querySelector('.remove-chip').onclick = function(ev) {
         ev.stopPropagation();
+        var focused=document.activeElement===ev.currentTarget,index=selectedCarIds.indexOf(id);
         toggleCarSelection(id, false);
         renderCarDropdownList(document.getElementById('carSearchInput').value);
+        if(focused){var buttons=container.querySelectorAll('.remove-chip');(buttons[Math.min(index,buttons.length-1)]||document.getElementById('carPickerToggle')).focus();}
       };
       container.appendChild(chip);
     });

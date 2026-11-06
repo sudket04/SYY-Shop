@@ -2,6 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {default:AxeBuilder}=require('@axe-core/playwright');
 module.exports=async function({pageFor,check,output}){
+ await require('./quality-followup.cjs')({pageFor,check,output});
  await check('V2 six Master pagers search the full 1000-row set, preserve page size and never call the gateway for display paging',async()=>{
   for(const name of ['Brands','Categories','Cars','Customers','Vendors','Zones']){const p=await pageFor('Master_'+name+'.html');await p.evaluate(()=>{cache=Array.from({length:1000},(_,i)=>{const id='M'+String(i).padStart(4,'0');return {id,Name:'Fixture '+i,_code:id,_brand:'Fixture',_model:'รุ่น '+i,Customer_Name:'Buyer '+i,Vendor_name:'Vendor '+i,Area:'Zone '+i};});renderRows();});
    assert.equal(await p.locator('#tbodyMain tr[data-row-key]').count(),25,name);const count=await p.evaluate(()=>apiCalls.length);await p.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();assert.equal(await p.locator('#tbodyMain tr[data-row-key]').first().getAttribute('data-row-key'),'M0025');assert.equal(await p.locator('#tbodyMain .rownum').first().innerText(),'26');
@@ -33,7 +34,8 @@ module.exports=async function({pageFor,check,output}){
   const p=await pageFor('Master_Products.html');const payload='x"><img src=x onerror="window.fixtureXss=true"><span data-id="';const calls=await p.evaluate(()=>apiCalls.length);
   await p.evaluate(payload=>{window.fixtureXss=false;carOptionsCache=Array.from({length:1000},(_,i)=>({id:'CAR'+i,Name:'รุ่น '+i}));selectedCarIds=['legacy-hidden'];renderCarDropdownList('');renderCarChips();},payload);
   assert.equal(await p.locator('#carDropdownItems .multi-dropdown-item').count(),200);
-  await p.evaluate(()=>{window.carFixtureSubmits=0;document.getElementById('productForm').addEventListener('submit',event=>{event.preventDefault();event.stopImmediatePropagation();carFixtureSubmits++;},true);openModal('productModal');document.getElementById('carDropdownList').classList.add('show');});
+  await p.evaluate(()=>{window.carFixtureSubmits=0;document.getElementById('productForm').addEventListener('submit',event=>{event.preventDefault();event.stopImmediatePropagation();carFixtureSubmits++;},true);openModal('productModal');});
+  await p.locator('#carPickerToggle').click();
   const firstCar=p.locator('#carDropdownItems input[data-id="CAR0"]');await firstCar.focus();await firstCar.press('Enter');assert.equal(await firstCar.isChecked(),true);assert.equal(await firstCar.evaluate(el=>document.activeElement===el),true);await firstCar.press('Space');assert.equal(await firstCar.isChecked(),false);assert.equal(await firstCar.evaluate(el=>document.activeElement===el),true);assert.equal(await p.evaluate(()=>carFixtureSubmits),0);
   await p.locator('#carDropdownItems button').evaluate(el=>el.click());assert.equal(await p.locator('#carDropdownItems .multi-dropdown-item').count(),400);await p.evaluate(()=>selectAllCars({stopPropagation(){}}));assert.equal(await p.evaluate(()=>selectedCarIds.length),401);assert.equal(await p.evaluate(()=>selectedCarIds.includes('legacy-hidden')),true);
   await p.evaluate(()=>{document.getElementById('carSearchInput').value='รุ่น 999';renderCarDropdownList('รุ่น 999');selectAllCars({stopPropagation(){}});});assert.equal(await p.locator('#carDropdownItems .multi-dropdown-item').count(),1);assert.equal(await p.evaluate(()=>selectedCarIds.includes('CAR999')),true);

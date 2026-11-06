@@ -129,8 +129,16 @@ syyOnReady(function(){document.documentElement.lang='th';if(!document.title){var
     nodes.forEach(function(node){
       var text=node.nodeValue, re=/(🗑️|✏️|👁️|🏷️|⚠️|⏱️|🗝️|🖨️|🖼️|💾|🗑|✏|👁|🔍|⌕|🔄|📦|🏷|🛒|📋|🧾|📄|📝|📜|📂|📭|⚠|✅|✓|✕|🔒|🔓|🔑|👤|🧍|🧑|👥|🖨|📥|📤|🚗|🏢|🕐|⏱|📅|📊|📞|🌐|☰|💡|🏪|🔧|🔖|🔐|🚪|💰|🎉|💥|🔶|❌|⏳|➕|⬇️|⬇|✉️|✉|↩️|↩|❓|💼|👆)/g;
       if(!re.test(text))return; re.lastIndex=0;
-      var span=document.createElement('span'); span.innerHTML=text.replace(re,function(x){return svg(map[x]);});
-      var frag=document.createDocumentFragment(); while(span.firstChild)frag.appendChild(span.firstChild); node.parentNode.replaceChild(frag,node);
+      // DB text may already have been escaped by its renderer. Never parse it
+      // again as markup just because it also contains a recognized emoji.
+      var frag=document.createDocumentFragment(),offset=0,match;
+      while(match=re.exec(text)){
+        frag.appendChild(document.createTextNode(text.slice(offset,match.index)));
+        var icon=document.createElement('span');icon.innerHTML=svg(map[match[0]]);
+        while(icon.firstChild)frag.appendChild(icon.firstChild);
+        offset=re.lastIndex;
+      }
+      frag.appendChild(document.createTextNode(text.slice(offset)));node.parentNode.replaceChild(frag,node);
     });
   }
   window.syyUpgradeIcons=upgrade;

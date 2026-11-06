@@ -458,7 +458,7 @@
   // TAB 1: สร้างใบสั่งซื้อ — จัดกลุ่มตามผู้จัดจำหน่าย
   // ==========================================
   function escHtml(str) {
-    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return esc(str);
   }
 
   function renderCreateTab() {
@@ -815,7 +815,7 @@
     list=documentPager?documentPager.window(list,historyStatusFilter+JSON.stringify(XLF.snapshot?XLF.snapshot('orders'):{})):list;
     syyPatchRows(tbody,list.map(function(po) {
       var totalReceived = (po.items || []).reduce(function(s, it) { return s + parseFloat(it.receivedQty || 0); }, 0);
-      var qtyCell = po.totalQty + (totalReceived > 0 ? '<div class="qty-progress">รับแล้ว ' + totalReceived + ' / ' + po.totalQty + '</div>' : '');
+      var qtyCell = escHtml(po.totalQty) + (totalReceived > 0 ? '<div class="qty-progress">รับแล้ว ' + totalReceived + ' / ' + escHtml(po.totalQty) + '</div>' : '');
 
       var statusCell;
       var isLocked  = (po.status === 'Received' || po.status === 'Cancelled');
@@ -826,12 +826,12 @@
       } else if (po.status === 'PartiallyReceived') {
         // ★ ได้รับบางส่วนแล้ว — ไม่ให้ยกเลิก ต้องรับของที่เหลือหรือรับต่อผ่านปุ่ม "รับสินค้า" เท่านั้น
         statusCell = '<span class="status-locked-badge status-PartiallyReceived">' + STATUS_LABELS.PartiallyReceived + '</span>';
-      } else {
+      } else if(Object.prototype.hasOwnProperty.call(STATUS_LABELS,po.status)) {
         var opts = ['Pending', 'Ordered', 'Cancelled'].map(function(s) {
           return '<option value="' + s + '" ' + (s === po.status ? 'selected' : '') + '>' + STATUS_LABELS[s] + '</option>';
         }).join('');
-        statusCell = '<select class="status-select status-' + po.status + '" onchange="onStatusChange(\'' + escJs(po.poId) + '\', this)">' + opts + '</select>';
-      }
+        statusCell = '<select class="status-select status-' + escHtml(po.status) + '" onchange="onStatusChange(\'' + escJs(po.poId) + '\', this)">' + opts + '</select>';
+      } else statusCell='<span class="status-locked-badge">'+escHtml(po.status||'ไม่ระบุสถานะ')+'</span>';
 
       var receiveBtn = (po.status === 'Pending' || po.status === 'Ordered' || po.status === 'PartiallyReceived')
         ? '<button class="btn btn-icon receive" title="บันทึกรับสินค้า" onclick="openReceiveModal(\'' + escJs(po.poId) + '\')">📥</button>'
@@ -841,12 +841,12 @@
         (!po.vendorTaxId ? ' <span title="ยังไม่มีเลขผู้เสียภาษีของผู้จำหน่ายรายนี้" style="color:#b45309;">⚠️</span>' : '');
 
       return '<tr data-row-key="'+esc(po.poId)+'">' +
-        '<td><b>' + po.poId + '</b></td>' +
+        '<td><b>' + escHtml(po.poId) + '</b></td>' +
         '<td>' + escHtml(po.orderDate) + '</td>' +
         '<td>' + vendorNameCell + '</td>' +
         '<td class="text-center">' + (po.items ? po.items.length : 0) + '</td>' +
         '<td class="text-center">' + qtyCell + '</td>' +
-        '<td class="text-right">฿ ' + po.totalAmount.toLocaleString('th-TH', {maximumFractionDigits:2}) + '</td>' +
+        '<td class="text-right">฿ ' + escHtml(po.totalAmount.toLocaleString('th-TH', {maximumFractionDigits:2})) + '</td>' +
         '<td>' + statusCell + '</td>' +
         '<td class="text-center col-sticky-right"><span class="row-actions">' +
           receiveBtn +
@@ -1103,8 +1103,8 @@
 
     document.getElementById('detailItemsBody').innerHTML = (po.items || []).map(function(it) {
       var lineTotal = it.qty * it.costPrice;
-      return '<tr><td>' + escHtml(it.productName) + '</td><td class="text-center">' + it.qty + '</td>' +
-        '<td class="text-right">฿ ' + it.costPrice.toLocaleString('th-TH',{maximumFractionDigits:2}) + '</td>' +
+      return '<tr><td>' + escHtml(it.productName) + '</td><td class="text-center">' + escHtml(it.qty) + '</td>' +
+        '<td class="text-right">฿ ' + escHtml(it.costPrice.toLocaleString('th-TH',{maximumFractionDigits:2})) + '</td>' +
         '<td class="text-right">฿ ' + lineTotal.toLocaleString('th-TH',{maximumFractionDigits:2}) + '</td></tr>';
     }).join('');
     document.getElementById('detailTotalAmount').innerText = '฿ ' + po.totalAmount.toLocaleString('th-TH', {maximumFractionDigits:2});
@@ -1115,7 +1115,7 @@
     if (receipts.length) {
       logWrap.style.display = 'block';
       document.getElementById('detailReceiptsBody').innerHTML = receipts.map(function(r) {
-        var itemsTxt = (r.items || []).map(function(it) { return escHtml(it.productName) + ' ×' + it.qtyReceivedNow; }).join(', ');
+        var itemsTxt = (r.items || []).map(function(it) { return escHtml(it.productName) + ' ×' + escHtml(it.qtyReceivedNow); }).join(', ');
         return '<div class="receipt-entry">' +
           '<div class="r-head"><b>' + escHtml(r.date) + ' — Invoice: ' + escHtml(r.invoiceNo) + '</b>' +
           '<span class="r-tag ' + (r.isFinal ? 'full' : 'partial') + '">' + (r.isFinal ? 'รับครบ' : '🔶 รับบางส่วน') + '</span></div>' +

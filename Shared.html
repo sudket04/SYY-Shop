@@ -230,7 +230,7 @@ function syySyncModals(){
   else document.body.style.overflow=syyModalBodyOverflow;
   if(closed.length){var target=closed.at(-1).returnFocus;if(target&&target.isConnected&&!target.closest('[inert]'))target.focus();else if(top)(syyModalFocusables(top.element)[0]||top.dialog).focus();}
 }
-function openModal(id){var element=document.getElementById(id);if(!element)return;element.classList.add('active');if(window.SYYSelect)SYYSelect.refresh(element);syyModalBaselines[id]=JSON.stringify(syyReadFields("#"+id));syySyncModals();}
+function openModal(id){var element=document.getElementById(id);if(!element)return;element.querySelectorAll('form[data-syy-error-summary]').forEach(syyResetValidation);element.classList.add('active');if(window.SYYSelect)SYYSelect.refresh(element);syyModalBaselines[id]=JSON.stringify(syyReadFields("#"+id));syySyncModals();}
 function closeModal(id){var element=document.getElementById(id);if(element&&window.SYYPassword)SYYPassword.hide(element);if(window.SYYSelect)SYYSelect.closeActive();if(element)element.classList.remove('active');syySyncModals();}
 document.addEventListener('keydown',function(event){
   var top=syyModalStack.at(-1);if(!top||event.key!=='Tab'||document.querySelector('.swal2-container'))return;var targets=syyModalFocusables(top.element);
@@ -848,21 +848,46 @@ function syyAccessibleFields(root){
   });
   (root||document).querySelectorAll('button[title]').forEach(function(button){if(!button.hasAttribute('aria-label'))button.setAttribute('aria-label',button.title);});
 }
-function syyInvalid(field,message){
+function syyFocusInvalid(field){
+  if(!field)return;for(var parent=field.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
+  var target=field.classList.contains('syy-select-native')?document.getElementById(field.id+'-control'):field;
+  if(target){target.scrollIntoView({block:'center'});target.focus();}
+}
+function syyInvalid(field,message,focus){
   if(typeof field==='string')field=document.getElementById(field);if(!field)return;
   field.classList.add('is-invalid');field.setAttribute('aria-invalid','true');
+  field.syyErrorValue=field.value;
   var error=document.getElementById(field.id+'-ux-error');if(!error){error=document.createElement('span');error.id=field.id+'-ux-error';error.className='syy-field-error';field.insertAdjacentElement('afterend',error);}
-  error.textContent=message;field.setAttribute('aria-describedby',error.id);
+  error.textContent=message;
   var target=field.classList.contains('syy-select-native')?document.getElementById(field.id+'-control'):field;
-  if(target){target.setAttribute('aria-invalid','true');target.setAttribute('aria-describedby',error.id);target.scrollIntoView({block:'center'});target.focus();}
+  [field,target].filter(Boolean).forEach(function(element){element.setAttribute('aria-invalid','true');var ids=(element.getAttribute('aria-describedby')||'').split(/\s+/).filter(Boolean);if(ids.indexOf(error.id)<0)ids.push(error.id);element.setAttribute('aria-describedby',ids.join(' '));});
+  if(focus!==false)syyFocusInvalid(field);
 }
-function syyClearInvalid(field){
+function syyClearInvalid(field,force){
   if(!field||!field.hasAttribute('aria-invalid'))return;
-  if(field.validity&&!field.validity.valid)return;
+  if(!force&&((field.validity&&!field.validity.valid)||field.syyErrorValue===field.value))return;
+  delete field.syyErrorValue;
   var errorId=field.id+'-ux-error',proxy=document.getElementById(field.id+'-control');
   [field,proxy].filter(Boolean).forEach(function(element){element.removeAttribute('aria-invalid');element.classList.remove('is-invalid');var descriptions=(element.getAttribute('aria-describedby')||'').split(' ').filter(function(id){return id&&id!==errorId;});if(descriptions.length)element.setAttribute('aria-describedby',descriptions.join(' '));else element.removeAttribute('aria-describedby');});
   document.getElementById(errorId)?.remove();document.getElementById('err_'+field.id)?.classList.remove('show');
 }
+/* Presentation only: native constraints and page-specific rules stay authoritative. */
+function syyValidationSummary(root,focusFirst){
+  if(typeof root==='string')root=document.querySelector(root);if(!root)return;
+  var fields=Array.from(root.querySelectorAll('input,select,textarea')).filter(function(field){return !field.disabled&&field.type!=='hidden'&&((field.willValidate&&!field.validity.valid)||field.getAttribute('aria-invalid')==='true');});
+  var summary=root.syyErrorSummary;if(!fields.length){if(summary)summary.remove();root.syyErrorSummary=null;return;}
+  if(!summary){summary=document.createElement('section');summary.className='syy-validation-summary';summary.setAttribute('role','alert');(root.querySelector(':scope > .modal-body')||root).prepend(summary);root.syyErrorSummary=summary;}
+  var title=document.createElement('p');title.textContent='กรุณาตรวจสอบข้อมูล '+fields.length+' ช่องก่อนบันทึก';var list=document.createElement('ul');
+  fields.forEach(function(field){var error=document.getElementById(field.id+'-ux-error')||document.getElementById('err_'+field.id),message=error&&error.textContent.trim()||field.validationMessage||'ตรวจสอบข้อมูลช่องนี้';var li=document.createElement('li'),button=document.createElement('button');button.type='button';button.textContent=syyFieldName(field)+' — '+message;button.onclick=function(){syyFocusInvalid(field);};li.appendChild(button);list.appendChild(li);});
+  summary.replaceChildren(title,list);if(focusFirst)syyFocusInvalid(fields[0]);
+}
+function syyResetValidation(root){root.querySelectorAll('[aria-invalid="true"]').forEach(function(field){syyClearInvalid(field,true);});if(root.syyErrorSummary)root.syyErrorSummary.remove();root.syyErrorSummary=null;}
+document.addEventListener('invalid',function(event){
+  var field=event.target,form=field.form;if(!form||!form.hasAttribute('data-syy-error-summary'))return;
+  event.preventDefault();syyInvalid(field,field.validationMessage,false);clearTimeout(form.syyErrorTimer);form.syyErrorTimer=setTimeout(function(){syyValidationSummary(form,true);},0);
+},true);
+['input','change'].forEach(function(name){document.addEventListener(name,function(event){var root=event.target.parentElement;for(;root;root=root.parentElement)if(root.syyErrorSummary){setTimeout(function(){syyValidationSummary(root,false);},0);break;}});});
+document.addEventListener('reset',function(event){if(event.target.matches('form[data-syy-error-summary]'))syyResetValidation(event.target);},true);
 function syyErrorMessage(error){
   var message=typeof error==='string'?error:error&&error.message||'';
   if(/^\s*\{/.test(message)){try{message=JSON.parse(message).message||'';}catch(e){message='';}}
