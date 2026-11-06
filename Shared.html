@@ -117,7 +117,9 @@ function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'
 //   ทำให้ onclick พังหรือรันโค้ดแปลกปลอมได้ ปัจจุบันทุกจุดที่ใช้ esc() แบบนี้ฝังแต่รหัส/รหัสเอกสารที่
 //   ระบบสร้างเอง (ไม่มี ' ปนอยู่แน่ๆ) จึงยังไม่เคยเป็นปัญหาจริง แต่เป็นจุดเสี่ยงถ้าวันหลังมีใครเผลอเอา
 //   ข้อความที่ผู้ใช้พิมพ์เองมาฝังแบบเดียวกัน
-function escJs(v){return esc(v).replace(/'/g,"\\'");}
+// Compatibility for legacy inline handlers. New dynamic actions use delegated
+// data attributes. Escape JavaScript before HTML, including literal backslashes.
+function escJs(v){return esc(String(v==null?'':v).replace(/\\/g,'\\\\').replace(/'/g,'\\x27').replace(/\r/g,'\\r').replace(/\n/g,'\\n').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029'));}
 function num(v){return parseFloat(v)||0;}
 function money(n){return '฿ '+num(n).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});}
 /* Bill labels never generate or change historical identifiers. */
@@ -555,10 +557,13 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOption
 
 // Fetch only requested pages; incomplete lists are visibly marked and cannot claim full totals.
 function syyDocumentPager(options){
-  var info={hasMore:false,nextCursor:''},generation=0,busy=false,criteria={},viewPage=1,viewSize=50,viewScope='',viewTotal=0,appliedCriteria={};
+  var info={hasMore:false,nextCursor:''},generation=0,busy=false,criteria={},viewPage=1,viewSize=Number(syyViewPreference('documents:'+options.key+':size'))||25,viewScope='',viewTotal=0,appliedCriteria={};
+  if([25,50,100].indexOf(viewSize)<0)viewSize=25;
   var container=document.querySelector(options.container),host=document.createElement('div');host.className='pagination-bar syy-pager';host.setAttribute('aria-live','polite');
   host.innerHTML='<span class="syy-page-count"></span><button type="button" class="btn btn-ghost">โหลดเพิ่ม</button><button type="button" class="btn btn-ghost">โหลดทั้งหมดเพื่อสรุป</button><div class="syy-display-pages"><button type="button" class="btn btn-ghost">หน้าก่อน</button><span></span><button type="button" class="btn btn-ghost">หน้าถัดไป</button></div>';
   container.appendChild(host);var label=host.querySelector('.syy-page-count'),buttons=host.querySelectorAll('button'),viewLabel=host.querySelector('.syy-display-pages span');
+  var sizeLabel=document.createElement('label');sizeLabel.textContent='รายการ / หน้า ';var sizeSelect=document.createElement('select');sizeSelect.className='select';sizeSelect.dataset.syyNoSearch='true';sizeSelect.style.width='auto';sizeSelect.setAttribute('aria-label','จำนวนเอกสารต่อหน้า');[25,50,100].forEach(function(size){var option=document.createElement('option');option.value=size;option.textContent=size;sizeSelect.appendChild(option);});sizeSelect.value=viewSize;sizeLabel.appendChild(sizeSelect);host.appendChild(sizeLabel);
+  sizeSelect.onchange=function(){viewSize=Number(sizeSelect.value);viewPage=1;syyViewPreference('documents:'+options.key+':size',viewSize);options.render();};
   var form=document.createElement('form');form.className='syy-document-search';form.innerHTML='<label>เลขเอกสารตรงตัว<input type="search" name="number" maxlength="120" placeholder="ระบุเลขเต็มตามเอกสาร"></label><details class="syy-search-dates"><summary>เลือกช่วงวันที่ (ค.ศ.)</summary><div><label>ตั้งแต่วันที่ (ค.ศ.)<input type="date" name="from"></label><label>ถึงวันที่ (ค.ศ.)<input type="date" name="to"></label></div></details><button class="btn btn-primary" type="submit">ค้นหาทั้งช่วง</button><button class="btn btn-ghost" type="button">ล้างการค้นหา</button><small>ค้นหาจากเซิร์ฟเวอร์ในปี/ช่วงวันที่ที่เลือก · ตัวกรองคอลัมน์และสถานะกรองเฉพาะรายการที่โหลด</small>';
   container.insertBefore(form,container.firstChild);var dateDetails=form.querySelector('details'),mobile=matchMedia('(max-width:767px)');dateDetails.open=!mobile.matches;mobile.addEventListener('change',function(){dateDetails.open=!mobile.matches;});
   function filtered(){return !!(criteria.number||criteria.from||criteria.to);}
@@ -853,6 +858,7 @@ function syyInvalid(field,message){
 }
 function syyClearInvalid(field){
   if(!field||!field.hasAttribute('aria-invalid'))return;
+  if(field.validity&&!field.validity.valid)return;
   var errorId=field.id+'-ux-error',proxy=document.getElementById(field.id+'-control');
   [field,proxy].filter(Boolean).forEach(function(element){element.removeAttribute('aria-invalid');element.classList.remove('is-invalid');var descriptions=(element.getAttribute('aria-describedby')||'').split(' ').filter(function(id){return id&&id!==errorId;});if(descriptions.length)element.setAttribute('aria-describedby',descriptions.join(' '));else element.removeAttribute('aria-describedby');});
   document.getElementById(errorId)?.remove();document.getElementById('err_'+field.id)?.classList.remove('show');
@@ -993,10 +999,10 @@ document.addEventListener('click',function(event){
 });
 var syyLibraries=Object.create(null);
 function syyLoadLibrary(name){
- var urls={xlsx:"https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",barcode:"https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js",dialogs:"https://cdn.jsdelivr.net/npm/sweetalert2@11",qrcode:"https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js",html2canvas:"https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",pdf:"https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"};
+ var assets={"xlsx":{"url":"https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js","integrity":"sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"},"barcode":{"url":"https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js","integrity":"sha384-Kk5SjBOKprEnGfyBWfD2zROFd1Cu8kwOXxG2GIhYPcoDL2rBJS9P8Ud1ZMy4412a"},"dialogs":{"url":"https://cdn.jsdelivr.net/npm/sweetalert2@11.26.25/dist/sweetalert2.all.min.js","integrity":"sha384-nLoOnA/BDh8A/jxqtckg4DumuCGOBYUnNJLZdQz/zfYNp3wcjGSoWTAzgko06G/2"},"qrcode":{"url":"https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js","integrity":"sha384-0RsG1yo/crf/1Qc14sho26SXXOTngNCjgJw7fuvXBt9W/OChF/Ijx+aUuBDqQwEk"},"html2canvas":{"url":"https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js","integrity":"sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H"},"pdf":{"url":"https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js","integrity":"sha384-qovJwSBbRDPP5cEjCp8S0UP66wrvnjaa60XMOGzTNanrThcrGfXfnZkvgY8N1KT3"}};var urls={};Object.keys(assets).forEach(function(key){urls[key]=assets[key].url;});
  var checks={xlsx:function(){return typeof XLSX!=='undefined';},barcode:function(){return typeof JsBarcode!=='undefined';},dialogs:function(){return typeof Swal!=='undefined'&&typeof Swal.fire==='function';},qrcode:function(){return typeof QRCode!=='undefined';},html2canvas:function(){return typeof html2canvas==='function';},pdf:function(){return typeof window.jspdf?.jsPDF==='function';}};
  if(checks[name]&&checks[name]())return Promise.resolve();
  if(!urls[name])return Promise.reject(Error("ไม่รู้จัก library"));if(syyLibraries[name])return syyLibraries[name];
- syyLibraries[name]=new Promise(function(resolve,reject){var script=document.createElement("script"),done=false,timer=setTimeout(function(){finish(false);},10000);function finish(ok){if(done)return;done=true;clearTimeout(timer);if(ok)resolve();else{delete syyLibraries[name];script.remove();reject(Error("โหลดเครื่องมือไม่สำเร็จ กรุณาลองอีกครั้ง"));}}script.async=true;script.src=urls[name];script.onload=function(){finish(checks[name]());};script.onerror=function(){finish(false);};document.head.appendChild(script);});return syyLibraries[name];
+ syyLibraries[name]=new Promise(function(resolve,reject){var script=document.createElement("script"),done=false,timer=setTimeout(function(){finish(false);},10000);function finish(ok){if(done)return;done=true;clearTimeout(timer);if(ok)resolve();else{delete syyLibraries[name];script.remove();reject(Error("โหลดเครื่องมือไม่สำเร็จ กรุณาลองอีกครั้ง"));}}script.async=true;script.integrity=assets[name].integrity;script.crossOrigin='anonymous';script.referrerPolicy='no-referrer';script.dataset.syyLibrary=name;script.src=urls[name];script.onload=function(){finish(checks[name]());};script.onerror=function(){finish(false);};document.head.appendChild(script);});return syyLibraries[name];
 }
 </script>

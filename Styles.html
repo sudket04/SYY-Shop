@@ -7,8 +7,8 @@
 
 :root{
   --primary:#005088; --primary-dark:#002e52; --primary-soft:#e6f0fa; --primary-line:#bfdcf5;
-  --nav:#012a49; --nav-hi:#0a4877; --nav-txt:#e2eaf1; --nav-dim:#7cb3d4; --nav-label:#5f93b8;
-  --ink:#0f172a; --text:#334155; --muted:#475569; --faint:#64748b;
+  --nav:#012a49; --nav-hi:#0a4877; --nav-txt:#e2eaf1; --nav-dim:#7cb3d4; --nav-label:#7cb3d4;
+  --ink:#0f172a; --text:#334155; --muted:#475569; --faint:#56677d;
   --line:#dfe7ef; --line-soft:#f1f5f9; --bg:#f3f6fa;
   --ok:#15803d; --ok-bg:#dcfce7; --ok-line:#86efac;
   --warn:#b45309; --warn-bg:#fef3c7; --warn-line:#fcd34d;
@@ -18,7 +18,7 @@
   --hit:36px;
   --font-sans:'Noto Sans Thai','Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --font-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
-  --fs-body:15px; --lh-body:1.65; --tracking-body:0;
+  --fs-body:16px; --lh-body:1.65; --tracking-body:0;
 }
 .syy-dialog-fallback.swal2-container{position:fixed;inset:0;z-index:100100;display:flex;align-items:center;justify-content:center;background:#0f172a66;padding:20px}
 .syy-dialog-fallback>.swy-popup{width:min(540px,100%);max-height:90vh;overflow:auto;background:white;color:var(--ink);border-radius:16px;box-shadow:0 16px 48px #0f172a40;padding:28px;text-align:center}
@@ -97,7 +97,19 @@ a:hover{color:var(--primary-dark);text-decoration:underline}
 .syy-select-search{width:calc(100% - 16px);margin:8px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:7px;outline:none;font:inherit;flex:none}.syy-select-search:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(0,80,136,.10)}
 .syy-select-list{min-height:0;max-height:260px;overflow:auto;overscroll-behavior:contain;border-top:1px solid var(--line-soft);flex:1 1 auto}
 .syy-select-option{display:block;width:100%;border:0;background:#fff;text-align:left;padding:8px 11px;color:var(--text);cursor:pointer;font:inherit}.syy-select-option:hover,.syy-select-option:focus{outline:none;background:var(--primary-soft);color:var(--primary)}.syy-select-option.selected{font-weight:600;background:#f8fbfe}.syy-select-empty{padding:13px;text-align:center;color:var(--faint);font-size:12px}
-.syy-select-meta{padding:5px 9px;border-top:1px solid var(--line-soft);font-size:10.5px;color:var(--faint);background:var(--bg);flex:none}
+.syy-select-meta{padding:5px 9px;border-top:1px solid var(--line-soft);font-size:13px;color:var(--muted);background:var(--bg);flex:none}
+body[data-syy-layout] .field-hint,body[data-syy-layout] .count,body[data-syy-layout] .chip-code{font-size:13px}
+body[data-syy-layout] table th{font-size:14px}
+.po-qty-error{display:block;font-size:13px;color:var(--danger);white-space:normal;max-width:180px}
+.vendor-selection{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
+.page-size-control{display:flex;align-items:center;gap:8px;font-size:13px;white-space:nowrap}
+.page-size-control select{width:auto;min-width:76px}
+.syy-check-hit{display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;cursor:pointer}.syy-check-hit input{width:18px;height:18px;cursor:pointer}
+.car-chip{font-size:13px}.car-chip .remove-chip{border:0;background:transparent;min-width:24px;min-height:24px;padding:0;cursor:pointer;font:inherit}
+@media(max-width:767px),(pointer:coarse){.syy-check-hit{min-width:44px;min-height:44px}.syy-check-hit input{width:22px;height:22px}}
+@media(max-width:767px),(pointer:coarse){.multi-dropdown-item{min-height:44px}.car-chip .remove-chip{min-width:44px;min-height:44px}}
+#selectedBarcodePrint{display:none}
+@media print{body.syy-batch-print>*:not(#selectedBarcodePrint){display:none!important}body.syy-batch-print #selectedBarcodePrint{display:flex!important;flex-wrap:wrap;gap:3mm}.syy-barcode-label{width:60mm;min-height:32mm;border:1px solid #ddd;padding:2mm;text-align:center;break-inside:avoid;font-size:11px}.syy-barcode-label svg{max-width:100%;height:auto}}
 @media(max-width:767px){.syy-select:not(.syy-select-block){min-width:110px}.syy-select-panel{min-width:min(280px,calc(100vw - 16px))}}
 .product-image-frame{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}.product-image-frame img,.product-image-contain{width:100%;height:100%;object-fit:contain!important;object-position:center;background:#fff}.product-image-clickable{cursor:zoom-in}
 .count{font-size:12.5px;color:var(--muted);font-weight:600;white-space:nowrap}

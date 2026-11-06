@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
@@ -166,7 +166,7 @@
                 <option value="">-- ลูกค้าใหม่ / ลูกค้าขาจร --</option>
               </select>
               <? if (userRole === 'staff' || userRole === 'admin') { ?>
-              <button type="button" class="btn btn-primary" style="background:#16a34a; white-space:nowrap; padding:9px 14px;" onclick="openQuickAddCustomer()">➕ เพิ่มลูกค้า</button>
+              <button type="button" class="btn btn-primary" style="background:#15803d; white-space:nowrap; padding:9px 14px;" onclick="openQuickAddCustomer()">➕ เพิ่มลูกค้า</button>
               <? } ?>
             </div>
             <span class="field-hint">เลือกแล้วระบบจะเติมชื่อ/ที่อยู่/เลขผู้เสียภาษีให้อัตโนมัติ (แก้ไขต่อได้) หรือกด "เพิ่มลูกค้า" เพื่อเพิ่มลูกค้าใหม่เข้าระบบทันที</span>
@@ -410,7 +410,7 @@
       </div>
       <!-- ★ เลือกปี — ใช้ร่วมกันทั้ง 2 แท็บ ค่าเริ่มต้นคือปีล่าสุดเสมอ (ลด quota การอ่าน Firestore)
            เลือกปีอื่น/ทุกปี ผู้ใช้เลือกเอง — ทุกครั้งที่เปลี่ยนจะเรียกข้อมูลใหม่จาก server เฉพาะที่จำเป็น -->
-      <div style="display:flex; align-items:center; gap:8px; font-size:13px; color:#64748b;">
+      <div style="display:flex; align-items:center; gap:8px; font-size:13px; color:#56677d;">
         <label for="pageYearSelect" style="font-weight:600; white-space:nowrap;">📅 แสดงข้อมูลปี:</label>
         <select id="pageYearSelect" class="form-control" style="width:auto; min-width:140px;" onchange="onPageYearChange()"></select>
         <span id="pageYearLoadingBadge" style="display:none; color:#005088;">⏳ กำลังโหลด...</span>
@@ -1075,9 +1075,9 @@ function addItemRow(prefill) {
   row.id = rid;
   row.innerHTML =
     '<input type="text" class="form-control item-name" placeholder="ชื่อสินค้า/บริการ" value="' + esc(prefill && prefill.name || '') + '" oninput="recalcTotals()">' +
-    '<input type="number" class="form-control item-qty" placeholder="1" min="0" step="any" value="' + (prefill ? prefill.qty : 1) + '" oninput="recalcTotals()">' +
+    '<input type="number" class="form-control item-qty" placeholder="1" min="0" step="any" value="' + esc(prefill ? prefill.qty : 1) + '" oninput="recalcTotals()">' +
     '<input type="text" class="form-control item-unit" list="unitOptions" placeholder="เลือก/พิมพ์" value="' + esc(prefill && prefill.unit || '') + '">' +
-    '<input type="number" class="form-control item-price" placeholder="0.00" min="0" step="0.01" value="' + (prefill ? prefill.unitPrice : '') + '" oninput="recalcTotals()">' +
+    '<input type="number" class="form-control item-price" placeholder="0.00" min="0" step="0.01" value="' + esc(prefill ? prefill.unitPrice : '') + '" oninput="recalcTotals()">' +
     '<span class="line-total" id="' + rid + '_total">0.00</span>' +
     '<button type="button" class="btn-remove-row" onclick="removeItemRow(\'' + rid + '\')" title="ลบรายการนี้">✕</button>';
   document.getElementById('itemBasket').appendChild(row);
@@ -1416,7 +1416,7 @@ function downloadInvoiceFile() {
   if (!pages.length) { invoicePdfBusy=false; if (btn) { btn.disabled = false; btn.innerText = originalText; } return; }
 
   var jsPDF = window.jspdf.jsPDF;
-  var pdf;try{pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});}catch(error){invoicePdfBusy=false;if(btn){btn.disabled=false;btn.innerText=originalText;}swyError('สร้าง PDF ไม่สำเร็จ',esc(syyErrorMessage(error)));return;}
+  var pdf;try{pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});}catch(error){invoicePdfBusy=false;if(btn){btn.disabled=false;btn.innerText=originalText;}swyError('สร้าง PDF ไม่สำเร็จ',esc(syyErrorMessage(error)));return;}
 
   // ★ แปลงทีละหน้าเรียงลำดับ (ต้อง await ทีละหน้า ไม่ทำพร้อมกัน เพราะ html2canvas ใช้ทรัพยากรจอเยอะ
   //   ทำพร้อมกันหลายหน้าเสี่ยงเบราว์เซอร์ค้างหรือภาพเพี้ยน)
@@ -1437,7 +1437,9 @@ function downloadInvoiceFile() {
       var finalHeight = Math.min(renderHeight, pdfHeight);
 
       if (index > 0) pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, finalHeight);
+      // Lossless PNG compression retains the exact rendered document while
+      // avoiding tens of MB of uncompressed raster data in multi-page files.
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, finalHeight, undefined, 'FAST');
       renderPage(index + 1);
     }).catch(function(err) {
       invoicePdfBusy=false;console.error('สร้าง PDF หน้า ' + (index + 1) + ' ไม่สำเร็จ:', err);

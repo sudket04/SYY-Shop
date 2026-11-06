@@ -6184,7 +6184,23 @@ function readDocumentNumberSeeds_(collection,numberField){
  return JSON.parse(res.getContentText()).filter(function(row){return row.document;}).map(function(row){return {id:row.document.name.split('/').pop(),fields:row.document.fields||{}};});
 }
 
+// Cache a complete, validated reference set without pretending a subset is a
+// full collection. Generation invalidation and projection remain unchanged.
 function readProductReferenceDocs_(references,projected){
+ var allowed=['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'],normalized={};
+ Object.keys(references).sort().forEach(function(collection){
+  var ids=references[collection];
+  if(allowed.indexOf(collection)<0||!Array.isArray(ids))throw new Error('ชุดข้อมูลอ้างอิงไม่ถูกต้อง');
+  ids=Array.from(new Set(ids.filter(Boolean))).sort();
+  if(ids.length>2000||ids.some(function(id){return typeof id!=='string'||!validDocumentId_(id);}))throw new Error('ข้อมูลอ้างอิงสินค้าไม่ถูกต้อง');
+  if(ids.length)normalized[collection]=ids;
+ });
+ var scopes=Object.keys(normalized);if(!scopes.length)return readProductReferenceDocsUncached_(references,projected);
+ var key='product-reference-v1:'+readCacheKey_(JSON.stringify([!!projected,normalized]));
+ var cached=cachedReadResult_(key,scopes,120000,function(){return readProductReferenceDocsUncached_(normalized,projected);}),result={};
+ Object.keys(references).forEach(function(collection){result[collection]=cached[collection]||[];});return result;
+}
+function readProductReferenceDocsUncached_(references,projected){
  var result={},requests=[],groups=[],fields={Master_Brands:['Brand_Name'],Master_Categories:['Category_Name'],Master_Vendors:['Vendor_name'],Master_Zones:['Area','Build','Floor','Rack_no','Rack_Level'],Master_Cars:['Brand','Model','Year','Type_Car']};
  Object.keys(references).forEach(function(collection){
    if(!Object.prototype.hasOwnProperty.call(fields,collection))throw new Error('ชุดข้อมูลอ้างอิงไม่ถูกต้อง');
@@ -6200,5 +6216,8 @@ function readProductReferenceDocs_(references,projected){
    var rows=JSON.parse(res.getContentText());if(group.single)rows=[{found:rows}];rows.forEach(function(row){var name=row.found&&row.found.name||row.missing||'',id=name.split('/').pop();if(group.ids.indexOf(id)<0||name!==fsDocPath_(group.collection,id)||seen[id])throw new Error('ข้อมูลอ้างอิงสินค้าไม่ครบ');seen[id]=true;if(row.found)result[group.collection].push({id:id,fields:row.found.fields||{},updateTime:row.found.updateTime||''});});
    if(group.ids.some(function(id){return !seen[id];}))throw new Error('ข้อมูลอ้างอิงสินค้าไม่ครบ');
  });
+ // Apply the same field contract to collection-cache hits and remote replies.
+ // Never let a warm full reference cache broaden a projected product response.
+ if(projected)Object.keys(result).forEach(function(collection){result[collection]=result[collection].map(function(doc){var projectedFields={};fields[collection].forEach(function(key){if(Object.prototype.hasOwnProperty.call(doc.fields||{},key))projectedFields[key]=doc.fields[key];});return {id:doc.id,fields:projectedFields,updateTime:doc.updateTime||''};});});
  return result;
 }

@@ -76,7 +76,7 @@ async function main(){
   const executable=process.env.BROWSER_EXECUTABLE || ['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(p=>fs.existsSync(p));
   browser=await chromium.launch({headless:true,...(executable?{executablePath:executable}:{}),args:['--disable-gpu']});
   const context=await browser.newContext({viewport:{width:1365,height:950}});
-  await context.route('https://**/*',r=>r.abort());
+  await context.route('**/*',r=>{const u=new URL(r.request().url());return u.hostname==='127.0.0.1'&&u.port===String(server.address().port)?r.continue():r.abort();});
   async function pageFor(file,role='staff',browserContext=context){
     const page=await browserContext.newPage();page.errors=[];
     page.on('pageerror',e=>page.errors.push(e.message));
@@ -179,7 +179,10 @@ async function main(){
   });
   await check('Loading resilience: deferred Excel loads once, while blocked PDF and QR tools recover without writes',async()=>{
     const po=await pageFor('Purchase_Orders.html');let libraries=0;
-    await po.route('https://cdn.jsdelivr.net/npm/xlsx@*/**',async route=>{libraries++;await route.fulfill({contentType:'application/javascript',body:'window.testExcelFiles=[];window.XLSX={utils:{aoa_to_sheet:()=>({}),book_new:()=>({}),book_append_sheet:()=>{}},writeFile:(book,name)=>testExcelFiles.push(name)};'});});
+    const excelFixture='window.testExcelFiles=[];window.XLSX={utils:{aoa_to_sheet:()=>({}),book_new:()=>({}),book_append_sheet:()=>{}},writeFile:(book,name)=>testExcelFiles.push(name)};';
+    const excelDigest='sha384-'+require('node:crypto').createHash('sha384').update(excelFixture).digest('base64');
+    await po.evaluate(digest=>{const append=document.head.appendChild;document.head.appendChild=function(node){if(node.dataset?.syyLibrary==='xlsx')node.integrity=digest;return append.call(this,node);};},excelDigest);
+    await po.route('https://cdn.sheetjs.com/xlsx-*/package/dist/xlsx.full.min.js',async route=>{libraries++;await route.fulfill({contentType:'application/javascript',headers:{'access-control-allow-origin':'*'},body:excelFixture});});
     await po.evaluate(()=>{const order={poId:'PO-LOCAL',items:[],totalAmount:0};exportOrderToExcel(order);exportOrderToExcel(order);});await po.waitForFunction(()=>typeof testExcelFiles!=='undefined'&&testExcelFiles.length===1&&!poExcelBusy);assert.equal(libraries,1);assert.equal(await po.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);assert.deepEqual(po.errors,[]);await po.close();
     const invoice=await pageFor('Master_Tax_Invoice.html');await invoice.evaluate(()=>{openViewModal('TX1');downloadInvoiceFile();});await invoice.waitForFunction(()=>!invoicePdfBusy&&alerts.some(x=>x.title==='ไม่สามารถโหลดตัวสร้าง PDF ได้'));assert.equal(await invoice.locator('#viewModal .btn-ghost[onclick="downloadInvoiceFile()"]').isDisabled(),false);assert.equal(await invoice.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);assert.deepEqual(invoice.errors,[]);await invoice.close();
     const profile=await pageFor('Profile.html','admin');await profile.evaluate(()=>renderQrCode('otpauth://totp/local-fixture?secret=FIXTUREONLY'));await profile.waitForFunction(()=>document.getElementById('qrCanvasHolder').textContent.includes('กรุณาใช้รหัสด้านล่าง'));assert.equal(await profile.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue|authStartTotp)/.test(x.fn))),false);assert.deepEqual(profile.errors,[]);await profile.close();
@@ -231,7 +234,7 @@ async function main(){
       await p.setViewportSize({width:320,height:844});const overflow=await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth);if(!overflow)console.log('OVERFLOW '+file,await p.evaluate(()=>Array.from(document.body.querySelectorAll('*')).filter(x=>{const r=x.getBoundingClientRect();return r.right>innerWidth+1&&r.width>0&&!x.closest('.table-wrap,.table-container,.modal-overlay');}).slice(0,12).map(x=>({tag:x.tagName,id:x.id,class:x.className,right:x.getBoundingClientRect().right,width:x.getBoundingClientRect().width}))));assert.equal(overflow,true,file+' mobile');assert.deepEqual(p.errors,[]);await p.close();
     }
     const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{cache=Array.from({length:100},(_,i)=>({id:'B'+i,Name:'แบรนด์ '+i}));renderRows();});await p.waitForTimeout(30);
-    const type=await p.evaluate(()=>({body:getComputedStyle(document.body).fontSize,font:getComputedStyle(document.body).fontFamily,table:getComputedStyle(document.querySelector('table')).fontSize,title:getComputedStyle(document.querySelector('.crumb b')).fontSize}));assert.equal(type.body,'15px');assert.match(type.font,/Noto Sans Thai/);assert.equal(type.table,'14px');assert.equal(type.title,'17px');
+    const type=await p.evaluate(()=>({body:getComputedStyle(document.body).fontSize,font:getComputedStyle(document.body).fontFamily,table:getComputedStyle(document.querySelector('table')).fontSize,title:getComputedStyle(document.querySelector('.crumb b')).fontSize}));assert.equal(type.body,'16px');assert.match(type.font,/Noto Sans Thai/);assert.equal(type.table,'14px');assert.equal(type.title,'17px');
     await p.evaluate(()=>{document.querySelector('.table-wrap').scrollTop=400;});
     const sticky=await p.evaluate(()=>{const head=document.querySelector('thead th').getBoundingClientRect(),box=document.querySelector('.table-wrap').getBoundingClientRect();return {gap:box.top-document.querySelector('.page-head').getBoundingClientRect().bottom,top:head.top-box.top};});assert(sticky.gap>=8);assert(Math.abs(sticky.top)<2);
     await p.screenshot({path:path.join(output,'brands-layout-desktop.png')});assert.deepEqual(p.errors,[]);await p.close();
@@ -736,19 +739,19 @@ async function main(){
     await p.evaluate(()=>apiFailure='getTaxInvoiceListData');await form.locator('[name=number]').fill('OTHER');await form.locator('button[type=submit]').click();await p.waitForTimeout(25);
     assert.equal(await p.evaluate(()=>invoicesCache[0].invoiceNo),'OLD 100');assert.equal(await p.evaluate(()=>documentPager.searchOptions().number),'OLD 100');assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('Document display windows render at most fifty rows, preserve unchanged row focus and clean select portals',async()=>{
+  await check('Document display windows default to twenty-five rows, preserve unchanged row focus and clean select portals',async()=>{
     for(const file of ['Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html']){
       const p=await pageFor(file);await p.evaluate(()=>{
         if(typeof quotations!=='undefined'){quotations=Array.from({length:1200},(_,i)=>({id:'Q'+i,quoteNo:'Q '+i,quoteDate:'2026-10-11',customerName:'Buyer',grandTotal:i,status:'ร่าง',items:[]}));renderList();switchTab('list');}
         else if(typeof invoicesCache!=='undefined'){invoicesCache=Array.from({length:1200},(_,i)=>Object.assign({},fixtureInvoice,{id:'T'+i}));renderRows();}
         else{purchaseOrders=Array.from({length:1200},(_,i)=>({poId:'O'+i,orderDate:'2026-10-11',vendorName:'Vendor',status:'Pending',items:[],totalQty:0,totalAmount:0}));renderHistoryTab();switchTab('history');}
       });await p.waitForTimeout(30);
-      const body=p.locator('#listBody,#taxBody,#historyTableBody');assert.equal(await body.locator('tr').count(),50);
+      const body=p.locator('#listBody,#taxBody,#historyTableBody');assert.equal(await body.locator('tr').count(),25);
       await body.locator('button').first().focus();const kept=await body.locator('tr').first().evaluate(row=>{window.retainedRow=row;return true;});assert(kept);
       await p.evaluate(()=>{if(typeof renderList==='function')renderList();else if(typeof renderRows==='function')renderRows();else renderHistoryTab();});
       assert.equal(await p.evaluate(()=>retainedRow.isConnected&&retainedRow.contains(document.activeElement)),true,file);
       for(let i=0;i<4;i++){await p.locator('.syy-display-pages button').last().click();await p.waitForTimeout(10);}
-      assert.equal(await body.locator('tr').count(),50);assert((await p.locator('.syy-select-panel').count())<60);
+      assert.equal(await body.locator('tr').count(),25);assert((await p.locator('.syy-select-panel').count())<60);
       const before=await p.evaluate(()=>({calls:apiCalls.length,offset:documentPager.offset()}));await p.evaluate(()=>{syyFreshState.active=true;syyFreshState.dirty=true;syyFreshState.lastAttempt=0;syyFreshState.refresh();});await p.waitForTimeout(20);
       assert.equal(await p.evaluate(()=>documentPager.offset()),before.offset);assert.equal(await p.evaluate(()=>apiCalls.length),before.calls);assert.equal(await p.evaluate(()=>documentPager.canRefresh()),false);
       assert.deepEqual(p.errors,[]);await p.close();
@@ -839,7 +842,7 @@ async function main(){
     });await p.reload();await p.waitForTimeout(100);await p.evaluate(()=>{
       productsCache=['แท้','เทียบ','PENDING'].map((partType,i)=>Object.assign({},fixtureProduct,{id:'TYPE'+i,productCode:'TYPE'+i,partType}));
       document.getElementById('tableSearchInput').value='';XLF.clearAll('products');filterAndRenderTable();
-    });assert.equal(await p.evaluate(()=>pageSize),100);assert.equal(await p.evaluate(()=>visibleProductColumns.includes('image')),false);
+    });assert.equal(await p.evaluate(()=>pageSize),50);assert.equal(await p.evaluate(()=>visibleProductColumns.includes('image')),false);
     assert.match(await p.locator('#productThead').innerText(),/แท้ \/ เทียบ/);
     assert.deepEqual(await p.evaluate(()=>{const column=visibleProductColumns.indexOf('partType');return Array.from(document.getElementById('productBody').rows).map(row=>row.cells[column].innerText.trim());}),['แท้','เทียบ','รอดำเนินการ']);
     assert.equal(await p.locator('#productBody .edit,#productBody .del').count(),0);
@@ -876,9 +879,9 @@ async function main(){
     assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('CSV exports only filtered rows, reports the count and performs no Firestore read',async()=>{
-    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{filteredProducts=[Object.assign({},fixtureProduct,{productName:'=unsafe formula'})];window.exportedBlob=null;URL.createObjectURL=blob=>{exportedBlob=blob;return 'blob:fixture';};HTMLAnchorElement.prototype.click=function(){};window.readsBefore=apiCalls.length;exportAllProductFields();});
-    const csv=await p.evaluate(()=>exportedBlob.text());assert.match(csv,/'=unsafe formula/);assert.equal(csv.trim().split('\r\n').length,2);
-    assert.match(await p.locator('#toastWrap').innerText(),/1 รายการตามตัวกรอง/);assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>readsBefore));assert.deepEqual(p.errors,[]);await p.close();
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{filteredProducts=['=unsafe formula','\t=unsafe formula','  +unsafe formula','safe name'].map(productName=>Object.assign({},fixtureProduct,{productName}));window.exportedBlob=null;URL.createObjectURL=blob=>{exportedBlob=blob;return 'blob:fixture';};HTMLAnchorElement.prototype.click=function(){};window.readsBefore=apiCalls.length;exportAllProductFields();});
+    const csv=await p.evaluate(()=>exportedBlob.text());assert.match(csv,/'=unsafe formula/);assert(csv.includes("'\t=unsafe formula"));assert(csv.includes("'  +unsafe formula"));assert.equal(csv.trim().split('\r\n').length,5);
+    assert.match(await p.locator('#toastWrap').innerText(),/4 รายการตามตัวกรอง/);assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>readsBefore));assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('PDF generation keeps the saved snapshot and guards closing or changing the document mid-render',async()=>{
     const p=await pageFor('Master_Tax_Invoice.html');await p.evaluate(()=>{
@@ -918,7 +921,7 @@ async function main(){
           }};
         }};
       };
-      pageSize=100;currentPage=1;XLF.clearAll('products');document.getElementById('tableSearchInput').value='';loadTable(true);
+      syyViewPreference('products:size',100);pageSize=100;currentPage=1;XLF.clearAll('products');document.getElementById('tableSearchInput').value='';loadTable(true);
     });
     await p.waitForFunction(()=>productRemote&&productRemote.cursorMode===true);
     assert.equal(await p.locator('#productBody tr').count(),100);
@@ -1027,7 +1030,7 @@ async function main(){
         respond=()=>Array.from({length:30},(_,i)=>({id:'AUDIT'+i,Name:label+i,Brand_Name:label+i,Category_Name:label+i,Vendor_name:label+i,Customer_Name:label+i,Customer_Type:'ลูกค้าทั่วไป',Address:label,Branch:'สำนักงานใหญ่',Tax_ID:'1234567890123',Phone:'0812345678',Area:label,Build:'อาคาร',Floor:'ชั้น 1',Rack_no:'R1',Rack_Level:'1',Brand:label,Model:label,Model_Code:'M'+i,Year:'2026',Type_Car:'รถบรรทุก',Note:label}));
         loadTable();
       });
-      await p.waitForFunction(()=>document.getElementById('tbodyMain').querySelectorAll('tr').length===30);await p.waitForTimeout(35);
+      await p.waitForFunction(()=>cache.length===30&&document.getElementById('tbodyMain').querySelectorAll('tr').length===25);await p.waitForTimeout(35);
       assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),true,file+'/'+width+' page overflow');
       const calls=await p.evaluate(()=>apiCalls.length);await p.locator('#searchInput').fill('AUDIT29');await p.locator('#searchInput').dispatchEvent('input');await p.waitForTimeout(200);
       assert.equal(await p.locator('#tbodyMain tr').count(),1,file+'/'+width+' local search');assert.equal(await p.evaluate(()=>apiCalls.length),calls,'typing does not read');
@@ -1098,7 +1101,7 @@ async function main(){
     await p.evaluate(()=>syyPostFrame(document.getElementById('iframe-orders'),{action:'STOCK_DELTA',productStocks:[{productCode:'P1',currentStock:1}]}));await p.waitForTimeout(40);assert.deepEqual(errors,[]);assert.deepEqual(p.errors,[]);
     await child.evaluate(()=>{syyDrafts.orders.adapter.restore({checked:{P1:true},qty:{P1:1},unknown:true});});assert.equal(await child.evaluate(()=>syyUnknownWrites.savePurchaseOrder),true);await p.close();
   });
-  const hybridContext=await browser.newContext({viewport:{width:1365,height:950}});await hybridContext.route('https://**/*',r=>r.abort());
+  const hybridContext=await browser.newContext({viewport:{width:1365,height:950}});await hybridContext.route('**/*',r=>{const u=new URL(r.request().url());return u.hostname==='127.0.0.1'&&u.port===String(server.address().port)?r.continue():r.abort();});
   async function hybridPage(query=''){
     const p=await hybridContext.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));
     await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{
@@ -1258,8 +1261,8 @@ async function main(){
           const data=prior(fn,args),rows=Array.from({length:150},(_,i)=>api==='getTaxInvoicePageData'?{...fixtureInvoice,id:'TX'+i}:api==='getQuotationPageData'?{id:'QT'+i,quotationNo:'QT'+i,quotationDate:'2026-10-11',status:'ร่าง',customerName:'Buyer',items:[],grandTotal:100}:{id:'PO'+i,poNumber:'PO'+i,orderDate:'2026-10-11',vendorName:'Vendor',status:'Pending',items:[],totalAmount:100});
           data[api==='getTaxInvoicePageData'?'invoices':api==='getQuotationPageData'?'quotations':'purchaseOrders']=rows;data.pageInfo={hasMore:false,nextCursor:''};return {__syyCache:1,version:'document-v1',data};
         };if(api==='getQuotationPageData')loadPageData(currentPageYear,null,null,true);else if(api==='getTaxInvoicePageData')loadAll(currentPageYear,null,null,true);else {switchTab('history');loadAll();}
-      },api);await p.waitForFunction(()=>!syyFreshState.busy);await p.evaluate(api=>switchTab(api==='getPurchaseOrderPageData'?'history':'list'),api);await p.locator('.syy-display-pages button').last().click();assert.equal(await p.evaluate(()=>documentPager.offset()),50,file);
-      await p.getByRole('button',{name:/รีเฟรช/}).first().click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>documentPager.offset()),50,file);assert.equal(await p.evaluate(()=>syyLastReadSource),'validated-cache');assert.match(await p.locator('#syyDataStatus').innerText(),/Cache/);assert.deepEqual(p.errors,[]);await p.close();
+      },api);await p.waitForFunction(()=>!syyFreshState.busy);await p.evaluate(api=>switchTab(api==='getPurchaseOrderPageData'?'history':'list'),api);await p.locator('.syy-display-pages button').last().click();assert.equal(await p.evaluate(()=>documentPager.offset()),25,file);
+      await p.getByRole('button',{name:/รีเฟรช/}).first().click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>documentPager.offset()),25,file);assert.equal(await p.evaluate(()=>syyLastReadSource),'validated-cache');assert.match(await p.locator('#syyDataStatus').innerText(),/Cache/);assert.deepEqual(p.errors,[]);await p.close();
     }
   });
   await check('POS has explicit version-first product refresh, keeps basket prices and retains displayed products after failure',async()=>{
@@ -1400,9 +1403,9 @@ async function main(){
     const p=await pageFor('StockIssue.html');await p.evaluate(()=>{fixtureMovements=[{id:'SI-legacy-1',docNo:'SI-legacy',billNo:'SI-20261019-0004',type:'OUT',productCode:'P1',productName:'Saved part',qty:1,unitPrice:0,hasUnitPrice:true,timestamp:new Date().toISOString()}];switchTab('history');});await p.waitForFunction(()=>document.querySelector('#mvBody .movement-link'));
     await p.locator('#mvSearchInput').fill('SI-20261019-0004');assert.equal(await p.locator('#mvBody .movement-link').innerText(),'SI-20261019-0004');await p.locator('#mvBody .movement-link').click();await p.waitForFunction(()=>document.getElementById('movementDetailBody').textContent.includes('SI-20261019-0004'));assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getStockMovementDetail').args[0]),'SI-legacy');assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('Image-free product rows prefetch metadata; detail coalesces metadata and edit retains the loaded images',async()=>{
+  await check('Image-free product rows issue no metadata RPC; detail coalesces metadata and edit retains loaded images',async()=>{
     const p=await pageFor('Master_Products.html');await p.evaluate(()=>{productsCache.forEach(p=>{p.imageDataLoaded=false;p.imageUrl='';p.imageUrls=[];});window.imageReads=0;const old=respond;respond=(fn,args,meta)=>{if(fn==='getProductImageBatch'){imageReads++;return {P1:{imageUrl:'https://example.invalid/detail.jpg',imageUrls:['https://example.invalid/detail.jpg'],imageUpdateTime:'image-v1',primaryImageIndex:0}};}return old(fn,args,meta);};apiHold='getProductImageBatch';filterAndRenderTable(true);});
-    assert.equal(await p.locator('#productBody img').count(),0);assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getAllProducts').args[0].includeImages),false);await p.waitForFunction(()=>apiCalls.some(x=>x.fn==='getProductImageBatch'));
+    assert.equal(await p.locator('#productBody img').count(),0);assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getAllProducts').args[0].includeImages),false);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),0);
     await p.evaluate(()=>{apiHold='getProductImageBatch';openViewModal('P1');openViewModal('P1');});assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),1);await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.locator('#viewProductModal.active').waitFor();assert.equal(await p.evaluate(()=>productsCache[0].imageUpdateTime),'image-v1');await p.evaluate(()=>{closeModal('viewProductModal');openEditModal('P1');});await p.locator('#productModal.active').waitFor();assert.equal(await p.evaluate(()=>imageReads),1);assert.equal(await p.evaluate(()=>productImageDraftDirty),false);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Admin correction requires a current preview, survives uncertain response/reload and retries the exact operation once',async()=>{
@@ -1483,12 +1486,12 @@ async function main(){
     await p.evaluate(()=>{DASH.year=2026;DASH.month=10;DASH.gran='m';const timestamp='2026-10-31T17:01:00Z';DASH.movements=[{id:'boundary',docNo:'B',billNo:'SI-20261101-0001',timestamp,ts:new Date(timestamp),type:'OUT',reason:'ขายหน้าร้าน',qty:1,unitPrice:10.25,costPrice:1,user:'original',productCode:'P1'}];dashBuildAggregates();dashOpenDoc('sales');});
     assert.equal(await p.evaluate(()=>dashPeriod().cur.salesValue),10.25);assert.match(await p.locator('#dashDrawerRoot tbody').innerText(),/01 พ.ย./);assert.match(await p.locator('#dashDrawerRoot tbody').innerText(),/00:01/);const detail=await p.evaluate(()=>syyMovementDetailHtml({docNo:'B',complete:true,movements:[{qty:1,unitPrice:10.25,hasUnitPrice:true,timestamp:'2026-10-31T17:01:00Z'}]}));assert.match(detail,/01 พ.ย./);assert.match(detail,/00:01/);const missing=await p.evaluate(()=>syyMovementDetailHtml({docNo:'B',complete:true,movements:[{qty:0,hasQty:false,unitPrice:0,hasUnitPrice:true,timestamp:null}]}));assert.match(missing,/ไม่ทราบจำนวนครบ/);assert.match(missing,/ไม่ระบุวันเวลา/);assert.doesNotMatch(missing,/฿ 0\.00/);assert.deepEqual(p.errors,[]);await foreign.close();
   });
-  await check('Loading UX products use fixed 100 rows and one metadata batch while detail and edit open before images',async()=>{
+  await check('Loading UX products default to 50 rows without prefetch; detail and edit coalesce targeted metadata',async()=>{
     const p=await pageFor('Master_Products.html');await p.route('https://images.invalid/**',route=>route.fulfill({status:200,contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#e8f3ff"/><path d="M60 80h120v90H60z" fill="#005088"/></svg>'}));await p.evaluate(()=>{
       productImageCache.clear();productsCache=[];productRemote=null;apiHold='getProductImageBatch';
-      const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{catalogPage:true,cursorMode:true,page:1,pageSize:100,total:100,unfilteredTotal:100,hasMore:false,products:Array.from({length:100},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i,productName:'Part '+i,barcode:'',imageDataLoaded:false,imageUrl:'',imageUrls:[]}))}:fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'https://images.invalid/'+id+'.jpg',imageUrls:['https://images.invalid/'+id+'.jpg'],primaryImageIndex:0,imageUpdateTime:'image-v1'}])):old(fn,args);
+      const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{catalogPage:true,cursorMode:true,page:1,pageSize:args[0].pageSize,total:50,unfilteredTotal:50,hasMore:false,products:Array.from({length:args[0].pageSize},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i,productName:'Part '+i,barcode:'',imageDataLoaded:false,imageUrl:'',imageUrls:[]}))}:fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'https://images.invalid/'+id+'.jpg',imageUrls:['https://images.invalid/'+id+'.jpg'],primaryImageIndex:0,imageUpdateTime:'image-v1'}])):old(fn,args);
       syyReadFresh=true;loadTable(true);syyReadFresh=false;
-    });await p.waitForFunction(()=>!productLoading&&apiPending.length===1);assert.equal(await p.locator('#productBody tr').count(),100);assert.equal(await p.locator('#pageSizeSelect').count(),0);assert.equal(await p.evaluate(()=>pageSize),100);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),1);assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getProductImageBatch').args[0].length),100);
+    });await p.waitForFunction(()=>!productLoading);assert.equal(await p.locator('#productBody tr').count(),50);assert.equal(await p.locator('#productPageSize').inputValue(),'50');assert.equal(await p.evaluate(()=>pageSize),50);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),0);
     await p.evaluate(()=>openViewModal('P0'));await p.locator('#viewProductModal.active').waitFor();assert.equal(await p.locator('#viewProductName').innerText(),'Part 0');assert(await p.locator('#viewImgBox .sk').count()>0);
     await p.evaluate(()=>{closeModal('viewProductModal');openEditModal('P0');});await p.locator('#productModal.active').waitFor();assert.equal(await p.locator('#inp_productName').inputValue(),'Part 0');assert(await p.locator('#productImageSlots .sk').count()>0);assert.equal(await p.locator('#productImageSlots>.syy-skeleton-block').evaluate(el=>el.getBoundingClientRect().width>=el.parentElement.clientWidth-2),true);assert.equal(await p.locator('#modalBtnSave').isEnabled(),true);await p.locator('#productImageSlots').scrollIntoViewIfNeeded();await p.waitForTimeout(200);await p.screenshot({path:path.join(output,'product-edit-images-loading.png')});await p.locator('#inp_productName').fill('User draft');
     await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForFunction(()=>productImagesReady);assert.equal(await p.locator('#inp_productName').inputValue(),'User draft');assert.equal(await p.evaluate(()=>productImageUrls[0]),'https://images.invalid/P0.jpg');assert.equal(await p.evaluate(()=>syyDraftDirty('product')),true);await p.locator('#inp_productName').fill('Part 0');assert.equal(await p.evaluate(()=>syyDraftDirty('product')),false);
@@ -1511,14 +1514,15 @@ async function main(){
   await check('Deploy audit image retry consumes a completed background cache without another RPC and preserves text edits',async()=>{
     for(const mode of ['view','edit']){const p=await pageFor('Master_Products.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getProductImageBatch'?{P1:{imageUrl:'https://images.invalid/ready.jpg',imageUrls:['https://images.invalid/ready.jpg'],primaryImageIndex:0,imageUpdateTime:'ready-v1'}}:old(fn,args);productsCache[0].imageDataLoaded=false;productImageCache.clear();apiFailure='getProductImageBatch';});
       await p.evaluate(mode=>mode==='view'?openViewModal('P1'):openEditModal('P1'),mode);await p.getByRole('button',{name:'ลองโหลดรูปอีกครั้ง',exact:true}).waitFor();if(mode==='edit')await p.locator('#inp_productName').fill('Keep this draft');
-      await p.evaluate(()=>{apiFailure='';filterAndRenderTable(true);});await p.waitForFunction(()=>productsCache[0].imageDataLoaded===true);const count=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length);
+      await p.evaluate(()=>{apiFailure='';requestProductImages(productsCache);});await p.waitForFunction(()=>productsCache[0].imageDataLoaded===true);const count=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length);
       await p.getByRole('button',{name:'ลองโหลดรูปอีกครั้ง',exact:true}).click();assert.equal(await p.getByRole('button',{name:'ลองโหลดรูปอีกครั้ง',exact:true}).count(),0,mode);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),count);
       if(mode==='view')assert.equal(await p.evaluate(()=>viewProductImageUrls[0]),'https://images.invalid/ready.jpg');else{assert.equal(await p.evaluate(()=>productImagesReady),true);assert.equal(await p.locator('#inp_productName').inputValue(),'Keep this draft');assert.equal(await p.evaluate(()=>syyDraftDirty('product')),true);}assert.deepEqual(p.errors,[]);await p.close();
     }
   });
   await check('Deploy audit image metadata cannot replace product business fields with unexpected response properties',async()=>{
-    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getProductImageBatch'?{P1:{imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:'image-v2',productName:'Wrong name',currentStock:9999}}:old(fn,args);productsCache[0].imageDataLoaded=false;productImageCache.clear();filterAndRenderTable(true);});await p.waitForFunction(()=>productsCache[0].imageDataLoaded===true);assert.equal(await p.evaluate(()=>productsCache[0].productName),'Test Part');assert.equal(await p.evaluate(()=>productsCache[0].currentStock),10);assert.deepEqual(p.errors,[]);await p.close();
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getProductImageBatch'?{P1:{imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:'image-v2',productName:'Wrong name',currentStock:9999}}:old(fn,args);productsCache[0].imageDataLoaded=false;productImageCache.clear();requestProductImages(productsCache);});await p.waitForFunction(()=>productsCache[0].imageDataLoaded===true);assert.equal(await p.evaluate(()=>productsCache[0].productName),'Test Part');assert.equal(await p.evaluate(()=>productsCache[0].currentStock),10);assert.deepEqual(p.errors,[]);await p.close();
   });
+  await require('./support/quality-ui.cjs')({pageFor,check,context,output});
   await hybridContext.close();
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));

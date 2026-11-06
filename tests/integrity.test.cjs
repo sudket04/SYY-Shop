@@ -199,3 +199,18 @@ test('a forced password token cannot revive a session after durable revocation',
   s.c.revokeUserSessions_('admin');const writes=s.calls.filter(x=>x.options.method==='patch').length;
   assert.equal(s.c.authChangePasswordForced(login.tempToken,'new-password').success,false);assert.equal(s.calls.filter(x=>x.options.method==='patch').length,writes);
 });
+
+test('accounting golden vectors freeze current aggregate VAT and quotation discount rounding without writes',()=>{
+  const s=setup();
+  for(const [items,expected] of [
+    [[{qty:1,unitPrice:100}],{subtotal:100,vat:7,total:107}],
+    [[{qty:1,unitPrice:0.05},{qty:1,unitPrice:0.05}],{subtotal:0.1,vat:0.01,total:0.11}],
+    [[{qty:3,unitPrice:0.335}],{subtotal:1.01,vat:0.07,total:1.08}],
+    [[{qty:1,unitPrice:0}],{subtotal:0,vat:0,total:0}]
+  ])assert.deepEqual(plain(s.c.calcTaxInvoiceTotals_(items)),expected);
+  const quote=plain(s.c.calcQuoteTotals_([{qty:1,unitPrice:100,costPrice:60}],10));
+  assert.deepEqual(quote,{subtotal:100,discPct:10,discAmount:10,afterDisc:90,vat:6.3,grandTotal:96.3,costTotal:60,profit:30,marginPct:33.3});
+  assert.equal(s.c.calcQuoteTotals_([{qty:1,unitPrice:100}],110).grandTotal,0);
+  assert.equal(s.c.calcQuoteTotals_([{qty:1,unitPrice:100}],-1).grandTotal,107);
+  assert.equal(s.calls.length,0);assert.equal(s.commits.length,0);
+});

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
   <meta charset="UTF-8">
   <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'undefined' ? '' : frameChannel ?>">
@@ -30,7 +30,7 @@
     .login-logo { text-align: center; margin-bottom: 24px; }
     .login-logo .icon { font-size: 44px; display: block; margin-bottom: 8px; }
     .login-logo .title { font-size: 18px; font-weight: 600; color: #002e52; }
-    .login-logo .sub { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+    .login-logo .sub { font-size: 13px; color: #56677d; margin-top: 2px; }
 
     .form-group { margin-bottom: 16px; }
     .form-group label { display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 6px; }
@@ -62,9 +62,9 @@
     .alert.error   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
     .alert.success { background: #dcfce7; color: #065f46; border: 1px solid #86efac; }
 
-    .otp-hint { font-size: 12px; color: #94a3b8; text-align: center; margin-bottom: 16px; }
+    .otp-hint { font-size: 13px; color: #56677d; text-align: center; margin-bottom: 16px; }
 
-    .back-link { font-size: 13px; color: #64748b; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin-bottom: 16px; }
+    .back-link { border:0; background:transparent; padding:0; font-family:inherit; font-size: 13px; color: #64748b; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin-bottom: 16px; }
     .back-link:hover { color: #005088; }
 
     .spinner {
@@ -132,28 +132,28 @@
       <div id="loginAlert" class="alert"></div>
       <form id="loginForm" onsubmit="doLogin(event)">
         <div class="form-group">
-          <label>ชื่อผู้ใช้</label>
+          <label for="inpUsername">ชื่อผู้ใช้</label>
           <input type="text" id="inpUsername" class="form-control" autocomplete="username" required>
         </div>
         <div class="form-group">
-          <label>รหัสผ่าน</label>
+          <label for="inpPassword">รหัสผ่าน</label>
           <input type="password" id="inpPassword" class="form-control" autocomplete="current-password" required>
         </div>
         <button type="submit" class="btn-login" id="btnLogin">เข้าสู่ระบบ</button>
       </form>
       <div class="link-row">
-        <a onclick="showView('viewForgot')">ลืมรหัสผ่าน?</a>
+        <a href="#" onclick="showView('viewForgot');return false;">ลืมรหัสผ่าน?</a>
       </div>
     </div>
 
     <!-- ═══ VIEW 2: กรอก OTP ═══ -->
     <div class="view" id="viewOtp">
-      <div class="back-link" onclick="showView('viewLogin')">← กลับ</div>
+      <button type="button" class="back-link" onclick="showView('viewLogin')">← กลับ</button>
       <div id="otpAlert" class="alert"></div>
       <div class="otp-hint">กรุณากรอกรหัส 6 หลักจากแอป Authenticator<br>หรือใช้ Recovery Code หากมือถือหาย</div>
       <form id="otpForm" onsubmit="doLoginWithOtp(event)">
         <div class="form-group">
-          <label>รหัส OTP / Recovery Code</label>
+          <label for="inpOtp">รหัส OTP / Recovery Code</label>
           <input type="text" id="inpOtp" class="form-control otp-input" maxlength="10" autocomplete="one-time-code" required>
         </div>
         <button type="submit" class="btn-login" id="btnOtp">ยืนยัน</button>
@@ -166,11 +166,11 @@
       <div class="otp-hint" id="resetUsernameDisplay">🔒 กำลังตรวจสอบลิงก์...</div>
       <form id="resetFromEmailForm" onsubmit="doResetFromEmail(event)" style="display:none;">
         <div class="form-group">
-          <label>New Password</label>
+          <label for="inpResetNewPassword">New Password</label>
           <input type="password" id="inpResetNewPassword" class="form-control" autocomplete="new-password" required>
         </div>
         <div class="form-group">
-          <label>Confirm Password</label>
+          <label for="inpResetConfirmPassword">Confirm Password</label>
           <input type="password" id="inpResetConfirmPassword" class="form-control" autocomplete="new-password" required>
         </div>
         <button type="submit" class="btn-login" id="btnResetFromEmail">ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ</button>
@@ -179,12 +179,12 @@
 
     <!-- ═══ VIEW 3: ลืมรหัสผ่าน — กรอกอีเมล ═══ -->
     <div class="view" id="viewForgot">
-      <div class="back-link" onclick="showView('viewLogin')">← กลับไปเข้าสู่ระบบ</div>
+      <button type="button" class="back-link" onclick="showView('viewLogin')">← กลับไปเข้าสู่ระบบ</button>
       <div id="forgotAlert" class="alert"></div>
       <div class="otp-hint">กรอกอีเมลที่ผูกไว้กับบัญชีของคุณ ระบบจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ไปให้</div>
       <form id="forgotForm" onsubmit="doForgotPassword(event)">
         <div class="form-group">
-          <label>อีเมล</label>
+          <label for="inpForgotEmail">อีเมล</label>
           <input type="email" id="inpForgotEmail" class="form-control" autocomplete="email" required>
         </div>
         <button type="submit" class="btn-login" id="btnForgot">ส่งลิงก์ตั้งรหัสผ่านใหม่</button>
@@ -200,11 +200,11 @@
       </div>
       <form id="forcePasswordForm" onsubmit="doForceChangePassword(event)">
         <div class="form-group">
-          <label>รหัสผ่านใหม่</label>
+          <label for="inpForceNewPassword">รหัสผ่านใหม่</label>
           <input type="password" id="inpForceNewPassword" class="form-control" autocomplete="new-password" required>
         </div>
         <div class="form-group">
-          <label>ยืนยันรหัสผ่านใหม่</label>
+          <label for="inpForceConfirmPassword">ยืนยันรหัสผ่านใหม่</label>
           <input type="password" id="inpForceConfirmPassword" class="form-control" autocomplete="new-password" required>
         </div>
         <button type="submit" class="btn-login" id="btnForcePassword">ตั้งรหัสผ่านใหม่และเข้าสู่ระบบ</button>

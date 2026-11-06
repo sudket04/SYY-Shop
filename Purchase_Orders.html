@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
@@ -549,20 +549,20 @@
       var pendingTag = pendingProductCodes[p.productCode] ? '<span class="badge badge-warn">มีคำสั่งซื้อค้างอยู่</span>' : '';
 
       return '<tr>' +
-        '<td><input type="checkbox" ' + (checked ? 'checked' : '') + ' onchange="onItemCheck(\'' + escJs(p.productCode) + '\', this.checked)"></td>' +
+        '<td><label class="syy-check-hit"><input type="checkbox" aria-label="เลือกสินค้า '+escHtml(p.productName)+'" ' + (checked ? 'checked' : '') + ' onchange="onItemCheck(\'' + escJs(p.productCode) + '\', this.checked)"></label></td>' +
         '<td>' + escHtml(p.productName) + pendingTag + '</td>' +
         '<td class="text-center">' + partTxt + '</td>' +
         '<td class="stock-pair"><b>' + p.currentStock + '</b> / ' + p.minStock + '</td>' +
         '<td>' + (p.carModel ? escHtml(p.carModel) : '<span style="color:#cbd5e1;">—</span>') + '</td>' +
         '<td class="text-right">฿ ' + (p.costPrice || 0).toLocaleString('th-TH', {maximumFractionDigits:2}) + '</td>' +
-        '<td class="text-center"><input type="number" min="1" class="qty-input" value="' + qty + '" onchange="onQtyChange(\'' + escJs(p.productCode) + '\', this.value)"></td>' +
-        '<td class="text-right" id="lineTotal_' + p.productCode + '">฿ ' + lineTotal.toLocaleString('th-TH', {maximumFractionDigits:2}) + '</td>' +
+        '<td class="text-center"><input type="number" min="1" step="any" class="qty-input" id="poQty_' + escHtml(p.productCode) + '" aria-label="จำนวนที่จะสั่ง ' + escHtml(p.productName) + '" aria-describedby="poQtyError_' + escHtml(p.productCode) + '" value="' + escHtml(qty) + '" onchange="onQtyChange(\'' + escJs(p.productCode) + '\', this.value)"><span id="poQtyError_' + escHtml(p.productCode) + '" class="po-qty-error" role="alert"></span></td>' +
+        '<td class="text-right" id="lineTotal_' + escHtml(p.productCode) + '">฿ ' + lineTotal.toLocaleString('th-TH', {maximumFractionDigits:2}) + '</td>' +
         '</tr>';
     }).join('');
 
     var vendorSelectedTotal = computeVendorTotal(g);
 
-    return '<div class="vendor-card" id="vgroup_' + g.vendorId + '">' +
+    return '<div class="vendor-card" id="vgroup_' + escHtml(g.vendorId) + '">' +
       '<div class="vendor-head">' +
         '<div>' +
           '<div class="vendor-name">🏢 ' + escHtml(g.vendorName) + taxWarning + '</div>' +
@@ -573,9 +573,10 @@
         '<th></th><th>ชื่อสินค้า</th><th class="text-center">ประเภท</th><th>สต็อก (ปัจจุบัน/ขั้นต่ำ)</th>' +
         '<th>รุ่นรถ</th><th class="text-right">ราคาทุน/หน่วย</th><th class="text-center">จำนวนที่จะสั่ง</th><th class="text-right">รวม</th>' +
       '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
+      '<div class="vendor-selection"><button type="button" class="btn btn-ghost" onclick="selectVendorItems(\''+escJs(g.vendorId)+'\',true)">เลือกทั้งหมดของผู้จำหน่ายนี้</button><button type="button" class="btn btn-ghost" onclick="selectVendorItems(\''+escJs(g.vendorId)+'\',false)">ล้างการเลือก</button></div>'+
       '<div class="vendor-foot">' +
-        '<div class="sum">เลือกแล้ว <b id="vcount_' + g.vendorId + '">' + countVendorChecked(g) + '</b> รายการ &nbsp;|&nbsp; รวม <b id="vtotal_' + g.vendorId + '">฿ ' + vendorSelectedTotal.toLocaleString('th-TH', {maximumFractionDigits:2}) + '</b></div>' +
-        '<button class="btn btn-primary" onclick="openConfirmModal(\'' + escJs(g.vendorId) + '\')" ' + (countVendorChecked(g) === 0 ? 'disabled' : '') + ' id="btnCreatePO_' + g.vendorId + '">📝 สร้างใบสั่งซื้อ</button>' +
+        '<div class="sum">เลือกแล้ว <b id="vcount_' + escHtml(g.vendorId) + '">' + countVendorChecked(g) + '</b> รายการ &nbsp;|&nbsp; รวม <b id="vtotal_' + escHtml(g.vendorId) + '">฿ ' + vendorSelectedTotal.toLocaleString('th-TH', {maximumFractionDigits:2}) + '</b></div>' +
+        '<button class="btn btn-primary" onclick="openConfirmModal(\'' + escJs(g.vendorId) + '\')" ' + (countVendorChecked(g) === 0 ? 'disabled' : '') + ' id="btnCreatePO_' + escHtml(g.vendorId) + '">📝 สร้างใบสั่งซื้อ</button>' +
       '</div>' +
     '</div>';
   }
@@ -588,7 +589,7 @@
     return g.items.reduce(function(sum, p) {
       if (checkedState[p.productCode] === false) return sum;
       var qty = qtyState[p.productCode] != null ? qtyState[p.productCode] : p.suggestedQty;
-      return sum + qty * (p.costPrice || 0);
+      return sum + (Number.isFinite(Number(qty))&&Number(qty)>=1?Number(qty)*(p.costPrice||0):0);
     }, 0);
   }
 
@@ -608,14 +609,17 @@
   }
 
   function onQtyChange(productCode, val) {
-    var n = parseFloat(val);
-    if (!n || n < 1) n = 1;
-    qtyState[productCode] = n;
+    var n = Number(val);
+    var valid=String(val).trim()!==''&&Number.isFinite(n)&&n>=1;
+    qtyState[productCode] = valid?n:String(val);
+    var input=document.getElementById('poQty_'+productCode),error=document.getElementById('poQtyError_'+productCode);
+    if(input){input.setCustomValidity(valid?'':'กรอกจำนวนตั้งแต่ 1 ขึ้นไป');input.setAttribute('aria-invalid',valid?'false':'true');}
+    if(error)error.textContent=valid?'':'กรอกจำนวนตั้งแต่ 1 ขึ้นไป';
     var item = lowStockItems.find(function(p) { return p.productCode === productCode; });
     if (item) {
       var lineTotal = n * (item.costPrice || 0);
       var el = document.getElementById('lineTotal_' + productCode);
-      if (el) el.innerText = '฿ ' + lineTotal.toLocaleString('th-TH', {maximumFractionDigits:2});
+      if (el) el.innerText = valid?'฿ ' + lineTotal.toLocaleString('th-TH', {maximumFractionDigits:2}):'—';
     }
     refreshVendorFooter(productCode);
     updateStatCards();
@@ -637,12 +641,18 @@
   // ==========================================
   // Confirm Create Order Modal
   // ==========================================
+  function validPoQuantities(items){
+    var invalid=items.find(function(p){var value=qtyState[p.productCode]!=null?qtyState[p.productCode]:p.suggestedQty;return String(value).trim()===''||!Number.isFinite(Number(value))||Number(value)<1;});
+    if(!invalid)return true;var value=qtyState[invalid.productCode]!=null?qtyState[invalid.productCode]:invalid.suggestedQty;onQtyChange(invalid.productCode,value);var field=document.getElementById('poQty_'+invalid.productCode);if(field){field.focus();field.reportValidity();}toast('กรุณาแก้จำนวนสินค้าที่ไม่ถูกต้องก่อนยืนยัน','warn');return false;
+  }
+  function selectVendorItems(vendorId,selected){var g=findGroupByVendor(vendorId);if(!g)return;g.items.forEach(function(p){checkedState[p.productCode]=selected;});renderCreateTab();updateStatCards();}
   function openConfirmModal(vendorId,discard) {
     if(!discard&&syyUnknownWrites.savePurchaseOrder&&syyGuardDraft(function(){openConfirmModal(vendorId,true);},'orders'))return;
     var g = findGroupByVendor(vendorId);
     if (!g) return;
     var selectedItems = g.items.filter(function(p) { return checkedState[p.productCode] !== false; });
     if (!selectedItems.length) { toast('กรุณาเลือกสินค้าอย่างน้อย 1 รายการ','warn'); return; }
+    if(!validPoQuantities(selectedItems))return;
 
     pendingConfirmVendor = g;
 
@@ -689,6 +699,7 @@
     var g = pendingConfirmVendor;
     var selectedItems = g.items.filter(function(p) { return checkedState[p.productCode] !== false; });
 
+    if(!selectedItems.length||!validPoQuantities(selectedItems))return;
     var items = selectedItems.map(function(p) {
       return {
         productCode: p.productCode,

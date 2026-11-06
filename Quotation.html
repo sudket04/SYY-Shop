@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
@@ -718,10 +718,10 @@ function renderBasket() {
         '</div>' +
         '<div class="qty-box">' +
           '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',-1)">−</button>' +
-          '<input type="number" class="quote-qty" aria-label="จำนวน" value="' + b.qty + '" min="0" step="any" required oninput="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
+          '<input type="number" class="quote-qty" aria-label="จำนวน" value="' + esc(b.qty) + '" min="0" step="any" required oninput="setQty(\'' + escJs(b.productCode) + '\',this.value)">' +
           '<button type="button" onclick="changeQty(\'' + escJs(b.productCode) + '\',1)">+</button>' +
         '</div>' +
-        '<input type="number" class="price-input" aria-label="ราคา/หน่วย" value="' + b.unitPrice + '" min="0" step="0.01" required oninput="setPrice(\'' + escJs(b.productCode) + '\',this.value)">' +
+        '<input type="number" class="price-input" aria-label="ราคา/หน่วย" value="' + esc(b.unitPrice) + '" min="0" step="0.01" required oninput="setPrice(\'' + escJs(b.productCode) + '\',this.value)">' +
         '<span class="line-total">' + money(amount) + '</span>' +
         '<button type="button" class="btn-remove-row" onclick="removeLine(\'' + escJs(b.productCode) + '\')">✕</button>' +
       '</div>';
@@ -1058,9 +1058,9 @@ function moneyPlain(n) { return num(n).toLocaleString('th-TH', { minimumFraction
 function renderStatusFilterBar() {
   var bar = document.getElementById('statusFilterBar');
   var chips = [''].concat(statuses);
-  bar.innerHTML = chips.map(function (s) {
-    return '<span class="pill' + (listStatusFilter === s ? ' active' : '') + '" style="cursor:pointer" onclick="setListFilter(\'' + escJs(s) + '\')">' + (s || 'ทั้งหมด') + '</span>';
-  }).join('');
+  var fragment=document.createDocumentFragment();
+  chips.forEach(function(s){var button=document.createElement('button');button.type='button';button.className='pill'+(listStatusFilter===s?' active':'');button.textContent=s||'ทั้งหมด';button.setAttribute('aria-pressed',listStatusFilter===s?'true':'false');button.onclick=function(){setListFilter(s);};fragment.appendChild(button);});
+  bar.replaceChildren(fragment);
 }
 function setListFilter(s) { listStatusFilter = s; renderStatusFilterBar(); renderList(); }
 
@@ -1105,7 +1105,7 @@ function renderList() {
       '<td>' + esc(q.customerName) + (q.customerType ? '<div style="font-size:11px;color:var(--faint)">' + esc(q.customerType) + '</div>' : '') + '</td>' +
       '<td>' + esc(thDate(q.quoteDate)) + '</td>' +
       '<td class="text-right mono">' + money(q.grandTotal) + '</td>' +
-      '<td class="text-center"><select class="select ' + cls + '" style="min-height:30px;padding:4px 8px;font-size:11.5px;border:none;font-weight:600" onchange="changeStatus(\'' + escJs(q.id) + '\',this.value)">' + statusOptions + '</select></td>' +
+      '<td class="text-center"><select data-syy-no-search="true" data-quote-status="'+esc(q.id)+'" aria-label="สถานะใบเสนอราคา '+esc(q.quoteNo)+'" class="select ' + cls + '" style="min-height:30px;padding:4px 8px;font-size:11.5px;border:none;font-weight:600" onchange="changeStatus(\'' + escJs(q.id) + '\',this.value)">' + statusOptions + '</select></td>' +
       '<td class="text-center"><div class="row-actions">' +
         '<button class="btn btn-icon view" title="ดู/พิมพ์" onclick="viewQuotation(\'' + escJs(q.id) + '\')">👁️</button>' +
         '<button class="btn btn-icon edit" title="แก้ไข" onclick="editQuotation(\'' + escJs(q.id) + '\')">✏️</button>' +
@@ -1120,11 +1120,18 @@ function renderList() {
 
 function viewQuotation(docId,discard){if(!discard&&syyGuardDraft(function(){viewQuotation(docId,true);},'quotation'))return;loadQuotationIntoBuild(docId,true);switchTab('doc');}
 
+var quotationStatusPending=Object.create(null);
 function changeStatus(docId, status) {
+  if(quotationStatusPending[docId]||syyLockUnknownWrite('updateQuotationStatus'))return;
+  var row=quotations.find(function(q){return q.id===docId;});if(!row||statuses.indexOf(status)<0)return;
+  quotationStatusPending[docId]=true;
+  var select=Array.from(document.querySelectorAll('[data-quote-status]')).find(function(el){return el.dataset.quoteStatus===docId;});if(select){select.disabled=true;select.setAttribute('aria-busy','true');}
+  function done(){delete quotationStatusPending[docId];if(select&&select.isConnected){select.value=row.status;select.disabled=!!syyUnknownWrites.updateQuotationStatus;select.removeAttribute('aria-busy');if(select.disabled)select.title='ยังไม่ทราบผล · ตรวจสถานะก่อนทำรายการซ้ำ';}}
+
   callApi('updateQuotationStatus', [docId, status], function (res) {
-    if (res && res.success) { toast(res.message || 'เปลี่ยนสถานะเรียบร้อย'); loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear); }
+    done();if (res && res.success) { toast(res.message || 'เปลี่ยนสถานะเรียบร้อย'); loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear); }
     else swyError(res && res.title || 'ล้มเหลว', res && res.message);
-  }, function (err) { swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err))); });
+  }, function (err) { done();swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err))); });
 }
 
 /* ═══ ตัดสต๊อกจากใบเสนอราคา (ปิดงาน-ขายสำเร็จ) ═══

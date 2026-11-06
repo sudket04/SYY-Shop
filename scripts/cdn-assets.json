@@ -1,0 +1,62 @@
+{
+  "xlsx": {
+    "url": "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js",
+    "integrity": "sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT",
+    "bytes": 951904,
+    "cors": [
+      "*"
+    ],
+    "license": "Apache-2.0",
+    "reviewed": "2026-11-06"
+  },
+  "barcode": {
+    "url": "https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js",
+    "integrity": "sha384-Kk5SjBOKprEnGfyBWfD2zROFd1Cu8kwOXxG2GIhYPcoDL2rBJS9P8Ud1ZMy4412a",
+    "bytes": 60817,
+    "cors": [
+      "*"
+    ],
+    "license": "MIT",
+    "reviewed": "2026-11-06"
+  },
+  "dialogs": {
+    "url": "https://cdn.jsdelivr.net/npm/sweetalert2@11.26.25/dist/sweetalert2.all.min.js",
+    "integrity": "sha384-nLoOnA/BDh8A/jxqtckg4DumuCGOBYUnNJLZdQz/zfYNp3wcjGSoWTAzgko06G/2",
+    "bytes": 79150,
+    "cors": [
+      "*"
+    ],
+    "license": "MIT",
+    "reviewed": "2026-11-06"
+  },
+  "qrcode": {
+    "url": "https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js",
+    "integrity": "sha384-0RsG1yo/crf/1Qc14sho26SXXOTngNCjgJw7fuvXBt9W/OChF/Ijx+aUuBDqQwEk",
+    "bytes": 55131,
+    "cors": [
+      "*"
+    ],
+    "license": "MIT",
+    "reviewed": "2026-11-06"
+  },
+  "html2canvas": {
+    "url": "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+    "integrity": "sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H",
+    "bytes": 198689,
+    "cors": [
+      "*"
+    ],
+    "license": "MIT",
+    "reviewed": "2026-11-06"
+  },
+  "pdf": {
+    "url": "https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js",
+    "integrity": "sha384-qovJwSBbRDPP5cEjCp8S0UP66wrvnjaa60XMOGzTNanrThcrGfXfnZkvgY8N1KT3",
+    "bytes": 420165,
+    "cors": [
+      "*"
+    ],
+    "license": "MIT",
+    "reviewed": "2026-11-06"
+  }
+}

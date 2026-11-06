@@ -1,6 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
+<meta name="syy-owner" content="<?= username ?>">
+<meta name="syy-role" content="<?= userRole ?>">
+<meta name="syy-app-url" content="<?= webAppUrl ?>">
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
 <?!= include_('UiBootstrap'); ?>
@@ -127,7 +130,7 @@
     tr:hover .btn-toggle-icon { transform: scale(1.15); box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
     tr:hover .btn-resetpw-icon { background: #92400e; color: white; transform: scale(1.15); box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
 
-    .empty-row td { text-align: center; color: #94a3b8; padding: 30px; }
+    .empty-row td { text-align: center; color: #56677d; padding: 30px; }
 
     .code-badge { 
       font-family: 'Courier New', monospace; 
@@ -185,7 +188,7 @@
       display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0; 
     }
     .modal-section-label { 
-      font-size: 10px; font-weight: 600; color: #94a3b8; letter-spacing: 1.2px; text-transform: uppercase; 
+      font-size: 13px; font-weight: 600; color: #56677d; letter-spacing: 1.2px; text-transform: uppercase;
       margin: 16px 0 10px; border-top: 1px solid #f1f5f9; padding-top: 14px; 
     }
     .modal-section-label:first-child { border-top: none; margin-top: 0; padding-top: 0; }
@@ -332,7 +335,7 @@
           </div>
           <div class="form-group">
             <label>สิทธิ์ผู้ใช้ (Role) *</label>
-            <select id="modalRole" class="form-control">
+            <select id="modalRole" aria-label="สิทธิ์ผู้ใช้" class="form-control">
               <option value="viewer">Viewer — ดูข้อมูล + จัดการใบกำกับภาษี</option>
               <option value="staff">Staff — เพิ่ม/แก้ไขข้อมูลทั่วไป</option>
               <option value="admin">Admin — สิทธิ์เต็ม</option>
@@ -704,7 +707,8 @@ var XLF = (function () {
     });
   }
 
-  return { apply: apply, th: th, bindHeaderClicks: bindHeaderClicks, anyActiveFilter: anyActiveFilter, clearAll: clearAll, closePopover: closePopover };
+  function snapshot(key){var st=ensure(key),filters={};Object.keys(st.filters).sort().forEach(function(col){filters[col]=Array.from(st.filters[col]).sort();});return {filters:filters,sortCol:st.sortCol,sortAsc:st.sortAsc};}
+  return { snapshot:snapshot,apply: apply, th: th, bindHeaderClicks: bindHeaderClicks, anyActiveFilter: anyActiveFilter, clearAll: clearAll, closePopover: closePopover };
 })();
 
 /* ══════════════════════════════════════════════════════════════
@@ -752,6 +756,7 @@ function loadTable() {
 var ROLE_LABEL = { admin: 'Admin', staff: 'Staff', viewer: 'Viewer' };
 var ROLE_CLASS = { admin: 'role-admin', staff: 'role-staff', viewer: 'role-viewer' };
 
+var userDisplayPager=null;
 function renderUserRows() {
   var thead = document.getElementById('userThead');
   thead.innerHTML =
@@ -779,6 +784,8 @@ function renderUserRows() {
   document.getElementById('recordCount').innerText = '📋 ทั้งหมด ' + usersCache.length + ' รายการ';
 
   var tbody = document.getElementById('userBody');
+  if(!userDisplayPager)userDisplayPager=syyDisplayPager({body:tbody,key:'users',defaultSize:25,render:renderUserRows});
+  rows=userDisplayPager.window(rows,JSON.stringify(XLF.snapshot('users')));
   tbody.innerHTML = '';
   if (!rows.length) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="7">📭 ' +
@@ -791,7 +798,7 @@ function renderUserRows() {
     var statusBadge = item.status === 'Active'
       ? '<span class="status-badge status-active">Active</span>'
       : '<span class="status-badge status-inactive">Inactive</span>';
-    var roleBadge = '<span class="role-badge ' + (ROLE_CLASS[item.role] || '') + '">' + (ROLE_LABEL[item.role] || item.role) + '</span>';
+    var roleBadge = '<span class="role-badge ' + (ROLE_CLASS[item.role] || '') + '">' + esc(ROLE_LABEL[item.role] || item.role) + '</span>';
 
     var toggleTitle = item.status === 'Active' ? 'ปิดใช้งาน' : 'เปิดใช้งาน';
     var toggleIcon  = item.status === 'Active' ? '🔒' : '🔓';
@@ -812,7 +819,7 @@ function renderUserRows() {
 
     var tr = document.createElement('tr');
     tr.innerHTML =
-      '<td style="text-align:center; color:#94a3b8;">' + (i + 1) + '</td>' +
+      '<td style="text-align:center; color:#94a3b8;">' + (userDisplayPager.offset() + i + 1) + '</td>' +
       '<td><span class="code-badge">' + esc(item.username) + '</span></td>' +
       '<td style="font-weight:600;">' + esc(item.fullName) + '</td>' +
       '<td>' + esc(item.email) + '</td>' +
@@ -1001,7 +1008,7 @@ function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 // ★ ใช้แทน esc() เฉพาะตอนฝังค่าไว้ในสตริง JS ที่ครอบด้วย ' อยู่แล้ว (เช่น onclick="fn('...')")
 //   esc() เพียงอย่างเดียวไม่ escape เครื่องหมาย ' — ถ้าค่านั้นมี ' ปนอยู่จะหลุดออกจากสตริงกลางทาง
 //   (หน้านี้ไม่ได้ include_('Shared') จึงมี esc()/escJs() ของตัวเองแยกต่างหาก ไม่ใช้ตัวกลาง)
-function escJs(v) { return esc(v).replace(/'/g,"\\'"); }
+function escJs(v) { return String(v==null?'':v).replace(/\\/g,'\\\\').replace(/'/g,'\\x27').replace(/\r/g,'\\r').replace(/\n/g,'\\n').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 </script>
 </body>
 </html>

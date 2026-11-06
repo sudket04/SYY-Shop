@@ -1,4 +1,11 @@
 <style>
+.syy-display-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--line,#dfe7ef);color:var(--muted,#475569);font-size:13px;background:#fff}
+.syy-display-pager label,.syy-display-pager-controls{display:flex;align-items:center;gap:8px}
+.syy-display-pager button,.syy-display-pager select{min-height:36px;border:1px solid var(--line,#cbd5e1);border-radius:8px;background:#fff;color:var(--primary,#005088);padding:6px 10px;font:inherit;cursor:pointer}
+.syy-display-pager button:disabled{opacity:.5;cursor:default}
+.syy-batch-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:var(--primary-soft,#e6f0fa);border-bottom:1px solid var(--line,#dfe7ef);font-size:14px}
+@media(max-width:767px){.syy-display-pager button,.syy-display-pager select{min-height:44px;min-width:44px}.syy-display-pager{padding:10px}.syy-display-pager-controls{flex-wrap:wrap}}
+@media print{.syy-display-pager,.syy-batch-toolbar{display:none!important}}
 /* Stable content widths follow the information on each page, even after filtering. */
 [hidden]{display:none!important}
 @media screen{
@@ -59,6 +66,44 @@
 .syy-password-toggle:hover{background:#f1f5f9;color:#005088}
 .syy-password-toggle:focus-visible{outline:2px solid #005088;outline-offset:1px}
 </style>
+<script>
+/* UI-only preferences: no business rows, secrets or server writes. */
+function syyViewPreferenceKey(name){
+  var owner=document.querySelector('meta[name="syy-owner"]'),role=document.querySelector('meta[name="syy-role"]');
+  if(!owner||!role||!owner.content)return null;
+  var appMeta=document.querySelector('meta[name="syy-app-url"]');
+  var app=appMeta?appMeta.content:typeof WEB_APP_URL==='string'?WEB_APP_URL:location.href,scope;
+  try{var url=new URL(app,location.href);scope=url.origin+url.pathname;}catch(e){return null;}
+  return 'syy_view_v2:'+JSON.stringify([scope,owner.content,role.content,name]);
+}
+function syyViewPreference(name,value){
+  try{var key=syyViewPreferenceKey(name);if(!key)return null;if(arguments.length>1){localStorage.setItem(key,JSON.stringify(value));return value;}return JSON.parse(localStorage.getItem(key)||'null');}catch(e){return null;}
+}
+/* Full loaded-set filtering stays with callers; this helper only limits DOM. */
+function syyDisplayPager(options){
+  var body=typeof options.body==='string'?document.querySelector(options.body):options.body;
+  var size=Number(syyViewPreference(options.key+':size'))||options.defaultSize||25,page=1,total=0,signature='',allowed=[25,50,100];
+  if(allowed.indexOf(size)<0)size=options.defaultSize||25;
+  var host=document.createElement('nav');host.className='syy-display-pager';host.setAttribute('aria-label','เปลี่ยนหน้ารายการ');
+  var count=document.createElement('span');count.setAttribute('aria-live','polite');
+  var label=document.createElement('label');label.textContent='รายการ / หน้า';var select=document.createElement('select');select.dataset.syyNoSearch='true';select.setAttribute('aria-label','จำนวนรายการต่อหน้า');
+  allowed.forEach(function(n){var option=document.createElement('option');option.value=n;option.textContent=n;select.appendChild(option);});select.value=size;label.appendChild(select);
+  var controls=document.createElement('div');controls.className='syy-display-pager-controls';var prev=document.createElement('button'),next=document.createElement('button');prev.type=next.type='button';prev.textContent='หน้าก่อน';next.textContent='หน้าถัดไป';
+  controls.append(label,prev,next);host.append(count,controls);var anchor=body.closest('.table-wrap')||body.closest('table');anchor.insertAdjacentElement('afterend',host);
+  function paint(){page=Math.max(1,Math.min(page,Math.ceil(total/size)||1));count.textContent='หน้า '+page+' · แสดง '+(total?(page-1)*size+1:0)+'–'+Math.min(page*size,total)+' จาก '+total+' รายการ';prev.disabled=page<=1;next.disabled=page*size>=total;}
+  prev.onclick=function(){if(page>1){page--;options.render();}};next.onclick=function(){if(page*size<total){page++;options.render();}};
+  select.onchange=function(){size=Number(select.value);page=1;syyViewPreference(options.key+':size',size);options.render();};
+  return {window:function(rows,scope){scope=String(scope||'');if(scope!==signature){signature=scope;page=1;}total=rows.length;paint();return rows.slice((page-1)*size,page*size);},offset:function(){return (page-1)*size;},reset:function(){page=1;}};
+}
+/* Never resolve arbitrary global names/eval from database-provided attributes. */
+function syyDelegateActions(root,handlers){
+  if(typeof root==='string')root=document.querySelector(root);if(!root)return;
+  if(root.syyActions){root.syyActions.handlers=handlers;return;}
+  var binding={handlers:handlers};root.syyActions=binding;
+  root.addEventListener('click',function(event){var button=event.target.closest('[data-syy-action]');if(!button||!root.contains(button)||button.disabled)return;var name=button.dataset.syyAction;if(Object.prototype.hasOwnProperty.call(binding.handlers,name)){event.preventDefault();binding.handlers[name](button.dataset.syyId);}});
+}
+syyOnReady(function(){document.documentElement.lang='th';if(!document.title){var title=document.querySelector('.crumb b,.page-header h1,h1');document.title=(title?title.textContent.trim()+' · ':'')+'SYY Shop';}});
+</script>
 <script>
 (function(){
   var paths={

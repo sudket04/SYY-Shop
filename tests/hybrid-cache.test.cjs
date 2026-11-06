@@ -59,7 +59,7 @@ test('complete search and facets retain global results beyond visited pages; old
 test('references deduplicate IDs, batch fetch with projection for browse only, retain full contact fields for PO and tolerate deleted references',()=>{
  const s=fixture(101);s.put('Master_Vendors/V1',{Vendor_name:'Vendor',Phone:'123',Tax_ID:'456'});
  s.c.readProductReferenceDocs_({Master_Vendors:['V1','V1'],Master_Brands:['B1','B1','MISSING']},true);
- const batches=s.calls.filter(x=>x.url.endsWith(':batchGet')).map(x=>JSON.parse(x.options.payload));assert.equal(batches[0].documents.length,1);assert.deepEqual(batches[0].mask.fieldPaths,['Vendor_name']);
+ const batches=s.calls.filter(x=>x.url.endsWith(':batchGet')).map(x=>JSON.parse(x.options.payload)),vendorBatch=batches.find(b=>b.documents.some(name=>name.endsWith('/Master_Vendors/V1')));assert.equal(vendorBatch.documents.length,1);assert.deepEqual(vendorBatch.mask.fieldPaths,['Vendor_name']);
  const full=s.c.readProductReferenceDocs_({Master_Vendors:['V1']});assert.equal(s.c.parseFirestoreValue_(full.Master_Vendors[0].fields.Phone),'123');assert.equal(s.c.parseFirestoreValue_(full.Master_Vendors[0].fields.Tax_ID),'456');
  assert.throws(()=>s.c.readProductReferenceDocs_({Master_Users:['U1']}));assert.throws(()=>s.c.readProductReferenceDocs_({Master_Brands:['../U1']}));
  const fetch=s.c.UrlFetchApp.fetch;s.c.UrlFetchApp.fetch=(url,o)=>url.endsWith(':batchGet')?reply(200,[]):fetch(url,o);assert.throws(()=>s.c.readProductReferenceDocs_({Master_Brands:['B1','B2']},true),/ไม่ครบ/);

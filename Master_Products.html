@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
@@ -246,7 +246,7 @@
                          oninput="renderCarDropdownList(this.value)">
                 </div>
                 <div class="multi-dropdown-actions" onclick="event.stopPropagation()">
-                  <span class="dd-action-link" onclick="selectAllCars(event)">เลือกทั้งหมด</span>
+                  <span class="dd-action-link" onclick="selectAllCars(event)">เลือกทั้งหมดที่แสดง</span>
                   <span class="dd-action-sep">|</span>
                   <span class="dd-action-link" onclick="clearAllCars(event)">🗑️ ล้างทั้งหมด</span>
                 </div>
@@ -413,7 +413,7 @@
             <div class="column-picker-foot"><button type="button" class="btn btn-ghost" onclick="resetProductColumns()">คืนค่าเริ่มต้น</button><button type="button" class="btn btn-primary" onclick="saveProductColumnPreference()">บันทึกมุมมอง</button></div>
           </div>
         </div>
-        <span class="page-size-fixed">100 รายการ / หน้า</span>
+        <label class="page-size-control">รายการ / หน้า <select id="productPageSize" data-syy-no-search="true" class="select" aria-label="จำนวนรายการต่อหน้า" onchange="changeProductPageSize(this.value)"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
       </div>
     </div>
 
@@ -423,6 +423,7 @@
     </div>
 
     <!-- Table Container Wide View -->
+    <div class="syy-batch-toolbar" id="productBatchToolbar" hidden><span id="productSelectedCount" aria-live="polite"></span><button type="button" class="btn btn-ghost" onclick="exportSelectedProducts()">Export ที่เลือก</button><button type="button" class="btn btn-ghost" onclick="printSelectedProductBarcodes()">พิมพ์บาร์โค้ดที่เลือก</button><button type="button" class="btn btn-ghost" onclick="clearProductSelection()">ล้างการเลือก</button></div>
     <div class="table-wrap">
       <table id="productTable" data-table-layout="wide">
         <colgroup id="productColgroup"></colgroup>
@@ -457,6 +458,7 @@
   var PRODUCT_CAN_DELETE = PRODUCT_ROLE==='admin';
 
   var PRODUCT_COLUMNS = [
+    {id:'select',label:'เลือก',width:48,defaultVisible:true,required:true,align:'center'},
     {id:'rownum',label:'#',width:45,defaultVisible:false,align:'center'},
     {id:'productCode',label:'รหัสสินค้า',width:130,defaultVisible:true,required:true,sort:true},
     {id:'productName',label:'ชื่อสินค้า',width:250,defaultVisible:true,required:true,sort:true},
@@ -485,7 +487,7 @@
   var pendingProductColumns=[];
 
   function defaultProductColumns(){
-    if(window.innerWidth<768)return ['productCode','productName','sellingPrice','currentStock','actions'];
+    if(window.innerWidth<768)return ['select','productCode','productName','sellingPrice','currentStock','actions'];
     return PRODUCT_COLUMNS.filter(function(c){return c.defaultVisible;}).map(function(c){return c.id;});
   }
   function normalizeProductColumns(cols){
@@ -500,11 +502,11 @@
       var saved=JSON.parse(localStorage.getItem(productColumnPrefKey)||'null');
       if(saved&&saved.version===PRODUCT_PREF_VERSION){
         visibleProductColumns=normalizeProductColumns(saved.visibleColumns);
-        pageSize=100;
+        pageSize=productPreferredPageSize();
       }else visibleProductColumns=normalizeProductColumns(fallback);
     }catch(e){visibleProductColumns=normalizeProductColumns(fallback);}
     pendingProductColumns=visibleProductColumns.slice();
-    pageSize=100;
+    pageSize=productPreferredPageSize();
   }
   function getVisibleProductColumnDefs(){
     return PRODUCT_COLUMNS.filter(function(c){return visibleProductColumns.indexOf(c.id)>-1;});
@@ -517,6 +519,7 @@
     document.getElementById('productColgroup').innerHTML=defs.map(function(c){return '<col style="width:'+c.width+'px">';}).join('');
     document.getElementById('productThead').innerHTML='<tr>'+defs.map(function(c){
       var cls=(c.id==='actions'?'col-sticky-right ':'')+(c.align==='right'?'price-cell':'');
+      if(c.id==='select')return '<th style="width:48px;text-align:center"><label class="syy-check-hit"><input type="checkbox" id="productSelectPage" aria-label="เลือกสินค้าทั้งหมดเฉพาะหน้านี้"></label></th>';
       if(c.sort)return XLF.th(c.label,'products',c.id,{width:c.width+'px',className:cls.trim()});
       return '<th class="'+cls.trim()+'" style="width:'+c.width+'px;text-align:'+(c.align||'left')+'">'+esc(c.label)+'</th>';
     }).join('')+'</tr>';
@@ -565,7 +568,8 @@
     if(col.id==='costPrice')cls.push('price-cell','product-cost-cell');
     if(col.id==='sellingPrice')cls.push('price-cell','product-selling-cell');
     var content='—';
-    if(col.id==='rownum')content=ctx.rowNum;
+    if(col.id==='select')content='<label class="syy-check-hit"><input type="checkbox" data-product-select="'+esc(ctx.codeKey)+'" aria-label="เลือกสินค้า '+esc(item.productCode||item.id)+'" '+(productSelection.has(ctx.codeKey)?'checked':'')+'></label>';
+    else if(col.id==='rownum')content=ctx.rowNum;
     else if(col.id==='image')content=ctx.imgCell;
     else if(col.id==='productCode')content='<span class="chip-code">'+esc(item.productCode||item.id)+'</span>'+ctx.barcodeBadge;
     else if(col.id==='productName')content='<span class="product-name">'+esc(item.productName)+'</span>';
@@ -580,9 +584,9 @@
     else if(col.id==='sellingPrice')content='<span class="product-price">฿'+Number(item.sellingPrice||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span>';
     else if(col.id==='currentStock')content=Number(item.currentStock||0).toLocaleString('th-TH');
     else if(col.id==='status')content='<span class="badge '+(item.status==='Active'?'badge-ok':'badge-danger')+'">'+esc(item.status||'Active')+'</span>';
-    else if(col.id==='actions')content='<div class="row-actions"><button type="button" class="btn btn-icon view" onclick="openViewModal(\''+escJs(ctx.codeKey)+'\')" title="ดูรายละเอียด">👁️</button>'+
-      (PRODUCT_CAN_EDIT?'<button type="button" class="btn btn-icon edit" onclick="openEditModal(\''+escJs(ctx.codeKey)+'\')" title="แก้ไข">✏️</button>':'')+
-      (PRODUCT_CAN_DELETE?'<button type="button" class="btn btn-icon del" onclick="confirmDeleteModal(\''+escJs(ctx.codeKey)+'\')" title="ลบ">🗑️</button>':'')+'</div>';
+    else if(col.id==='actions')content='<div class="row-actions"><button type="button" class="btn btn-icon view" data-syy-action="view" data-syy-id="'+esc(ctx.codeKey)+'" title="ดูรายละเอียด">👁️</button>'+
+      (PRODUCT_CAN_EDIT?'<button type="button" class="btn btn-icon edit" data-syy-action="edit" data-syy-id="'+esc(ctx.codeKey)+'" title="แก้ไข">✏️</button>':'')+
+      (PRODUCT_CAN_DELETE?'<button type="button" class="btn btn-icon del" data-syy-action="remove" data-syy-id="'+esc(ctx.codeKey)+'" title="ลบ">🗑️</button>':'')+'</div>';
     return '<td class="'+cls.join(' ')+'" style="text-align:'+align+'">'+content+'</td>';
   }
 
@@ -598,7 +602,7 @@
 
   // Pagination state
   var currentPage = 1;
-  var pageSize    = 100;
+  var pageSize    = 50;
 
   // Multi-select state สำหรับรุ่นรถ
   var selectedCarIds  = [];
@@ -610,8 +614,11 @@
 
   syyOnReady(function() {
     loadProductColumnPreference();
+    syyDelegateActions('#productBody',{view:openViewModal,edit:function(id){if(PRODUCT_CAN_EDIT)openEditModal(id);},remove:function(id){if(PRODUCT_CAN_DELETE)confirmDeleteModal(id);}});
     renderProductColumnPicker();
     renderProductTableStructure();
+    document.getElementById('productBody').addEventListener('change',function(event){if(event.target.matches('[data-product-select]'))selectProductRow(event.target.dataset.productSelect,event.target.checked);});
+    document.getElementById('productThead').addEventListener('change',function(event){if(event.target.id==='productSelectPage')selectProductPage(event.target.checked);});
     syyViewStart();productInitialized=true;
     // The list never waits for edit-only dropdowns or external image loading.
     loadTable(true);
@@ -662,11 +669,12 @@
     if(syyFreshState){syyFreshState.revision++;syyFreshState.dirty=true;}syyReadDirty=true;syyUxStatus();
   }
   function upsertProductLocal(item){
+    clearProductSelection();
     if(!item)return;item.id=item.id||item.productCode;item.productCode=item.productCode||item.id;
     var key=item.id||item.productCode,pos=productsCache.findIndex(function(p){return (p.id||p.productCode)===key;});
     if(pos>-1)productsCache[pos]=item;else if(!productRemote)productsCache.push(item);filterAndRenderTable(true);queueProductDeltaRefresh();
   }
-  function removeProductLocal(id){productsCache=productsCache.filter(function(p){return (p.id||p.productCode)!==id;});filterAndRenderTable(true);queueProductDeltaRefresh();}
+  function removeProductLocal(id){clearProductSelection();productsCache=productsCache.filter(function(p){return (p.id||p.productCode)!==id;});filterAndRenderTable(true);queueProductDeltaRefresh();}
   function applyStockDeltaToProductPage(productStocks){
     var wasDirty=syyDraftDirty('product'),changed=false;
     (Array.isArray(productStocks)?productStocks:[]).forEach(function(s){
@@ -758,10 +766,12 @@
     if (currentVal) { sel.value = currentVal; }
   }
 
-  function productPageOptions(){return Object.assign({},XLF.snapshot('products'),{search:document.getElementById('tableSearchInput').value,page:currentPage,pageSize:100});}
-  function loadTable(withMasters) { loadProductPage(!!(withMasters||syyReadFresh)&&PRODUCT_CAN_EDIT,currentPage===1,!!productRemote); }
+  function productPreferredPageSize(){var value=Number(syyViewPreference('products:size'));return [25,50,100].indexOf(value)>=0?value:50;}
+  function changeProductPageSize(value){value=Number(value);if([25,50,100].indexOf(value)<0||productExportBusy)return;pageSize=value;syyViewPreference('products:size',value);currentPage=1;productBrowseKey='';productBrowseCursors={1:''};loadProductPage(false,true,false);}
+  function productPageOptions(){return Object.assign({},XLF.snapshot('products'),{search:document.getElementById('tableSearchInput').value,page:currentPage,pageSize:pageSize});}
+  function loadTable(withMasters) { clearProductSelection();loadProductPage(!!(withMasters||syyReadFresh)&&PRODUCT_CAN_EDIT,currentPage===1,!!productRemote); }
   function loadProductPage(withMasters,bootstrap,refreshSnapshot){
-    pageSize=100;
+    pageSize=productPreferredPageSize();document.getElementById('productPageSize').value=pageSize;
     clearTimeout(productSearchTimer);productLoading=true;
     if(withMasters&&!document.getElementById('productModal').classList.contains('active'))productMastersReady=false;
     var revision=syyDataStarted(),sequence=++productLoadSequence,tbody=document.getElementById('productBody');
@@ -770,7 +780,7 @@
     tbody.setAttribute('aria-busy','true');document.getElementById('btnPrevPage').disabled=true;document.getElementById('btnNextPage').disabled=true;updateProductRecordCounts('กำลังโหลด');
     var options=productPageOptions();options.paged=true;options.includeMasters=false;options.includeImages=false;
     var browseKey=JSON.stringify([options.search,options.filters,options.sortCol,options.sortAsc,options.pageSize]);
-    if(browseKey!==productBrowseKey){productBrowseKey=browseKey;productBrowseCursors={1:''};currentPage=options.page=1;}
+    if(browseKey!==productBrowseKey){clearProductSelection();productBrowseKey=browseKey;productBrowseCursors={1:''};currentPage=options.page=1;}
     options.cursorMode=window.SYY_CURSOR_BROWSE!==false;if(options.cursorMode&&currentPage>1&&productBrowseCursors[currentPage])options.cursor=productBrowseCursors[currentPage];
     if(refreshSnapshot)options.refreshSnapshot=true;
     callApi(bootstrap?'getAllProducts':'getProductCatalogPage',[options],function(data){
@@ -781,7 +791,7 @@
         var rows=Array.isArray(data)?data:data.products;
         if(!rows.every(function(row){return row&&typeof row==='object'&&!Array.isArray(row)&&typeof (row.productCode||row.id)==='string'&&['productName','partNumber','barcode','brandName','categoryName','carModel'].every(function(k){return row[k]==null||typeof row[k]==='string';});})){syyInvalidateReadScopes(['Master_Products'],false);throw Error('รายละเอียดข้อมูลสินค้าไม่ถูกต้อง กรุณาลองอีกครั้ง');}
         productRemote=data.catalogPage?data:null;
-        if(data.snapshotRebased)Object.keys(productBrowseCursors).forEach(function(p){if(Number(p)>data.page)delete productBrowseCursors[p];});
+        if(data.snapshotRebased){if(productSelection.size)toast('ชุดข้อมูลเปลี่ยนหรือหมดอายุ · กรุณาเลือกสินค้าใหม่','warn');clearProductSelection();Object.keys(productBrowseCursors).forEach(function(p){if(Number(p)>data.page)delete productBrowseCursors[p];});}
         if(data.cursorMode&&data.nextCursor)productBrowseCursors[data.page+1]=data.nextCursor;
         productsCache=rows;
         if(productRemote)currentPage=data.page;
@@ -803,6 +813,7 @@
   }
 
   function filterAndRenderTable(alreadyLoaded) {
+    if(productSelectionStale())clearProductSelection();
     if((productRemote||productLoading) && alreadyLoaded!==true){loadProductPage(false,currentPage===1);return;}
     renderProductTableStructure();
 
@@ -903,11 +914,38 @@
       return '<tr data-row-key="'+esc(codeKey)+'">'+getVisibleProductColumnDefs().map(function(col){return renderProductCell(col,ctx);}).join('')+'</tr>';
     }).join('');
 
-    syyPatchRows(tbody,rowsHtml);
-    prefetchProductImages(pageItems);
+    syyPatchRows(tbody,rowsHtml);updateProductSelection();
+    // Image metadata is requested by detail/edit/export intent only. Paging,
+    // sorting and checkbox changes must not issue invisible image reads.
     updatePaginationControls(startIdx + 1, endIdx, total);
   }
 
+  var productSelection=new Map(),productSelectionRevision=0,productSelectionIdentity='',productSelectionAccount='';
+  function productSelectionStale(){return productSelectionRevision!==syyDataRevision()||productSelectionIdentity!==syyCacheIdentity||productSelectionAccount!==syyViewPreferenceKey('products:selection');}
+  function visibleProductRows(){return productRemote?productsCache:filteredProducts.slice((currentPage-1)*pageSize,currentPage*pageSize);}
+  function clearProductSelection(){productSelection.clear();productSelectionRevision=syyDataRevision();productSelectionIdentity=syyCacheIdentity;productSelectionAccount=syyViewPreferenceKey('products:selection');updateProductSelection();}
+  function selectProductRow(code,selected){if(productSelectionStale())clearProductSelection();var row=visibleProductRows().find(function(p){return (p.productCode||p.id)===code;});if(!row)return;if(selected){if(productSelection.size>=1000&&!productSelection.has(code)){toast('เลือกได้สูงสุด 1,000 รายการต่อครั้ง','warn');updateProductSelection();return;}productSelection.set(code,Object.assign({},row));}else productSelection.delete(code);updateProductSelection();}
+  function selectProductPage(selected){if(productSelectionStale())clearProductSelection();visibleProductRows().forEach(function(row){var code=row.productCode||row.id;if(selected){if(productSelection.size<1000||productSelection.has(code))productSelection.set(code,Object.assign({},row));}else productSelection.delete(code);});updateProductSelection();}
+  function updateProductSelection(){
+    var bar=document.getElementById('productBatchToolbar');if(!bar)return;bar.hidden=productSelection.size===0;document.getElementById('productSelectedCount').textContent='เลือกแล้ว '+productSelection.size+' รายการ · ข้ามหน้าได้';
+    var visible=visibleProductRows(),count=visible.filter(function(p){return productSelection.has(p.productCode||p.id);}).length,head=document.getElementById('productSelectPage');if(head){head.checked=visible.length>0&&count===visible.length;head.indeterminate=count>0&&count<visible.length;head.disabled=!visible.length||productLoading;}
+    document.querySelectorAll('[data-product-select]').forEach(function(box){box.checked=productSelection.has(box.dataset.productSelect);});
+  }
+  function selectedProductSnapshot(){if(productSelectionStale()){clearProductSelection();toast('ข้อมูลเปลี่ยนแปลง กรุณาเลือกสินค้าใหม่','warn');return [];}return Array.from(productSelection.values()).map(function(row){return Object.assign({},row);});}
+  function exportSelectedProducts(){
+    var rows=selectedProductSnapshot();if(!rows.length||productExportBusy)return;var index=0,revision=syyDataRevision();productExportBusy=true;
+    function fail(error){productExportBusy=false;swyError('Export ไม่สำเร็จ',esc(syyErrorMessage(error)));}
+    function next(){if(revision!==syyDataRevision()){fail({message:'ข้อมูลเปลี่ยนแปลง กรุณาเลือกใหม่'});return;}if(index>=rows.length){productExportBusy=false;exportAllProductFields(rows);return;}var batch=rows.slice(index,index+200);callApi('getProductImageBatch',[batch.map(function(p){return p.productCode||p.id;})],function(images){if(revision!==syyDataRevision()){fail({message:'ข้อมูลเปลี่ยนแปลง กรุณาเลือกใหม่'});return;}if(!images||batch.some(function(p){var image=images[p.productCode||p.id];return !image||typeof image.imageUrl!=='string';})){fail({message:'ข้อมูลรูปไม่ครบ กรุณาลอง Export ใหม่'});return;}batch.forEach(function(p){p.imageUrl=images[p.productCode||p.id].imageUrl;});index+=batch.length;next();},fail);}
+    next();
+  }
+  var productBatchPrintBusy=false;
+  function printSelectedProductBarcodes(){
+    var rows=selectedProductSnapshot();if(!rows.length||productBatchPrintBusy)return;
+    if(rows.length>200){toast('พิมพ์ได้สูงสุด 200 รายการต่อครั้ง','warn');return;}
+    if(rows.some(function(p){return !p.barcode;})){toast('เลือกเฉพาะสินค้าที่มีบาร์โค้ดก่อนพิมพ์','warn');return;}
+    var revision=syyDataRevision();productBatchPrintBusy=true;
+    syyLoadLibrary('barcode').then(function(){if(revision!==syyDataRevision())throw Error('ข้อมูลเปลี่ยนแปลง กรุณาเลือกใหม่');var area=document.getElementById('selectedBarcodePrint');if(!area){area=document.createElement('div');area.id='selectedBarcodePrint';document.body.appendChild(area);}area.replaceChildren();rows.forEach(function(p){var card=document.createElement('div'),svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),name=document.createElement('div'),code=document.createElement('div');card.className='syy-barcode-label';name.textContent=p.productName||'';code.textContent=p.productCode||p.id;card.append(name,svg,code);area.appendChild(card);JsBarcode(svg,p.barcode,{format:pickBarcodeFormat_(p.barcode),width:1.5,height:40,displayValue:true});});document.body.classList.add('syy-batch-print');window.print();}).catch(function(error){swyError('พิมพ์ไม่สำเร็จ',esc(syyErrorMessage(error)));}).finally(function(){productBatchPrintBusy=false;document.body.classList.remove('syy-batch-print');});
+  }
   function updatePaginationControls(from, to, total) {
     if(productRemote&&productRemote.cursorMode){
       document.getElementById('paginationInfo').innerText=total?'แสดง '+from+' - '+to+' · ข้อมูล ณ '+new Date(productRemote.readTime).toLocaleTimeString('th-TH'):'แสดง 0 รายการ';
@@ -960,7 +998,7 @@
       ['สต็อกปัจจุบัน','currentStock'],['สต็อกขั้นต่ำ','minStock'],['สถานะ','status'],['URL รูปสินค้า','imageUrl']
     ];
     function csvCell(v){
-      var text=String(v==null?'':v); if(/^[=+\-@]/.test(text))text="'"+text;
+      var text=String(v==null?'':v); if(/^[\s\u0000-\u001f]*[=+\-@]/.test(text))text="'"+text;
       return '"'+text.replace(/"/g,'""')+'"';
     }
     var csv=[fields.map(function(f){return csvCell(f[0]);}).join(',')].concat(rows.map(function(row){
@@ -1355,7 +1393,7 @@
         batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];var image=data[p.id],safeImage={imageUrl:image.imageUrl,imageUrls:image.imageUrls.slice(),primaryImageIndex:image.primaryImageIndex,imageUpdateTime:image.imageUpdateTime};productImageCache.delete(p.id);productImageCache.set(p.id,{stamp:stamp,at:Date.now(),data:safeImage});while(productImageCache.size>300)productImageCache.delete(productImageCache.keys().next().value);
           var current=productsCache.find(function(row){return (row.id||row.productCode)===p.id;});if(current)Object.assign(current,safeImage,{imageDataLoaded:true});p.waiters.forEach(function(w){if(w.ok)w.ok(current||Object.assign({id:p.id},safeImage));});
         });
-      },failed,{background:true,mayRun:function(){return stamp===productImageStamp()&&batch.some(function(p){return p.waiters.length||productsCache.some(function(row){return (row.id||row.productCode)===p.id;});});}});
+      },failed,{background:!batch.some(function(p){return p.waiters.length>0;}),mayRun:function(){return stamp===productImageStamp()&&batch.some(function(p){return p.waiters.length||productsCache.some(function(row){return (row.id||row.productCode)===p.id;});});}});
       function failed(error){batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];p.waiters.forEach(function(w){if(w.fail)w.fail(error);});});}
     })(fresh.slice(i,i+100));
   }
@@ -1602,7 +1640,9 @@
     });
   }
 
+  var carDropdownLimit=200,carDropdownQuery='';
   function renderCarDropdownList(keyword) {
+    var query=String(keyword||'').trim().toLowerCase();if(query!==carDropdownQuery){carDropdownQuery=query;carDropdownLimit=200;}
     var itemsBox = document.getElementById('carDropdownItems');
     itemsBox.innerHTML = '';
 
@@ -1617,18 +1657,22 @@
       return;
     }
 
-    filtered.forEach(function(item) {
+    filtered.slice(0,carDropdownLimit).forEach(function(item) {
       var checked = selectedCarIds.indexOf(item.id) > -1;
       var row = document.createElement('div');
       row.className = 'multi-dropdown-item' + (checked ? ' selected' : '');
-      row.innerHTML = '<input type="checkbox" ' + (checked ? 'checked' : '') + ' data-id="' + item.id + '"> <span>' + esc(item.Name || item.Car_Name) + '</span>';
+      row.innerHTML = '<input type="checkbox" aria-label="'+esc(item.Name||item.Car_Name||item.id)+'" ' + (checked ? 'checked' : '') + ' data-id="' + esc(item.id) + '"> <span>' + esc(item.Name || item.Car_Name) + '</span>';
+      var checkbox=row.querySelector('input');checkbox.onkeydown=function(event){if(event.key==='Enter'){event.preventDefault();event.stopPropagation();row.click();}};
       row.onclick = function(ev) {
         ev.stopPropagation();
+        var focused=document.activeElement===checkbox;
         toggleCarSelection(item.id, !checked);
         renderCarDropdownList(document.getElementById('carSearchInput').value);
+        if(focused){var replacement=Array.from(itemsBox.querySelectorAll('input[data-id]')).find(function(input){return input.dataset.id===item.id;});if(replacement)replacement.focus();}
       };
       itemsBox.appendChild(row);
     });
+    if(filtered.length>carDropdownLimit){var more=document.createElement('button');more.type='button';more.className='btn btn-ghost';more.textContent='แสดง '+carDropdownLimit+' จาก '+filtered.length+' รุ่น · โหลดเพิ่มอีก 200';more.onclick=function(event){event.stopPropagation();carDropdownLimit+=200;renderCarDropdownList(keyword);};itemsBox.appendChild(more);}
   }
 
   function toggleCarSelection(id, isChecked) {
@@ -1643,7 +1687,7 @@
   function selectAllCars(e) {
     e.stopPropagation();
     var keyword = document.getElementById('carSearchInput').value;
-    filterCars(keyword).forEach(function(item) {
+    filterCars(keyword).slice(0,carDropdownLimit).forEach(function(item) {
       if (selectedCarIds.indexOf(item.id) === -1) selectedCarIds.push(item.id);
     });
     renderCarChips();
@@ -1674,7 +1718,7 @@
       var name  = found ? (found.Name || found.Car_Name) : id;
       var chip  = document.createElement('span');
       chip.className = 'car-chip';
-      chip.innerHTML = esc(name) + ' <span class="remove-chip" data-id="' + id + '">✕</span>';
+      chip.innerHTML = esc(name) + ' <button type="button" class="remove-chip" aria-label="ลบรุ่นรถ '+esc(name)+'" data-id="' + esc(id) + '">✕</button>';
       chip.querySelector('.remove-chip').onclick = function(ev) {
         ev.stopPropagation();
         toggleCarSelection(id, false);

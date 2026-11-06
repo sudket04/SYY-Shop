@@ -80,27 +80,27 @@ async function main(){
  }
  async function check(name,fn){await fn();cases++;console.log('PASS: '+name);}
  const pages=[];
- await check('five Viewer pages share one cold query and render 100 of 10,000 products with batched image metadata and no editor permissions',async()=>{
+ await check('five Viewer pages share one cold query and render 50 of 10,000 products with zero image metadata reads and no editor permissions',async()=>{
   for(let i=0;i<5;i++){
    const page=await pageFor('Master_Products.html','viewer'+i);pages.push(page);
-   await page.waitForFunction(()=>!productLoading&&productsCache.length===100);
+   await page.waitForFunction(()=>!productLoading&&productsCache.length===50);
    assert.match(await page.locator('#productBody').innerText(),/อะไหล่ 0/);
    assert.equal(await page.locator('#productBody img').count(),0);
    assert.equal(await page.locator('#productBody .edit,#productBody .del').count(),0);
    assert.equal(await page.evaluate(()=>productsCache.some(x=>'Extra_Secret' in x)),false);
   }
-  await pages[0].waitForFunction(()=>productsCache.every(p=>p.imageDataLoaded));assert.equal(reads.Master_Products,101);assert.equal(reads.Product_Images||0,100);
+  assert.equal(reads.Master_Products,51);assert.equal(reads.Product_Images||0,0);
   assert.deepEqual(errors,[]);
  });
  await check('real signed cursor stays on page two, returns to cached page one and survives an image-only version change',async()=>{
   const page=pages[0];await page.locator('#btnNextPage').click();
   await page.waitForFunction(()=>!productLoading&&currentPage===2);
-  await page.waitForFunction(()=>productsCache.every(p=>p.imageDataLoaded));
-  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00100');
+  assert.equal(reads.Product_Images||0,0);
+  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');
   const count=reads.Master_Products,imageCount=reads.Product_Images;store.c.clearCollectionCache_('Product_Images');
   await page.locator('#btnPrevPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===1);
   await page.locator('#btnNextPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===2);
-  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00100');assert.equal(reads.Master_Products,count);assert.equal(reads.Product_Images,imageCount);
+  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');assert.equal(reads.Master_Products,count);assert.equal(reads.Product_Images,imageCount);
   await page.screenshot({path:path.join(output,'backend-viewer-page-two.png')});
  });
  await check('unchanged search finds the final product and full-catalog facets stay global while table images remain absent',async()=>{
@@ -149,7 +149,7 @@ async function main(){
    const all=await page.evaluate(name=>window[name].map(x=>x.id),key);assert.equal(all.length,125);assert.equal(new Set(all).size,125);assert.deepEqual(all.slice(0,50),first);
    await page.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();
    const body=page.locator(file==='Quotation.html'?'#listBody':'#taxBody'),visible=await body.locator('tr[data-row-key]').evaluateAll(rows=>rows.map(row=>row.dataset.rowKey));
-   assert.equal(visible.length,50);assert(visible.every(id=>!first.includes(id)));
+   assert.equal(visible.length,25);assert(visible.every(id=>!first.slice(0,25).includes(id)));
    const count=requests.length;await page.waitForTimeout(50);assert.equal(requests.length,count);assert.deepEqual(await body.locator('tr[data-row-key]').evaluateAll(rows=>rows.map(row=>row.dataset.rowKey)),visible);
   }
  });
@@ -160,7 +160,7 @@ async function main(){
   assert.equal(await orders.locator('#statPendingPO').innerText(),'125');assert.equal(reads.Master_Products,before.Master_Products);
   const first=await orders.evaluate(()=>purchaseOrders.map(x=>x.poId));await orders.getByRole('button',{name:'โหลดเพิ่ม',exact:true}).click();await orders.waitForFunction(()=>!documentPager.busy());
   const all=await orders.evaluate(()=>purchaseOrders.map(x=>x.poId));assert.equal(all.length,125);assert.equal(new Set(all).size,125);assert.deepEqual(all.slice(0,50),first);
-  await orders.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();const visible=await orders.locator('#historyTableBody tr[data-row-key]').evaluateAll(rows=>rows.map(row=>row.dataset.rowKey));assert.equal(visible.length,50);assert(visible.every(id=>!first.includes(id)));assert.equal(reads.Master_Products,before.Master_Products);
+  await orders.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();const visible=await orders.locator('#historyTableBody tr[data-row-key]').evaluateAll(rows=>rows.map(row=>row.dataset.rowKey));assert.equal(visible.length,25);assert(visible.every(id=>!first.slice(0,25).includes(id)));assert.equal(reads.Master_Products,before.Master_Products);
  });
  await check('six master pages render actual gateway rows and repeated reads reuse the snapshot',async()=>{
   for(const file of ['Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html']){

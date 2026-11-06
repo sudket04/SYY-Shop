@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
@@ -416,6 +416,8 @@
     if (e.key === 'F2') { e.preventDefault(); focusScanInput(); return; }
     if (e.key === 'F4') { e.preventDefault(); confirmIssue(); return; }
     if (document.getElementById('panelIssue').classList.contains('active')) {
+      var nativeInput=e.target&&e.target.closest('input,select,textarea,[contenteditable="true"],[role="combobox"]');
+      if(nativeInput&&e.target!==searchInputEl)return;
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSel(1); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); moveSel(-1); }
       else if (e.key === 'Enter' && document.activeElement === searchInputEl) {
@@ -424,10 +426,16 @@
         //   onSearchInput() — ถ้าไม่ flush ก่อน results ที่อ่านตรงนี้จะเป็นผลค้นหาของคำก่อนหน้า
         //   ทำให้เพิ่มสินค้าผิดตัวหรือไม่เพิ่มอะไรเลยแบบเงียบๆ (อาการ "สแกนแล้วไม่ติด")
         clearTimeout(searchTimer);
+        var explicit=searchInputEl.dataset.explicitSelection;delete searchInputEl.dataset.explicitSelection;
         selIdx = 0;
         renderResults();
-        if (results[selIdx]) {
-          addToBasket(results[selIdx].productCode);
+        var scan=searchInputEl.value.trim().toLowerCase(),exact=results.filter(function(p){return [p.productCode,p.barcode,p.partNumber].some(function(v){return v!=null&&String(v).toLowerCase()===scan;});}),selected=null;
+        try{var intent=JSON.parse(explicit||'null');if(intent&&intent.scope===resultSearchScope())selected=results.find(function(p){return p.productCode===intent.code;})||null;}catch(ignored){}
+        var chosen=exact.length===1?exact[0]:selected||(!exact.length&&results.length===1?results[0]:null);
+        if(chosen){
+          addToBasket(chosen.productCode);
+        } else if(results.length){
+          document.getElementById('resultCount').textContent='พบหลายรายการ · ใช้ลูกศรเลือกแล้วกด Enter หรือคลิก + เพิ่มสินค้า เพื่อยืนยันรายการ';
         } else if (searchInputEl.value.trim()) {
           swyWarning('ไม่พบสินค้า', 'ไม่พบสินค้าที่ตรงกับ "' + esc(searchInputEl.value.trim()) + '" กรุณาตรวจสอบบาร์โค้ด/รหัสอีกครั้ง');
         }
@@ -494,6 +502,7 @@
   }
 
   function onSearchInput() {
+    delete searchInputEl.dataset.explicitSelection;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(function () { selIdx = 0; renderResults(); }, 150);
   }
@@ -506,18 +515,21 @@
   }
 
   /* ═══ ค้นหา: ให้คะแนน “ตรงรหัส/PN” สูงสุด แล้วค่อยของที่มีสต๊อก ═══ */
+  var productSearchMemo=new WeakMap(),productSearchFields=['productName','productCode','partNumber','barcode','brandName','categoryName','carModel','zoneName','partType'];
+  function productSearchEntry(p){
+    var entry=productSearchMemo.get(p);
+    if(entry&&productSearchFields.every(function(key,i){return entry.raw[i]===p[key];}))return entry;
+    var raw=productSearchFields.map(function(key){return p[key];}),text=raw.map(function(value){return String(value||'').toLowerCase();});
+    entry={raw:raw,hay:text.join(' | '),name:text[0],code:text[1],pn:text[2],barcode:text[3]};productSearchMemo.set(p,entry);return entry;
+  }
   function scoreProduct(p, terms) {
-    var code = String(p.productCode || '').toLowerCase();
-    var pn   = String(p.partNumber  || '').toLowerCase();
-    var bc   = String(p.barcode     || '').toLowerCase();
-    var hay  = [p.productName, p.productCode, p.partNumber, p.barcode, p.brandName, p.categoryName, p.carModel, p.zoneName, p.partType]
-                 .map(function (x) { return String(x || '').toLowerCase(); }).join(' | ');
+    var entry=productSearchEntry(p),code=entry.code,pn=entry.pn,bc=entry.barcode,hay=entry.hay;
     for (var i = 0; i < terms.length; i++) { if (hay.indexOf(terms[i]) === -1) return -1; }
     var s = 0;
     terms.forEach(function (t) {
       if (code === t || pn === t || (bc && bc === t)) s += 100;
       else if (code.indexOf(t) === 0 || pn.indexOf(t) === 0) s += 60;
-      else if (String(p.productName || '').toLowerCase().indexOf(t) === 0) s += 30;
+      else if (entry.name.indexOf(t) === 0) s += 30;
       else s += 10;
     });
     if (num(p.currentStock) > 0) s += 5;
@@ -525,8 +537,11 @@
   }
 
   function stockRank(p) { return num(p.currentStock) > 0 ? 0 : 1; } // มีของ (0) ขึ้นก่อน หมด (1)
+  var renderedResultScope='';
+  function resultSearchScope(){return JSON.stringify([searchInputEl.value.toLowerCase().trim(),stockFilter,document.getElementById('filterCategory').value,document.getElementById('filterPartType').value]);}
 
   function renderResults() {
+    var scope=resultSearchScope();if(scope!==renderedResultScope){delete searchInputEl.dataset.explicitSelection;renderedResultScope=scope;}
     var q = searchInputEl.value.toLowerCase().trim();
     var terms = q ? q.split(/\s+/) : [];
     var category = document.getElementById('filterCategory').value;
@@ -631,14 +646,16 @@
       visible=visible.filter(function(p){return products.includes(p);});missing=missing.filter(function(p){return products.includes(p);});
       missing.forEach(function(p){if(images[p.productCode]){Object.assign(p,images[p.productCode]);p._imageLoaded=true;}});
       document.querySelectorAll('#resultList .res-row').forEach(function(row){var p=visible.find(function(x){return x.productCode===row.dataset.productCode;});if(p&&p.imageUrl)row.querySelector('.res-image').innerHTML='<img src="'+esc(p.imageUrl)+'" alt="" loading="lazy" style="width:40px;height:40px;object-fit:contain;border-radius:8px" onerror="this.remove()">';});
-    },function(){toast('โหลดรูปไม่สำเร็จ ข้อมูลสินค้ายังใช้งานได้ · เปลี่ยนหน้าหรือค้นหาเพื่อลองใหม่','warn');});
+    },function(){toast('โหลดรูปไม่สำเร็จ ข้อมูลสินค้ายังใช้งานได้ · เปลี่ยนหน้าหรือค้นหาเพื่อลองใหม่','warn');},{background:true,mayRun:function(){return source===products&&document.getElementById('panelIssue').classList.contains('active')&&!document.hidden&&missing.some(function(p){return results.slice(resultWindowStart,resultWindowStart+RESULT_WINDOW_SIZE).includes(p);});}});
   }
 
   function moveSel(delta) {
+    if(renderedResultScope!==resultSearchScope()){clearTimeout(searchTimer);selIdx=0;renderResults();}
     if (!results.length) return;
     var previous = selIdx;
     selIdx = Math.max(0, Math.min(results.length - 1, selIdx + delta));
     var nextWindow=Math.floor(selIdx/RESULT_WINDOW_SIZE)*RESULT_WINDOW_SIZE;
+    if(document.activeElement===searchInputEl)searchInputEl.dataset.explicitSelection=JSON.stringify({scope:resultSearchScope(),code:results[selIdx].productCode});
     if(nextWindow!==resultWindowStart){resultWindowStart=nextWindow;renderResultWindow();}
     var rows = document.querySelectorAll('#resultList .res-row');
     previous-=resultWindowStart;var localSelection=selIdx-resultWindowStart;

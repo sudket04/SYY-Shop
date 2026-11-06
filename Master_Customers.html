@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
 <meta name="syy-frame-channel" content="<?= typeof frameChannel === 'string' ? frameChannel : '' ?>">
 <meta name="syy-parent-origin" content="<?= typeof frameParentOrigin === 'string' ? frameParentOrigin : '' ?>">
@@ -252,6 +252,7 @@
     return d.slice(0,3)+'-'+d.slice(3,6)+'-'+d.slice(6,10);
   }
 
+  var masterDisplayPager=null;
   function renderRows(){
     renderHead();
     var q=document.getElementById('searchInput').value.toLowerCase().trim();
@@ -272,6 +273,9 @@
     document.getElementById('filterInfo').innerText = (q||XLF.anyActiveFilter(TABLE_KEY)) ? 'แสดง '+rows.length+' รายการ' : '';
 
     var tbody=document.getElementById('tbodyMain');
+    if(!masterDisplayPager)masterDisplayPager=syyDisplayPager({body:tbody,key:TABLE_KEY,defaultSize:25,render:renderRows});
+    syyDelegateActions(tbody,{edit:openEditModal,remove:confirmDelete});
+    rows=masterDisplayPager.window(rows,JSON.stringify([q,XLF.snapshot(TABLE_KEY)]));
     if(!rows.length){
       tbody.innerHTML = cache.length
         ? emptyStateHtml(9,{ title:'ไม่พบรายการที่ตรงกับที่ค้นหา', sub:'ลองลดคำค้นหรือล้างตัวกรอง',
@@ -284,14 +288,14 @@
     syyPatchRows(tbody,rows.map(function(it,i){
       var isActive = (it.Status||'Active')==='Active';
       var statusHtml = '<span class="badge '+(isActive?'badge-ok':'badge-danger')+'">'+(isActive?'Active':'Inactive')+'</span>';
-      var phoneTxt = it.Phone ? formatPhoneDisplay(it.Phone) : '<span class="cell-empty">—</span>';
+      var phoneTxt = it.Phone ? esc(formatPhoneDisplay(it.Phone)) : '<span class="cell-empty">—</span>';
       var addrTxt  = it.Address ? esc(it.Address) : '<span class="cell-empty">—</span>';
       var taxTxt = (it.Tax_ID && it.Tax_ID.length===13)
         ? '<div class="mono" style="font-size:12px">'+esc(it.Tax_ID)+'</div><div style="font-size:11px;color:var(--muted)">'+esc(it.Branch||'สำนักงานใหญ่')+'</div>'
         : '<span class="badge badge-mute">— ไม่มี —</span>';
       var typeTxt = it.Customer_Type ? '<span class="badge badge-info">'+esc(it.Customer_Type)+'</span>' : '<span class="cell-empty">—</span>';
       return '<tr data-row-key="'+esc(it.id)+'">'+
-        '<td class="text-center"><span class="rownum">'+(i+1)+'</span></td>'+
+        '<td class="text-center"><span class="rownum">'+(masterDisplayPager.offset()+i+1)+'</span></td>'+
         '<td><span class="chip-code">'+esc(it.id)+'</span></td>'+
         '<td style="font-weight:600;color:var(--ink)">'+esc(it.Customer_Name)+'</td>'+
         '<td>'+typeTxt+'</td>'+
@@ -300,8 +304,8 @@
         '<td>'+addrTxt+'</td>'+
         '<td>'+statusHtml+'</td>'+
         '<td class="text-center col-sticky-right"><span class="row-actions">'+
-          '<button class="btn btn-icon edit" title="แก้ไข" onclick="openEditModal(\''+escJs(it.id)+'\')">✏️</button>'+
-          '<button class="btn btn-icon del" title="ลบ" onclick="confirmDelete(\''+escJs(it.id)+'\')">🗑️</button>'+
+          '<button class="btn btn-icon edit" title="แก้ไข" data-syy-action="edit" data-syy-id="'+esc(it.id)+'">✏️</button>'+
+          '<button class="btn btn-icon del" title="ลบ" data-syy-action="remove" data-syy-id="'+esc(it.id)+'">🗑️</button>'+
         '</span></td>'+
       '</tr>';
     }).join(''));
