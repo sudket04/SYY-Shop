@@ -31,9 +31,10 @@ function setup(options={}){
   function commit(writes){
     if(c.beforeCommit){const hook=c.beforeCommit;c.beforeCommit=null;hook(writes);}
     for(const w of writes){const key=keyFor(w.update?.name||w.transform?.document||w.delete);if(!checked(docs.get(key),w.currentDocument))return reply(400,{error:{status:'FAILED_PRECONDITION'}});}
+    const writeResults=[];
     for(const w of writes){
       const name=w.update?.name||w.transform?.document||w.delete,key=keyFor(name),old=docs.get(key);
-      if(w.delete){docs.delete(key);continue;}
+      if(w.delete){docs.delete(key);writeResults.push({});continue;}
       const doc=old?plain(old):{name,fields:{}};
       if(w.update){if(w.updateMask)w.updateMask.fieldPaths.forEach(k=>{if(w.update.fields[k])doc.fields[k]=plain(w.update.fields[k]);else delete doc.fields[k];});else doc.fields=plain(w.update.fields);}
       for(const transform of [...(w.transform?.fieldTransforms||[]),...(w.updateTransforms||[])]){
@@ -42,11 +43,11 @@ function setup(options={}){
         if(transform.appendMissingElements){const values=doc.fields[k]?.arrayValue?.values||[];for(const x of transform.appendMissingElements.values)if(!values.some(v=>String(c.parseFirestoreValue_(v))===String(c.parseFirestoreValue_(x))))values.push(plain(x));doc.fields[k]={arrayValue:{values}};}
         if(transform.setToServerValue)doc.fields[k]={timestampValue:c.readTime};
       }
-      doc.updateTime='v'+(++version);docs.set(key,doc);
+      doc.updateTime='v'+(++version);docs.set(key,doc);writeResults.push({updateTime:doc.updateTime});
     }
     commits.push(plain(writes));
     if(c.loseCommitResponse){c.loseCommitResponse=false;throw Error('network response lost after commit');}
-    return reply(200,{commitTime:c.readTime});
+    return reply(200,{commitTime:c.readTime,writeResults});
   }
   function fetch(url,options={}){
     calls.push({url,options:plain(options)});

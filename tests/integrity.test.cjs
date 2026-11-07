@@ -136,22 +136,43 @@ function image(s){s.seed();const old=s.makeFile([255,216,255,1]);s.put('Product_
 test('image read/delete/write failures leave old files and metadata intact in both APIs',()=>{
   for(const failure of ['read','delete','patch']){
     const s=setup(),old=image(s),cur=s.c.getProductImageDocData_('P1');
-    s.c.failRequest=(url,o)=>url.includes('/Product_Images/')&&o.method===(failure==='read'?'get':failure)?503:0;
+    s.c.failRequest=(url,o)=>failure==='read'?(url.includes('/Product_Images/')&&o.method==='get'?503:0):(url.endsWith(':commit')?503:0);
     const draft={expectedUpdateTime:cur.updateTime,items:failure==='patch'?[{base64:Buffer.from([255,216,255,2]).toString('base64')}]:[],primaryIndex:0};
     assert.equal(s.c.commitProductImageDraft_('P1',draft).success,false);assert.equal(old.trashed,false);assert(s.docs.has('Product_Images/P1'));
     const v2=failure==='patch'?s.c.uploadProductImageV2_('P1',Buffer.from([255,216,255,2]).toString('base64'),0):s.c.deleteProductImageV2_('P1',0);
-    assert.equal(v2.success,false);assert.equal(old.trashed,false);
+    assert.equal(v2.success,false);assert.equal(old.trashed,false);assert.equal(s.docs.get('Master_Products/P1').fields.Has_Image,undefined);
   }
 });
 test('stale image drafts conflict; lost metadata response keeps files referenced by committed metadata',()=>{
   const s=setup(),old=image(s),cur=s.c.getProductImageDocData_('P1'),draft={expectedUpdateTime:cur.updateTime,items:[{base64:Buffer.from([255,216,255,2]).toString('base64')}],primaryIndex:0};
-  s.c.losePatchResponse=true;assert.equal(s.c.commitProductImageDraft_('P1',draft).success,false);
+  s.c.loseCommitResponse=true;assert.equal(s.c.commitProductImageDraft_('P1',draft).success,false);
+  assert.equal(s.value('Master_Products/P1','Has_Image'),true);
   const current=s.c.getProductImageDocData_('P1');assert.notEqual(current.ids[0],old.id);assert.equal(s.files.get(current.ids[0]).trashed,false);assert.equal(old.trashed,false);
   assert.equal(s.c.commitProductImageDraft_('P1',draft).success,false);
 });
 test('V2 replacement saves metadata before trashing old file and interoperates with legacy gallery',()=>{
   const s=setup(),old=image(s),r=s.c.uploadProductImageV2_('P1',Buffer.from([255,216,255,2]).toString('base64'),0);
   assert.equal(r.success,true,r.message);assert.equal(old.trashed,true);assert.deepEqual(plain(s.c.getProductImageDocData_('P1').urls),plain(r.imageUrls));
+});
+test('gallery presence changes atomically and only updates the product when the status changes',()=>{
+  const s=setup();s.seed();const base64=Buffer.from([255,216,255,2]).toString('base64');
+  let lockHeld=false;
+  s.c.LockService.getScriptLock=()=>({tryLock(){if(lockHeld)return false;lockHeld=true;return true;},releaseLock(){lockHeld=false;}});
+  const first=s.c.commitProductImageDraft_('P1',{expectedUpdateTime:'',items:[{base64}],primaryIndex:0});
+  assert.equal(first.success,true,first.message);
+  assert.equal(first.imageUpdateTime,s.docs.get('Product_Images/P1').updateTime);
+  assert.equal(s.value('Master_Products/P1','Has_Image'),true);
+  assert.doesNotThrow(()=>s.c.readCacheVersion_(['Master_Products','Product_Images']));
+  assert.equal(s.c.saveProduct_({productCode:'P1',productName:'Renamed'}).success,true);
+  assert.equal(s.value('Master_Products/P1','Has_Image'),true);
+  assert.equal(s.c.uploadProductImageV2_('P1',base64,1).success,true);
+  assert.equal(s.c.deleteProductImageV2_('P1',0).success,true);
+  assert.equal(s.commits.length,1);
+  assert.equal(s.c.deleteProductImage_('P1').success,true);
+  assert.equal(s.commits.length,2);
+  assert.equal(s.value('Master_Products/P1','Has_Image'),false);
+  assert.equal(s.value('Master_Products/P1','Product_Name'),'Renamed');
+  assert.equal(s.docs.has('Product_Images/P1'),false);
 });
 test('complete backup has all collections, private image copies, properties and one Firestore snapshot',()=>{
   const s=setup(),original=image(s);s.user({Totp_Enabled:'true'});s.put('Stock_Movements/M1',{Qty:1});s.pageSize=1;s.c.pageSize=1;

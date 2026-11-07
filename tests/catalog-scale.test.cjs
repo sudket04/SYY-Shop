@@ -13,6 +13,19 @@ function fixture(n=10000){
  s.c.UrlFetchApp.fetch=(url,o={})=>{const r=fetch(url,o);if(r.getResponseCode()===200){const b=JSON.parse(r.getContentText()),docs=url.endsWith(':batchGet')?b.filter(x=>x.found).map(x=>x.found):o.method==='get'?(b.documents||(b.name?[b]:[])):[];for(const d of docs){const col=d.name.split('/documents/')[1].split('/')[0];s.reads[col]=(s.reads[col]||0)+1;}}return r;};
  return s;
 }
+test('product pages carry verified and unknown image status without requesting any gallery metadata',()=>{
+ const s=fixture(3);
+ s.docs.get('Master_Products/P00000').fields.Has_Image={booleanValue:true};
+ s.docs.get('Master_Products/P00001').fields.Has_Image={booleanValue:false};
+ for(const options of [{cursorMode:true},{search:'ทดสอบ'}]){
+  const page=s.c.getProductCatalogPage_({...options,includeImages:false});
+  assert.deepEqual(plain(page.products.map(row=>row.hasImage)),[true,false,null]);
+  assert(page.products.every(row=>row.imageDataLoaded===false));
+ }
+ const browse=s.calls.find(call=>call.url.endsWith(':runQuery'));
+ assert(JSON.parse(browse.options.payload).structuredQuery.select.fields.some(field=>field.fieldPath==='Has_Image'));
+ assert.equal(s.reads.Product_Images,undefined);
+});
 test('10,000 products: first page reads no full image collection, warm repeat is zero extra data reads; counts and end-of-catalog search remain global',()=>{
  const old=fixture(),legacy=old.c.getAllProducts_();const s=fixture(),first=s.c.getAllProducts_({paged:true,includeMasters:true,pageSize:50});
  assert.equal(first.total,10000);assert.equal(first.products.length,50);assert.equal(first.masters.brands[0].Name,'ยี่ห้อไทย');
@@ -54,7 +67,7 @@ test('catalog cursors reject tampering, scope/project changes, expired snapshots
 });
 test('catalog chunk eviction rebuilds from raw cache without DB reads; external refresh changes cannot mix export pages',()=>{
  const s=fixture(100),r=s.c.getProductCatalogPage_({pageSize:25});
- const key=s.c.readCacheKey_('product-catalog-v1'),manifest=JSON.parse(s.cache.get(key));s.cache.delete(key+'_'+manifest.id+'_0');
+ const key=s.c.readCacheKey_('product-catalog-v2'),manifest=JSON.parse(s.cache.get(key));s.cache.delete(key+'_'+manifest.id+'_0');
  const before=s.reads.Master_Products;assert.equal(s.c.getProductCatalogPage_({cursor:r.nextCursor}).products.length,50);assert.equal(s.reads.Master_Products,before);
  s.put('Master_Products/P00001',{Product_Name:'external change',Current_Stock:3});s.cache.clear();
  assert.throws(()=>s.c.getProductCatalogPage_({cursor:r.nextCursor}),/เปลี่ยนแปลง/);

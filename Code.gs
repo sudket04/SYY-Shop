@@ -118,7 +118,7 @@ function getAuthHeader_() {
 //   เพราะ Drive file id เปลี่ยนทุกครั้งที่สร้างไฟล์ใหม่ — ได้ cache-busting ให้ฟรีในตัว ไม่ต้องแปะ ?t=)
 //   ต่างจาก Storage เดิมตรงที่ Drive ไม่มี "path คงที่" ให้คำนวณ URL จาก productCode ตรงๆ ได้ (ต้องรู้
 //   file id) จึงเก็บ URL ไว้ใน collection แยกต่างหาก "Product_Images" (1 doc/สินค้า คีย์ = productCode)
-//   ไม่ยุ่งกับ Master_Products เลย — กัน saveProduct (ซึ่ง PATCH แบบไม่มี updateMask) ไปทับ/ลบทิ้งโดยไม่ตั้งใจ
+//   Master_Products เก็บเฉพาะสถานะ Has_Image เพื่อให้ตารางอ่านได้โดยไม่ต้องโหลด gallery
 // ==========================================
 var PRODUCT_IMAGE_FOLDER_PROP_KEY = "PRODUCT_IMAGE_DRIVE_FOLDER_ID";
 var PRODUCT_IMAGE_FOLDER_NAME     = "SYY Shop - Product Images";
@@ -168,10 +168,8 @@ function normalizeProductImageData_(imageUrl, driveFileId, imageUrls, driveFileI
   };
 }
 
-function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex, expectedUpdateTime) {
+function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex, expectedUpdateTime, product) {
   var data = normalizeProductImageData_(imageUrl, driveFileId, imageUrls, driveFileIds, primaryIndex);
-  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-          + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
   var payload = {
     Image_Url: data.primaryUrl,             // legacy compatibility
     Drive_File_Id: data.primaryId,          // legacy compatibility
@@ -179,32 +177,50 @@ function saveProductImageDoc_(productCode, imageUrl, driveFileId, imageUrls, dri
     Drive_File_Ids: data.ids,
     Primary_Index: data.primaryIndex
   };
-  if (expectedUpdateTime === undefined) throw new Error("ต้องระบุเวอร์ชันข้อมูลรูปสินค้า");
-  url += expectedUpdateTime ? "?currentDocument.updateTime="+encodeURIComponent(expectedUpdateTime) : "?currentDocument.exists=false";
   payload.Images_JSON = JSON.stringify(data.urls.map(function(url,i){return {url:url,fileId:data.ids[i]||""};}));
-  var res = UrlFetchApp.fetch(url, {
-    method: "patch",
-    headers: getAuthHeader_(),
-    payload: JSON.stringify({ fields: mapToFirestoreFields_(payload) }),
-    muteHttpExceptions: true
-  });
-  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
-    throw new Error('บันทึกข้อมูลรูปสินค้าไม่สำเร็จ (' + res.getResponseCode() + ')');
-  }
-  clearCollectionCache_(PRODUCT_IMAGES_COLLECTION);
-  try {CacheService.getScriptCache().remove("pimgv2_"+productCode);}catch(e){}
-  data.updateTime=JSON.parse(res.getContentText()).updateTime || "";
+  data.updateTime = persistProductImageDoc_(productCode, mapToFirestoreFields_(payload), expectedUpdateTime, product);
   return data;
 }
 
-function deleteProductImageDoc_(productCode, expectedUpdateTime) {
-  if(expectedUpdateTime===undefined) throw new Error("ต้องระบุเวอร์ชันข้อมูลรูปสินค้า");
-  if(!expectedUpdateTime) return;
-  var url="https://firestore.googleapis.com/v1/"+fsDocPath_(PRODUCT_IMAGES_COLLECTION,productCode)+"?currentDocument.updateTime="+encodeURIComponent(expectedUpdateTime);
-  var res=UrlFetchApp.fetch(url,{method:"delete",headers:getAuthHeader_(),muteHttpExceptions:true});
-  if([200,204].indexOf(res.getResponseCode())<0) throw new Error("ลบข้อมูลรูปไม่สำเร็จ กรุณารีเฟรชแล้วลองใหม่");
-  clearCollectionCache_(PRODUCT_IMAGES_COLLECTION);
-  try{CacheService.getScriptCache().remove("pimgv2_"+productCode);}catch(e){}
+function productImageStatus_(fields) {
+  var status = fields && fields.Has_Image;
+  return status && typeof status.booleanValue === 'boolean' ? status.booleanValue : null;
+}
+
+// Gallery callers hold the script lock. A missing product is allowed only for orphan cleanup.
+function persistProductImageDoc_(productCode, fields, expectedUpdateTime, product) {
+  if (expectedUpdateTime === undefined) throw new Error('ต้องระบุเวอร์ชันข้อมูลรูปสินค้า');
+  if (!fields && !expectedUpdateTime) return '';
+  var hasImage = !!fields;
+  var changeStatus = product && productImageStatus_(product.fields) !== hasImage;
+  var path = fsDocPath_(PRODUCT_IMAGES_COLLECTION, productCode);
+  var message = (hasImage ? 'บันทึก' : 'ลบ') + 'ข้อมูลรูปไม่สำเร็จ กรุณารีเฟรชแล้วลองใหม่';
+  try {
+    if (changeStatus) {
+      var galleryWrite = hasImage ? {update:{name:path,fields:fields}} : {delete:path};
+      galleryWrite.currentDocument = expectedUpdateTime ? {updateTime:expectedUpdateTime} : {exists:false};
+      var result = fsCommit_([galleryWrite, {
+        update:{name:fsDocPath_('Master_Products',productCode),fields:{Has_Image:{booleanValue:hasImage}}},
+        updateMask:{fieldPaths:['Has_Image']},
+        currentDocument:{exists:true}
+      }], hasImage);
+      if (!result.ok) throw new Error(message);
+      return hasImage ? result.writeResults[0].updateTime : '';
+    }
+
+    var condition = expectedUpdateTime ? 'currentDocument.updateTime='+encodeURIComponent(expectedUpdateTime) : 'currentDocument.exists=false';
+    var options = {method:hasImage?'patch':'delete',headers:getAuthHeader_(),muteHttpExceptions:true};
+    if (hasImage) options.payload = JSON.stringify({fields:fields});
+    var response = UrlFetchApp.fetch('https://firestore.googleapis.com/v1/'+path+'?'+condition, options);
+    var status = response.getResponseCode();
+    if (status !== 200 && (hasImage || status !== 204)) throw new Error(message);
+    return hasImage ? JSON.parse(response.getContentText()).updateTime : '';
+  } finally {
+    // The request can reach Firestore even if its response is lost.
+    clearCollectionCache_(PRODUCT_IMAGES_COLLECTION, true);
+    if (changeStatus) clearCollectionCache_('Master_Products', true);
+    try {CacheService.getScriptCache().remove('pimgv2_'+productCode);} catch (ignored) {}
+  }
 }
 
 // ★ อ่าน URL รูปของสินค้าทั้งหมดครั้งเดียวเป็น map ให้ getAllProducts() ใช้
@@ -334,7 +350,7 @@ function commitProductImageDraft_(productCode, draft) {
     if (!productCode) return { success: false, message: "ไม่พบรหัสสินค้า" };
     draft = draft || {};
     var items = Array.isArray(draft.items) ? draft.items.slice(0, 3) : [];
-    readExistingDocument_("Master_Products",productCode);
+    var product = readExistingDocument_("Master_Products",productCode);
     var cur = getProductImageDocData_(productCode);
     if(draft.expectedUpdateTime===undefined || String(draft.expectedUpdateTime||"")!==cur.updateTime) throw new Error("รูปสินค้าเปลี่ยนแปลงแล้ว กรุณาปิดฟอร์มและรีเฟรชก่อนแก้ไขรูป");
     if(!Array.isArray(draft.items) || draft.items.length>3) throw new Error("เพิ่มรูปได้สูงสุด 3 รูป");
@@ -370,10 +386,10 @@ function commitProductImageDraft_(productCode, draft) {
     var saved;
     try {
       if (!urls.length) {
-        deleteProductImageDoc_(productCode,cur.updateTime);
+        persistProductImageDoc_(productCode,null,cur.updateTime,product);
         saved = { primaryUrl: "", urls: [], ids: [], primaryIndex: 0 };
       } else {
-        saved = saveProductImageDoc_(productCode, "", "", urls, ids, primaryIndex,cur.updateTime);
+        saved = saveProductImageDoc_(productCode, "", "", urls, ids, primaryIndex,cur.updateTime,product);
       }
     } catch (saveErr) {
       trashUnreferencedImageFiles_(productCode,newFileIds);
@@ -588,8 +604,12 @@ function fetchCollectionDocsUncached_(collectionName) {
   throw new Error('ข้อมูลกำลังเปลี่ยนแปลง กรุณารีเฟรชอีกครั้ง');
 }
 
-function clearCollectionCache_(collectionName){
- try{if(collectionName==='Master_Products')PropertiesService.getScriptProperties().setProperty('cache_structure_products',Utilities.getUuid());return withCacheGuard_(function(){return invalidateCollectionCache_(collectionName,true);},function(){return invalidateCollectionCache_(collectionName,false);});}
+function clearCollectionCache_(collectionName, lockHeld){
+ try{
+  if(collectionName==='Master_Products')PropertiesService.getScriptProperties().setProperty('cache_structure_products',Utilities.getUuid());
+  if(lockHeld===true)return invalidateCollectionCache_(collectionName,true);
+  return withCacheGuard_(function(){return invalidateCollectionCache_(collectionName,true);},function(){return invalidateCollectionCache_(collectionName,false);});
+ }
  catch(e){try{PropertiesService.getScriptProperties().setProperty('cache_gen_'+collectionName,Utilities.getUuid());}catch(ignored){}return false;}
 }
 function invalidateCollectionCache_(collectionName,canEnable){
@@ -615,7 +635,7 @@ function readCacheVersion_(scopes){
 function readResultCache_(key,scopes,maxAge){
  try{
   var version=readCacheVersion_(scopes),cache=CacheService.getScriptCache(),base=readCacheKey_(key),raw=cache.get(base);
-  if(!raw)return null;var m=JSON.parse(raw);if(m.version!==version||m.expiresAt<=Date.now()||Date.now()-m.createdAt>=maxAge||m.count<1||m.count>(key==='product-catalog-v1'?200:60))return null;
+  if(!raw)return null;var m=JSON.parse(raw);if(m.version!==version||m.expiresAt<=Date.now()||Date.now()-m.createdAt>=maxAge||m.count<1||m.count>(key==='product-catalog-v2'?200:60))return null;
   var keys=[];for(var i=0;i<m.count;i++)keys.push(base+'_'+m.id+'_'+i);var parts=cache.getAll(keys),text='';
   for(var j=0;j<keys.length;j++){if(typeof parts[keys[j]]!=='string')return null;text+=parts[keys[j]];}
   if(m.encoding==='gzip')text=Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(text))).getDataAsString();
@@ -626,7 +646,7 @@ function readResultCache_(key,scopes,maxAge){
 function writeResultCache_(key,scopes,value,maxAge,version,createdAt){
  try{
   if(readCacheVersion_(scopes)!==version)return;
-  var text=JSON.stringify(value),encoding='',limit=key==='product-catalog-v1'?200:60;
+  var text=JSON.stringify(value),encoding='',limit=key==='product-catalog-v2'?200:60;
   if(text.length>16000*limit){text=Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(text)).getBytes());encoding='gzip';}
   var count=Math.ceil(text.length/16000);if(count>limit)return;
   var cache=CacheService.getScriptCache(),base=readCacheKey_(key),id=Utilities.getUuid(),parts={},expiresAt=createdAt+maxAge;
@@ -845,6 +865,11 @@ function mapToFirestoreFields_(dataObject) {
   for (var key in dataObject) {
     if (!dataObject.hasOwnProperty(key)) continue;
     var val = dataObject[key];
+
+    if (key === 'Has_Image' && typeof val === 'boolean') {
+      fields[key] = {booleanValue:val};
+      continue;
+    }
 
     if (Array.isArray(val)) {
       fields[key] = {
@@ -1119,8 +1144,9 @@ function getAllProducts_(options) {
 var PRODUCT_CATALOG_SCOPES = ['Master_Products','Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars'];
 var PRODUCT_CATALOG_FIELDS = ['productCode','productName','partType','partNumber','barcode','barcodeGenerated','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carIds','carModel','costPrice','sellingPrice','currentStock','minStock','status'];
 var PRODUCT_FILTER_FIELDS = ['productCode','productName','partType','partNumber','brandName','categoryName','vendorName','zoneName','costPrice','sellingPrice','currentStock','status'];
-function packProductCatalog_(rows){
-  return {catalogFormat:1,fields:PRODUCT_CATALOG_FIELDS,rows:rows.map(function(row){return PRODUCT_CATALOG_FIELDS.map(function(key){return row[key];});})};
+function packProductCatalog_(rows,includeImageStatus){
+  var fields=includeImageStatus?PRODUCT_CATALOG_FIELDS.concat('hasImage'):PRODUCT_CATALOG_FIELDS;
+  return {catalogFormat:1,fields:fields,rows:rows.map(function(row){return fields.map(function(key){return row[key];});})};
 }
 function unpackProductCatalog_(data){
   return data.rows.map(function(values){var row={imageUrl:'',imageUrls:[],primaryImageIndex:0,imageUpdateTime:''};data.fields.forEach(function(key,i){row[key]=values[i];});row.id=row.productCode;return row;});
@@ -1128,7 +1154,7 @@ function unpackProductCatalog_(data){
 function getProductCatalogRows_(){
   var version=null,memo=executionReadContext_&&executionReadContext_.catalog;try{version=readCacheVersion_(PRODUCT_CATALOG_SCOPES);}catch(ignored){}
   if(version!==null&&memo&&memo.version===version)return memo.rows;
-  var data=cachedReadResult_('product-catalog-v1',PRODUCT_CATALOG_SCOPES,120000,function(){var packed=packProductCatalog_(getAllProducts_({omitImages:true}));packed.snapshot=readCacheKey_(JSON.stringify(packed.rows));return packed;});
+  var data=cachedReadResult_('product-catalog-v2',PRODUCT_CATALOG_SCOPES,120000,function(){var packed=packProductCatalog_(getAllProducts_({omitImages:true}),true);packed.snapshot=readCacheKey_(JSON.stringify(packed.rows));return packed;});
   var rows=unpackProductCatalog_(data);rows.catalogSnapshot=data.snapshot;if(executionReadContext_&&version!==null)executionReadContext_.catalog={version:version,rows:rows};return rows;
 }
 function productCatalogSpec_(options){
@@ -1216,9 +1242,9 @@ function getProductBrowsePage_(options,spec,size,page){
   var snapshotTime=cursor&&!rebased?cursor.readTime:'';
   // Shared rows contain no caller-specific data. Sign continuation per caller
   // after cache reuse, so five authorized users share the same initial query.
-  var key='product-browse-v1:'+readCacheKey_(JSON.stringify([spec,size,cursor&&cursor.last,snapshotTime]));
+  var key='product-browse-v2:'+readCacheKey_(JSON.stringify([spec,size,cursor&&cursor.last,snapshotTime]));
   var response=cachedReadResult_(key,productListScopes_(spec),30000,function(){
-    var fields=['Product_Name','Part_Type','Part_Number','Barcode','Barcode_Generated','Brand_ID','Category_ID','Default_Vendor_ID','Zone_ID','Car_IDs','Car_ID','Cost_Price','Selling_Price','Current_Stock','Min_Stock','Status'];
+    var fields=['Product_Name','Part_Type','Part_Number','Barcode','Barcode_Generated','Brand_ID','Category_ID','Default_Vendor_ID','Zone_ID','Car_IDs','Car_ID','Cost_Price','Selling_Price','Current_Stock','Min_Stock','Status','Has_Image'];
     var q={from:[{collectionId:'Master_Products'}],select:{fields:fields.map(function(f){return {fieldPath:f};})},orderBy:[{field:{fieldPath:'__name__'},direction:spec.sortAsc?'ASCENDING':'DESCENDING'}],limit:size+1};
     if(cursor)q.startAt={values:[{referenceValue:fsDocPath_('Master_Products',cursor.last)}],before:false};
     var body={structuredQuery:q};if(snapshotTime)body.readTime=snapshotTime;
@@ -1250,7 +1276,7 @@ function mapProductPageDocs_(docs,masters,imageMap){
     var row={id:doc.id,productCode:doc.id,productName:parseFirestoreValue_(f.Product_Name)||'',partType:parseFirestoreValue_(f.Part_Type)||'',partNumber:String(parseFirestoreValue_(f.Part_Number)||''),barcode:String(parseFirestoreValue_(f.Barcode)||''),barcodeGenerated:parseFirestoreValue_(f.Barcode_Generated)==='true',brandId:brand,brandName:brands[brand]||brand,categoryId:category,categoryName:categories[category]||category,vendorId:vendor,vendorName:vendors[vendor]||vendor,zoneId:zone,zoneName:zone==='PENDING'?'รอดำเนินการ':zones[zone]||zone,carIds:carIds,carModel:carIds.map(function(id){return cars[id]||id;}).filter(Boolean).join(', '),costPrice:parseFloat(parseFirestoreValue_(f.Cost_Price))||0,sellingPrice:parseFloat(parseFirestoreValue_(f.Selling_Price))||0,currentStock:parseFloat(parseFirestoreValue_(f.Current_Stock))||0,minStock:parseFloat(parseFirestoreValue_(f.Min_Stock))||0,status:parseFirestoreValue_(f.Status)||'Active'};
     var image=imageMap&&imageMap[doc.id]||{};if(typeof image==='string')image={primary:image,urls:image?[image]:[],primaryIndex:0};
     var urls=Array.isArray(image.urls)?image.urls.slice(0,3):[],primary=parseInt(image.primaryIndex,10)||0;
-    return Object.assign(row,{imageUrl:image.primary||urls[primary]||urls[0]||'',imageUrls:urls,primaryImageIndex:primary,imageUpdateTime:image.updateTime||''});
+    return Object.assign(row,{hasImage:productImageStatus_(f),imageUrl:image.primary||urls[primary]||urls[0]||'',imageUrls:urls,primaryImageIndex:primary,imageUpdateTime:image.updateTime||''});
   });
 }
 function getProductCatalogFacets_(options,column){
@@ -1324,6 +1350,7 @@ function getProductById_(productCode) {
         partNumber   : String(parseFirestoreValue_(f.Part_Number) || ""),
         barcode      : String(parseFirestoreValue_(f.Barcode) || ""),
         barcodeGenerated : parseFirestoreValue_(f.Barcode_Generated) === "true",
+        hasImage     : imgState.urls.length > 0,
         imageUrl     : imgState.urls[imgState.primaryIndex] || imgState.urls[0] || "",
         imageUrls    : imgState.urls.slice(0, 3),
         primaryImageIndex: imgState.primaryIndex,
@@ -1463,6 +1490,7 @@ function saveProduct_(d) {
   };
 
   var docId = d.productCode || d.docId || null;
+  if (!docId) dataObject.Has_Image = false;
 
   // ★ FIX (โควตา Firestore Reads): เดิมสแกน Master_Products ทั้ง collection ทุกครั้งที่บันทึกสินค้า
   //   1 ครั้ง (เพื่อเช็ค Part_Number/Barcode ซ้ำ + หาเอกสารเดิมของตัวเอง) — เปลี่ยนเป็น targeted query
@@ -3076,7 +3104,13 @@ function restoreFolderBackup_(folderId,restoreMode,options) {
     if(!/^[a-z][a-z0-9-]{4,62}$/.test(target)||target===backup.manifest.projectId||target!==PROJECT_ID||options.confirmStagingScript!==true)throw new Error('ต้องกู้คืนจากสคริปต์ Staging ไปยัง DB ว่างเท่านั้น');
     if(backupCollectionIds_([''],backupReadTime_(),Date.now()).length)throw new Error('Staging ต้องว่างก่อนกู้คืน');
     if(paths.some(function(path){return path.split('/')[0]==='Master_Users';})&&!options.restoreProperties)throw new Error('กู้คืนบัญชีต้องกู้คืน Script Properties ใน Staging ด้วย');
-    var writes=paths.map(function(path){var fields=JSON.parse(JSON.stringify(backup.documents[path].fields));if(path.split('/')[0]==='Master_Users')fields.Session_Version={stringValue:Utilities.getUuid()};return {update:{name:'projects/'+target+'/databases/(default)/documents/'+path,fields:fields},currentDocument:{exists:false}};});
+    var restoresGallery = !restoreMode || restoreMode === 'all';
+    var writes=paths.map(function(path){
+      var fields=JSON.parse(JSON.stringify(backup.documents[path].fields)), collection=path.split('/')[0];
+      if(collection==='Master_Users') fields.Session_Version={stringValue:Utilities.getUuid()};
+      if(collection==='Master_Products' && !restoresGallery) delete fields.Has_Image;
+      return {update:{name:'projects/'+target+'/databases/(default)/documents/'+path,fields:fields},currentDocument:{exists:false}};
+    });
     for(var i=0;i<writes.length;){
       var part=[],bytes=13;
       while(i<writes.length&&part.length<450){var size=Utilities.newBlob(JSON.stringify(writes[i])).getBytes().length;if(size+13>8*1024*1024)throw new Error('Backup document ใหญ่เกินขนาดกู้คืน');if(part.length&&bytes+size+1>8*1024*1024)break;bytes+=size+1;part.push(writes[i++]);}
@@ -3119,6 +3153,7 @@ function restoreFromBackup_(fileId, restoreMode, options) {
     var writes=[];
     names.forEach(function(n){bundle.collections[n].forEach(function(doc){
       var fields=JSON.parse(JSON.stringify(doc.fields));
+      if(n==='Master_Products' && names.indexOf(PRODUCT_IMAGES_COLLECTION)<0) delete fields.Has_Image;
       if(n==="Product_Images"){
         var data=imageDataFromFields_(fields),ids=data.ids.map(function(id){return remap[id];}),urls=ids.map(function(id){return "https://lh3.googleusercontent.com/d/"+id;});
         var imageFields=mapToFirestoreFields_({Image_Url:urls[data.primaryIndex]||"",Drive_File_Id:ids[data.primaryIndex]||"",Image_Urls:urls,Drive_File_Ids:ids,Primary_Index:data.primaryIndex,Images_JSON:JSON.stringify(urls.map(function(url,i){return {url:url,fileId:ids[i]};}))});
@@ -4966,7 +5001,7 @@ function fsDocPath_(collection, docId) {
   return "projects/" + PROJECT_ID + "/databases/(default)/documents/" + collection + "/" + docId;
 }
 
-function fsCommit_(writes) {
+function fsCommit_(writes, includeWriteResults) {
   writes.forEach(function(w){if(w.update && w.update.name.indexOf("/"+STOCK_MOVEMENT_COLLECTION+"/")>=0){w.updateTransforms=w.updateTransforms||[{fieldPath:"Committed_At",setToServerValue:"REQUEST_TIME"}];w.currentDocument=w.currentDocument||{exists:false};}});
   var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
           + "/databases/(default)/documents:commit";
@@ -4977,7 +5012,10 @@ function fsCommit_(writes) {
     muteHttpExceptions: true
   });
   }catch(e){invalidateCommittedReadScopes_(writes,true);throw e;}
-  if (res.getResponseCode() === 200) {invalidateCommittedReadScopes_(writes,false);return { ok: true };}
+  if (res.getResponseCode() === 200) {
+    invalidateCommittedReadScopes_(writes,false);
+    return includeWriteResults ? {ok:true,writeResults:JSON.parse(res.getContentText()).writeResults} : {ok:true};
+  }
   if (res.getResponseCode() >= 500) invalidateCommittedReadScopes_(writes,true);
   console.error("fsCommit_ HTTP " + res.getResponseCode() + ": " + res.getContentText());
   return { ok: false, status:res.getResponseCode(), message: res.getContentText() };

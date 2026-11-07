@@ -32,6 +32,8 @@
   .page-size-select{padding:7px 12px;border:1px solid #cbd5e1;border-radius:6px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px;outline:none;background:#fff;color:#334155;cursor:pointer}
   .price-cell{text-align:right;font-family:var(--font-sans);font-size:13px;font-weight:500}
   .product-name-cell{min-width:220px}
+  .product-code-badges{display:flex;align-items:center;flex-wrap:wrap;row-gap:3px}
+  .product-image-badge{margin-left:5px;padding:1px 6px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:600;white-space:nowrap}
   .product-cost-cell{color:var(--muted)}
   .product-selling-cell{font-size:16px;font-weight:700;color:var(--primary)}
   #productTable{isolation:isolate}
@@ -577,7 +579,7 @@
     if(col.id==='select')content='<label class="syy-check-hit"><input type="checkbox" data-product-select="'+esc(ctx.codeKey)+'" aria-label="เลือกสินค้า '+esc(item.productCode||item.id)+'" '+(productSelection.has(ctx.codeKey)?'checked':'')+'></label>';
     else if(col.id==='rownum')content=ctx.rowNum;
     else if(col.id==='image')content=ctx.imgCell;
-    else if(col.id==='productCode')content='<span class="chip-code">'+esc(item.productCode||item.id)+'</span>'+ctx.barcodeBadge;
+    else if(col.id==='productCode')content='<span class="product-code-badges"><span class="chip-code">'+esc(item.productCode||item.id)+'</span>'+ctx.barcodeBadge+ctx.imageBadge+'</span>';
     else if(col.id==='productName')content='<span class="product-name">'+esc(item.productName)+'</span>';
     else if(col.id==='partType')content=ctx.partTypeTxt;
     else if(col.id==='partNumber')content=item.partNumber?'<span class="chip-code" style="background:#f1f5f9;color:#475569">'+esc(item.partNumber)+'</span>':'<span class="cell-empty">—</span>';
@@ -881,6 +883,7 @@
     var endIdx   = Math.min(startIdx + pageSize, total);
     var pageItems = productRemote?filteredProducts:filteredProducts.slice(startIdx, endIdx);
 
+    var imageStamp = productImageStamp();
     var rowsHtml = pageItems.map(function(item, index) {
       var rowNum = startIdx + index + 1;
 
@@ -916,7 +919,10 @@
             ? '<span title="บาร์โค้ดที่ระบบสร้าง: ' + esc(item.barcode) + '" style="color:#7c3aed;font-size:12px;margin-left:5px">🏷️</span>'
             : '<span title="บาร์โค้ดจริง: ' + esc(item.barcode) + '" style="color:#166534;font-size:12px;margin-left:5px">🏷️</span>');
 
-      var ctx={item:item,rowNum:rowNum,modelTxt:modelTxt,partTypeTxt:partTypeTxt,codeKey:codeKey,imgCell:imgCell,barcodeBadge:barcodeBadge};
+      var image = productImageCache.get(codeKey);
+      var hasImage = image && image.stamp===imageStamp && Date.now()-image.at<120000 ? image.hasImage : item.hasImage;
+      var imageBadge = hasImage===true ? '<span class="product-image-badge">มีรูป</span>' : '';
+      var ctx={item:item,rowNum:rowNum,modelTxt:modelTxt,partTypeTxt:partTypeTxt,codeKey:codeKey,imgCell:imgCell,barcodeBadge:barcodeBadge,imageBadge:imageBadge};
       return '<tr data-row-key="'+esc(codeKey)+'">'+getVisibleProductColumnDefs().map(function(col){return renderProductCell(col,ctx);}).join('')+'</tr>';
     }).join('');
 
@@ -1261,7 +1267,8 @@
     productImageUpdateTime=res.imageUpdateTime||"";
     if(product) product.imageUpdateTime=productImageUpdateTime;
     productImageUrls=Array.isArray(res.imageUrls)?res.imageUrls.slice(0,3):[];productImageDraftBase64=productImageUrls.map(function(){return null;});productPrimaryImageIndex=Math.max(0,Math.min(parseInt(res.primaryIndex,10)||0,Math.max(0,productImageUrls.length-1)));productImageDraftDirty=false;
-    if(product){product.imageUrls=productImageUrls.slice();product.primaryImageIndex=productPrimaryImageIndex;product.imageUrl=res.imageUrl||productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';}renderProductImageSlots(editingDocId);
+    if(product){product.imageUrls=productImageUrls.slice();product.primaryImageIndex=productPrimaryImageIndex;product.imageUrl=res.imageUrl||productImageUrls[productPrimaryImageIndex]||productImageUrls[0]||'';product.hasImage=!!product.imageUrl;productImageCache.delete(product.id||product.productCode);}
+    renderProductImageSlots(editingDocId);
   }
   var PRODUCT_VIEWER={urls:[],index:0,title:'รูปสินค้า',scale:1,x:0,y:0,drag:false,pointerId:null,startX:0,startY:0,baseX:0,baseY:0};
   function ensureProductImageViewer(){
@@ -1397,9 +1404,15 @@
       callApi('getProductImageBatch',[batch.map(function(p){return p.id;})],function(data){
         if(productImageStamp()!==stamp){failed({message:'ข้อมูลรูปเปลี่ยนระหว่างโหลด กรุณาลองใหม่'});return;}
         if(!data||batch.some(function(p){var image=data[p.id];return !image||typeof image.imageUrl!=='string'||!Array.isArray(image.imageUrls)||image.imageUrls.length>3||image.imageUrls.some(function(url){return typeof url!=='string';})||!Number.isInteger(image.primaryImageIndex)||image.primaryImageIndex<0||image.primaryImageIndex>2||typeof image.imageUpdateTime!=='string';})){failed({message:'โหลดข้อมูลรูปไม่ครบ กรุณาลองใหม่'});return;}
-        batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];var image=data[p.id],safeImage={imageUrl:image.imageUrl,imageUrls:image.imageUrls.slice(),primaryImageIndex:image.primaryImageIndex,imageUpdateTime:image.imageUpdateTime};productImageCache.delete(p.id);productImageCache.set(p.id,{stamp:stamp,at:Date.now(),data:safeImage});while(productImageCache.size>300)productImageCache.delete(productImageCache.keys().next().value);
-          var current=productsCache.find(function(row){return (row.id||row.productCode)===p.id;});if(current)Object.assign(current,safeImage,{imageDataLoaded:true});p.waiters.forEach(function(w){if(w.ok)w.ok(current||Object.assign({id:p.id},safeImage));});
+        var refreshBadge = false;
+        batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];var image=data[p.id],safeImage={imageUrl:image.imageUrl,imageUrls:image.imageUrls.slice(),primaryImageIndex:image.primaryImageIndex,imageUpdateTime:image.imageUpdateTime};
+          var hasImage = !!image.imageUrl || image.imageUrls.some(Boolean);
+          productImageCache.delete(p.id);productImageCache.set(p.id,{stamp:stamp,at:Date.now(),data:safeImage,hasImage:hasImage});while(productImageCache.size>300)productImageCache.delete(productImageCache.keys().next().value);
+          var current=productsCache.find(function(row){return (row.id||row.productCode)===p.id;});
+          if(current){Object.assign(current,safeImage,{imageDataLoaded:true});refreshBadge=true;}
+          p.waiters.forEach(function(w){if(w.ok)w.ok(current||Object.assign({id:p.id},safeImage));});
         });
+        if(refreshBadge)filterAndRenderTable(true);
       },failed,{background:!batch.some(function(p){return p.waiters.length>0;}),mayRun:function(){return stamp===productImageStamp()&&batch.some(function(p){return p.waiters.length||productsCache.some(function(row){return (row.id||row.productCode)===p.id;});});}});
       function failed(error){batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];p.waiters.forEach(function(w){if(w.fail)w.fail(error);});});}
     })(fresh.slice(i,i+100));

@@ -731,7 +731,9 @@ function syyInvalidateReadScopes(scopes,notify,preserveRevision){
 function syyWriteScopes(name,args){
  if(name==='correctStockIssue')return ['Master_Products','Stock_Movements','Quotations'];
  var mapping={saveBrand:['Master_Brands'],deleteBrand:['Master_Brands'],saveCategory:['Master_Categories'],deleteCategory:['Master_Categories'],saveVendor:['Master_Vendors'],deleteVendor:['Master_Vendors'],saveZone:['Master_Zones'],deleteZone:['Master_Zones'],saveCar:['Master_Cars'],deleteCar:['Master_Cars'],saveCustomer:['Master_Customers'],deleteCustomer:['Master_Customers'],
-  saveProduct:['Master_Products'],deleteProduct:['Master_Products','Product_Images'],generateProductBarcode:['Master_Products'],uploadProductImage:['Product_Images'],deleteProductImage:['Product_Images'],setPrimaryProductImage:['Product_Images'],moveProductImage:['Product_Images'],commitProductImageDraft:['Product_Images'],
+  saveProduct:['Master_Products'],deleteProduct:['Master_Products','Product_Images'],generateProductBarcode:['Master_Products'],
+  uploadProductImage:['Product_Images','Master_Products'],deleteProductImage:['Product_Images','Master_Products'],setPrimaryProductImage:['Product_Images','Master_Products'],moveProductImage:['Product_Images','Master_Products'],commitProductImageDraft:['Product_Images','Master_Products'],
+  uploadProductImageV2:['Product_Images','Master_Products'],deleteProductImageV2:['Product_Images','Master_Products'],setPrimaryProductImageV2:['Product_Images','Master_Products'],deleteProductWithImagesV2:['Product_Images','Master_Products'],
   savePurchaseOrder:['Purchase_Orders'],updatePurchaseOrderStatus:['Purchase_Orders'],deletePurchaseOrder:['Purchase_Orders'],receiveGoods:['Master_Products','Stock_Movements','Purchase_Orders'],issueStock:['Master_Products','Stock_Movements','Quotations'],
   saveQuotation:['Quotations'],updateQuotationStatus:['Quotations'],deleteQuotation:['Quotations'],markQuotationStockIssued:['Quotations'],saveTaxInvoice:['Master_Tax_Invoice'],deleteTaxInvoice:['Master_Tax_Invoice']};
  return name==='saveMasterData'?[args&&args[0]]:mapping[name]||[];

@@ -88,7 +88,7 @@ function readProductImagesV2_(productCode, bypassCache) {
   return state;
 }
 
-function saveProductImagesV2_(productCode, images, primaryIndex, expectedUpdateTime) {
+function saveProductImagesV2_(productCode, images, primaryIndex, expectedUpdateTime, product) {
   productCode = String(productCode || "").trim();
   images = (images || []).filter(function (it) { return it && it.url; }).slice(0, PRODUCT_IMAGE_V2_MAX);
   primaryIndex = parseInt(primaryIndex, 10);
@@ -96,44 +96,17 @@ function saveProductImagesV2_(productCode, images, primaryIndex, expectedUpdateT
   else if (isNaN(primaryIndex) || primaryIndex < 0 || primaryIndex >= images.length) primaryIndex = 0;
 
   var primary = primaryIndex >= 0 ? images[primaryIndex] : null;
-  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-          + "/databases/(default)/documents/" + PRODUCT_IMAGES_COLLECTION + "/" + encodeURIComponent(productCode);
-
-  if(expectedUpdateTime===undefined) throw new Error("ต้องระบุเวอร์ชันรูปสินค้า");
-  url += expectedUpdateTime ? "?currentDocument.updateTime="+encodeURIComponent(expectedUpdateTime) : "?currentDocument.exists=false";
-  if (!images.length) {
-    if(!expectedUpdateTime) return normalizeProductImagesV2_(productCode,{});
-    var del = UrlFetchApp.fetch(url, { method: "delete", headers: getAuthHeader_(), muteHttpExceptions: true });
-    if (del.getResponseCode() !== 200 && del.getResponseCode() !== 204) {
-      throw new Error("ลบข้อมูลรูปจาก Firestore ไม่สำเร็จ: " + del.getContentText());
-    }
-  } else {
-    var payload = {
-      fields: mapToFirestoreFields_({
-        Image_Urls: images.map(function(it){return it.url;}),
-        Drive_File_Ids: images.map(function(it){return it.fileId||"";}),
-        Images_JSON   : JSON.stringify(images),
-        Primary_Index : primaryIndex,
-        Image_Url     : primary ? primary.url : "",
-        Drive_File_Id : primary ? primary.fileId : "",
-        Updated_At    : new Date().toISOString()
-      })
-    };
-    var res = UrlFetchApp.fetch(url, {
-      method: "patch",
-      headers: getAuthHeader_(),
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-    if (res.getResponseCode() !== 200) throw new Error("บันทึกข้อมูลรูปไม่สำเร็จ: " + res.getContentText());
-  }
-
-  try { CacheService.getScriptCache().remove(productImageV2CacheKey_(productCode)); } catch (e) {}
-  clearCollectionCache_(PRODUCT_IMAGES_COLLECTION);
-  return normalizeProductImagesV2_(productCode, images.length ? mapToFirestoreFields_({
-    Images_JSON: JSON.stringify(images), Primary_Index: primaryIndex,
-    Image_Url: primary ? primary.url : "", Drive_File_Id: primary ? primary.fileId : ""
-  }) : {});
+  var fields = primary ? mapToFirestoreFields_({
+    Image_Urls: images.map(function(it){return it.url;}),
+    Drive_File_Ids: images.map(function(it){return it.fileId||"";}),
+    Images_JSON: JSON.stringify(images),
+    Primary_Index: primaryIndex,
+    Image_Url: primary.url,
+    Drive_File_Id: primary.fileId || "",
+    Updated_At: new Date().toISOString()
+  }) : null;
+  persistProductImageDoc_(productCode, fields, expectedUpdateTime, product);
+  return normalizeProductImagesV2_(productCode, fields || {});
 }
 
 function getProductImagesV2_(productCode) {
@@ -177,7 +150,7 @@ function uploadProductImageV2_(productCode, base64Data, slotIndex) {
       return { success: false, message: "รูปที่ส่งขึ้นระบบไม่ใช่ไฟล์ JPEG ที่ถูกต้อง" };
     }
 
-    readExistingDocument_("Master_Products",productCode);
+    var product = readExistingDocument_("Master_Products",productCode);
     var state = readProductImagesV2_(productCode, true);
     var images = state.images.slice();
     var idx = parseInt(slotIndex, 10);
@@ -203,7 +176,7 @@ function uploadProductImageV2_(productCode, base64Data, slotIndex) {
 
     var primaryIndex = state.primaryIndex;
     if (primaryIndex < 0) primaryIndex = 0;
-    var saved = saveProductImagesV2_(productCode, images, primaryIndex,state.updateTime);
+    var saved = saveProductImagesV2_(productCode, images, primaryIndex,state.updateTime,product);
     trashUnreferencedImageFiles_(productCode,[oldId]);
     return {
       success: true,
@@ -238,7 +211,8 @@ function deleteProductImageV2_(productCode, slotIndex) {
     else if (idx === primaryIndex) primaryIndex = 0;
     else if (idx < primaryIndex) primaryIndex--;
 
-    var saved = saveProductImagesV2_(productCode, images, primaryIndex,state.updateTime);
+    var product = readExistingDocument_("Master_Products",productCode);
+    var saved = saveProductImagesV2_(productCode, images, primaryIndex,state.updateTime,product);
     trashUnreferencedImageFiles_(productCode,[oldId]);
     return { success: true, message: "ลบรูปเรียบร้อย", imageUrls: saved.imageUrls, primaryIndex: saved.primaryIndex, imageUrl: saved.imageUrl };
   } catch (e) {
@@ -256,7 +230,8 @@ function setPrimaryProductImageV2_(productCode, slotIndex) {
     var state = readProductImagesV2_(productCode, true);
     var idx = parseInt(slotIndex, 10);
     if (isNaN(idx) || idx < 0 || idx >= state.images.length) return { success: false, message: "ไม่พบรูปที่ต้องการตั้งเป็นรูปหลัก" };
-    var saved = saveProductImagesV2_(productCode, state.images, idx,state.updateTime);
+    var product = readExistingDocument_("Master_Products",productCode);
+    var saved = saveProductImagesV2_(productCode, state.images, idx,state.updateTime,product);
     return { success: true, message: "ตั้งรูปหลักเรียบร้อย", imageUrls: saved.imageUrls, primaryIndex: saved.primaryIndex, imageUrl: saved.imageUrl };
   } catch (e) {
     return { success: false, message: e.message };
