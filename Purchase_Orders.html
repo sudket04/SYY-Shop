@@ -914,12 +914,12 @@
       var received  = parseFloat(it.receivedQty || 0);
       var ordered   = parseFloat(it.qty || 0);
       var remaining = Math.max(ordered - received, 0);
-      return '<tr data-product="' + it.productCode + '" data-remaining="' + remaining + '">' +
+      return '<tr data-product="' + escHtml(it.productCode) + '" data-remaining="' + remaining + '">' +
         '<td>' + escHtml(it.productName) + '</td>' +
         '<td class="text-center">' + ordered + '</td>' +
         '<td class="text-center">' + received + '</td>' +
         '<td class="text-center recv-remaining">' + remaining + '</td>' +
-        '<td class="text-center"><input type="number" min="0" max="' + remaining + '" class="recv-qty-input" value="' + remaining + '" onchange="onReceiveQtyInput(this)"></td>' +
+        '<td class="text-center"><input type="number" min="0" max="' + remaining + '" class="recv-qty-input" aria-label="จำนวนที่รับ ' + escHtml(it.productName || it.productCode) + '" value="' + remaining + '" onchange="onReceiveQtyInput(this)"></td>' +
         '</tr>';
     }).join('');
 

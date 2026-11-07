@@ -2,6 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {default:AxeBuilder}=require('@axe-core/playwright');
 module.exports=async function({pageFor,check,output}){
+ await require('./quality-uat.cjs')({pageFor,check,output});
  await require('./quality-display.cjs')({pageFor,check,output});
  await require('./quality-followup.cjs')({pageFor,check,output});
  await check('V2 six Master pagers search the full 1000-row set, preserve page size and never call the gateway for display paging',async()=>{

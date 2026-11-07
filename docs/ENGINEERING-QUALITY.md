@@ -220,3 +220,20 @@ Artifacts: `quality-display-before.log`, `quality-typography-baseline.json`, `qu
 ผลตรวจจบรอบนี้: **Unit 304/304, Browser เต็ม 178 กลุ่ม (เปิด reviewed CDN/XLSX/PDF tests), Backend 10/10, syntax 53 scripts + manifest, read model และ diff whitespace ผ่าน**. Axe รวม 35 route/state scans (30 เดิม + 2 error states + 3 chart/advanced-field states): 0 findings ใน automated scope; ชุด targeted 5 กลุ่มผ่านซ้ำหลังปรับรายละเอียดสุดท้าย
 
 **Firestore impact: ไม่มี Backend/query changes หรือ RPC เพิ่มจาก UI interactions/Export ที่ทดสอบ และไม่มี Production API/DB operations. สถานะ SOURCE VALIDATED; NOT SYNCED / NOT DEPLOYED.**
+
+## รอบตรวจรับด้วยข้อมูลจำลอง — 7 พฤศจิกายน 2026
+
+Baseline `790c24ae3fcb20961f1f84cb51d831fa924d11c1`. ทดสอบใน Chrome กับ gateway จำลองและข้อมูลสังเคราะห์ การส่งตัดสต๊อกและรับสินค้าในรอบนี้เป็นคำขอที่รับโดย fixture ในเครื่อง
+
+| ขั้นตอน | ผลทดสอบและการแก้ |
+|---|---|
+| สแกนผ่านคีย์บอร์ด | ส่งบาร์โค้ดและ Enter ต่อเนื่อง 20 SKU จากแค็ตตาล็อก 10,000 รายการ เลือกถูกทุกครั้ง รวมรหัสท้ายแค็ตตาล็อก P/N ซ้ำต้องเลือกรายการด้วยลูกศร เก็บจำนวน 2.5 ไว้ใน payload และกด F4 ซ้ำระหว่างส่งได้ mock request เดียว การค้นหาในแค็ตตาล็อกที่โหลดแล้วเพิ่ม 0 RPC เมื่อ metadata รูปพร้อม |
+| รับสินค้าเป็นรอบ | รับ 2 และ 3 จากยอดสั่ง 5 ตรวจใบส่งของเมื่อรับบางส่วน แสดงยอดคงเหลือ 3 ก่อนรอบสอง และซ่อนปุ่มรับเมื่อครบ ก่อนแก้ DOM ตัดรหัส `SKU"-B` เหลือ `SKU` แก้ escaping แล้ว payload ทั้งสองรอบรักษารหัสเต็ม |
+| ชื่อสำหรับโปรแกรมอ่านหน้าจอ | Browser accessibility snapshot เห็นชื่อสินค้าบนช่องจำนวนรับและสถานะเมื่อค้นพบหลายรายการ ตะกร้า POS ระบุชื่อสินค้าบนปุ่มเพิ่ม ลด ลบ และช่องจำนวน |
+| Reflow และคีย์บอร์ด | ตรวจ 6 ขั้นตอนที่ 640×480 และ 320×240 CSS px ซึ่งเทียบกับ 200% และ 400% ของพื้นที่ตั้งต้น 1280×960 พบหัว POS บังช่องสแกน, select ที่ซ่อนดันหน้าออกขวา และ popup แบรนด์เลยจอบน แก้ตำแหน่งหัวหน้าจอเตี้ย ขนาด select ที่ซ่อน และพื้นที่ popup พร้อมคืน focus หลังเลือกแบรนด์ ผลหลังแก้ผ่านทั้ง 12 กรณี |
+
+รันซ้ำด้วย `$env:BROWSER_TEST_MATCH='V2 UAT'` แล้ว `npm run test:browser`. หลักฐานอยู่ใน `test-results/quality-uat.json`, `quality-uat-before.log`, `quality-uat-picker-before.log`, `quality-uat-targeted.log` และ log ของ suite เต็ม. ค่า Enter-to-DOM ใน JSON ใช้ 20 ตัวอย่างในเครื่องจาก keydown ถึงการเปลี่ยนตะกร้า ไม่รวมอุปกรณ์ การวาดเฟรม หรือเวลา GAS
+
+งานค้างสำหรับการตรวจรับจริงคือเครื่องสแกน 20 SKU, การฟังผลด้วย Screen reader, ซูมผ่าน UI ของเบราว์เซอร์ และการวัดเวลา/Reads ที่ Staging. ใช้รายการตรวจใน `STAGING-UAT-2026-10-12.md` และ `STAGING-RESULTS.template.json` เมื่อมี Script ID/Project ID และ mailbox สำหรับทดสอบที่ยืนยันแล้ว
+
+ผลจบรอบนี้ **Unit 304/304, Browser 181 กลุ่ม, Backend-integrated 10/10, syntax, read model และ diff whitespace ผ่าน**. Enter-to-DOM ในรอบ Browser เต็มวัดได้ p50 14 ms และ p95 21 ms จาก 20 ตัวอย่างจำลอง. ขอบเขตการแก้อยู่ที่หน้าเว็บและชุดทดสอบ สถานะ Production ของชุดนี้คือยังไม่ Sync/Deploy

@@ -250,7 +250,7 @@ function ensureSYYSelectRuntimeStyles(){
     '.syy-select{position:relative;display:inline-block;width:auto;min-width:160px;max-width:100%}',
     '.syy-select.syy-select-block{display:block;width:100%;min-width:0}',
     '.syy-select.syy-select-compact{width:auto;min-width:120px;flex:0 1 auto}',
-    '.syy-select-native{position:absolute!important;opacity:0!important;pointer-events:none!important;width:1px!important;height:1px!important;margin:0!important;padding:0!important;overflow:hidden!important}',
+    '.syy-select-native{position:absolute!important;top:0;left:0;opacity:0!important;pointer-events:none!important;width:1px!important;height:1px!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}',
     '.syy-select-control{width:100%;min-height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0f172a;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;cursor:pointer;font:inherit}',
     '.syy-select-control:focus,.syy-select.open .syy-select-control{outline:none;border-color:#005088;box-shadow:0 0 0 3px rgba(0,80,136,.12)}',
     '.syy-select-control:disabled{background:#f1f5f9;color:#64748b;cursor:not-allowed}',
@@ -278,10 +278,20 @@ var SYYSelect=(function(){
     var width=Math.max(r.width,220),maxWidth=window.innerWidth-margin*2;
     width=Math.min(width,maxWidth);
     var left=Math.min(Math.max(margin,r.left),window.innerWidth-width-margin);
-    var below=window.innerHeight-r.bottom-margin,above=r.top-margin;
+    var gap=4,below=window.innerHeight-r.bottom-margin-gap,above=r.top-margin-gap;
     p.style.left=Math.round(left)+'px';p.style.width=Math.round(width)+'px';p.style.right='auto';
-    if(below>=180||below>=above){p.style.top=Math.round(r.bottom+4)+'px';p.style.bottom='auto';p.style.maxHeight=Math.max(150,Math.min(360,below))+'px';}
-    else{p.style.top='auto';p.style.bottom=Math.round(window.innerHeight-r.top+4)+'px';p.style.maxHeight=Math.max(150,Math.min(360,above))+'px';}
+    var openBelow=below>=180||below>=above;
+    var room=openBelow?below:above;
+    if(room<150){
+      p.style.top=margin+'px';p.style.bottom='auto';
+      p.style.maxHeight=Math.max(0,window.innerHeight-margin*2)+'px';
+    }else if(openBelow){
+      p.style.top=Math.round(r.bottom+gap)+'px';p.style.bottom='auto';
+      p.style.maxHeight=Math.min(360,room)+'px';
+    }else{
+      p.style.top='auto';p.style.bottom=Math.round(window.innerHeight-r.top+gap)+'px';
+      p.style.maxHeight=Math.min(360,room)+'px';
+    }
   }
   function close(inst){inst=inst||active;if(!inst)return;inst.wrap.classList.remove('open');inst.panel.removeAttribute('data-syy-open');inst.control.setAttribute('aria-expanded','false');if(active===inst)active=null;}
   function enhance(sel){
@@ -304,7 +314,7 @@ var SYYSelect=(function(){
     function sync(){var o=sel.options[sel.selectedIndex];label.textContent=o?o.text:'เลือก...';control.disabled=sel.disabled;control.setAttribute('aria-label',syyFieldName(sel)+': '+label.textContent);}
     function render(q){
       var nq=norm(q),matches=[];Array.from(sel.options).forEach(function(o,i){if(o.disabled&&!o.value)return;if(nq&&norm(o.text).indexOf(nq)<0&&norm(o.value).indexOf(nq)<0)return;matches.push({o:o,i:i});});
-      var frag=document.createDocumentFragment();matches.slice(0,RENDER_LIMIT).forEach(function(x){var b=document.createElement('button');b.type='button';b.className='syy-select-option'+(x.o.selected?' selected':'');b.textContent=x.o.text;b.setAttribute('role','option');b.setAttribute('aria-selected',x.o.selected?'true':'false');b.onclick=function(){sel.selectedIndex=x.i;sel.dispatchEvent(new Event('change',{bubbles:true}));sync();close(inst);};frag.appendChild(b);});
+      var frag=document.createDocumentFragment();matches.slice(0,RENDER_LIMIT).forEach(function(x){var b=document.createElement('button');b.type='button';b.className='syy-select-option'+(x.o.selected?' selected':'');b.textContent=x.o.text;b.setAttribute('role','option');b.setAttribute('aria-selected',x.o.selected?'true':'false');b.onclick=function(){sel.selectedIndex=x.i;sel.dispatchEvent(new Event('change',{bubbles:true}));sync();close(inst);control.focus();};frag.appendChild(b);});
       list.innerHTML='';if(!matches.length){var e=document.createElement('div');e.className='syy-select-empty';e.textContent='ไม่พบข้อมูล';list.appendChild(e);}else list.appendChild(frag);
       meta.textContent=matches.length>RENDER_LIMIT?'แสดง '+RENDER_LIMIT+' จาก '+matches.length+' รายการ · พิมพ์เพิ่มเพื่อกรอง':'ทั้งหมด '+matches.length+' รายการ';
     }
