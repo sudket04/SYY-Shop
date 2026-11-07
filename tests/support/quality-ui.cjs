@@ -2,6 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {default:AxeBuilder}=require('@axe-core/playwright');
 module.exports=async function({pageFor,check,output}){
+ await require('./quality-display.cjs')({pageFor,check,output});
  await require('./quality-followup.cjs')({pageFor,check,output});
  await check('V2 six Master pagers search the full 1000-row set, preserve page size and never call the gateway for display paging',async()=>{
   for(const name of ['Brands','Categories','Cars','Customers','Vendors','Zones']){const p=await pageFor('Master_'+name+'.html');await p.evaluate(()=>{cache=Array.from({length:1000},(_,i)=>{const id='M'+String(i).padStart(4,'0');return {id,Name:'Fixture '+i,_code:id,_brand:'Fixture',_model:'รุ่น '+i,Customer_Name:'Buyer '+i,Vendor_name:'Vendor '+i,Area:'Zone '+i};});renderRows();});

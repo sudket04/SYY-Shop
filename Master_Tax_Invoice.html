@@ -454,10 +454,10 @@
       <div class="chart-card">
         <div class="chart-title">ยอดขายรายเดือน (รวมภาษี)</div>
         <div class="chart-sub" id="chartMonthlySub">แสดงยอดรวมสุทธิแต่ละเดือนในปีที่เลือก</div>
-        <div id="chartMonthly"></div>
+        <div id="chartMonthly" class="syy-data-chart"></div>
       </div>
 
-      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:18px;">
         <div class="chart-card">
           <div class="chart-title">ลูกค้าที่มียอดซื้อสูงสุด</div>
           <div class="chart-sub">10 อันดับแรกในปีที่เลือก</div>
@@ -1537,7 +1537,7 @@ function renderDashboard() {
 }
 
 function countUniqueBuyers(items) {
-  var seen = {};
+  var seen = Object.create(null);
   items.forEach(function(it) { if (it.buyerName) seen[it.buyerName.trim().toLowerCase()] = true; });
   return Object.keys(seen).length;
 }
@@ -1576,7 +1576,7 @@ function renderMonthlyChart(yearItems, yearBE) {
     var x = padL + i * (barW + barGap) + barGap / 2;
     var y = padT + chartH - barH;
     var isCurrentMonth = (i === new Date().getMonth() && yearBE === (new Date().getFullYear() + 543));
-    var barClick = val > 0 ? ' style="cursor:pointer;" onclick="drillMonthInvoices(' + yearBE + ',' + i + ')"' : '';
+    var barClick = val > 0 ? ' style="cursor:pointer;" role="button" tabindex="0" data-month="'+i+'" aria-label="'+esc(THAI_MONTHS[i]+' · '+fmtMoneyPlain(val)+' บาท')+'"' : '';
     bars += '<rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + barH + '" rx="3" ' +
             'fill="' + (isCurrentMonth ? '#005088' : '#7fb3dd') + '"' + barClick + '>' +
             '<title>' + THAI_MONTHS[i] + ': ' + fmtMoneyPlain(val) + ' บาท' + (val > 0 ? ' (คลิกเพื่อดูรายการ)' : '') + '</title></rect>';
@@ -1591,6 +1591,8 @@ function renderMonthlyChart(yearItems, yearBE) {
     '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%; height:auto; max-height:280px;">' +
       gridLines + bars + labels +
     '</svg>';
+  function pickMonth(event){if(event.type==='keydown'&&event.key!=='Enter'&&event.key!==' ')return;var target=event.target.closest('[data-month]');if(!target||!container.contains(target))return;event.preventDefault();drillMonthInvoices(yearBE,Number(target.dataset.month));}
+  container.onclick=pickMonth;container.onkeydown=pickMonth;
 }
 
 function formatCompactNumber(n) {
@@ -1600,7 +1602,7 @@ function formatCompactNumber(n) {
 }
 
 function renderTopCustomers(yearItems) {
-  var byBuyer = {};
+  var byBuyer = Object.create(null);
   yearItems.forEach(function(it) {
     var name = (it.buyerName || 'ไม่ระบุชื่อ').trim();
     byBuyer[name] = (byBuyer[name] || 0) + (it.grandTotal || 0);
@@ -1611,12 +1613,13 @@ function renderTopCustomers(yearItems) {
   var el = document.getElementById('topCustomers');
   if (!sorted.length) { el.innerHTML = '<div class="chart-empty">ยังไม่มีข้อมูล</div>'; return; }
   el.innerHTML = sorted.map(function(row, i) {
-    return '<li class="clickable" onclick="drillCustomerInvoices(' + currentPageYear + ',\'' + escJs(row.name) + '\')"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></li>';
+    return '<li class="clickable"><button type="button" class="syy-analytics-link" data-syy-action="buyer" data-syy-id="'+esc(row.name)+'"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></button></li>';
   }).join('');
+  syyDelegateActions(el,{buyer:function(name){drillCustomerInvoices(currentPageYear,name);}});
 }
 
 function renderTopItems(yearItems) {
-  var byItem = {};
+  var byItem = Object.create(null);
   yearItems.forEach(function(it) {
     (it.items || []).forEach(function(line) {
       var name = (line.name || 'ไม่ระบุ').trim();
@@ -1629,8 +1632,9 @@ function renderTopItems(yearItems) {
   var el = document.getElementById('topItems');
   if (!sorted.length) { el.innerHTML = '<div class="chart-empty">ยังไม่มีข้อมูล</div>'; return; }
   el.innerHTML = sorted.map(function(row, i) {
-    return '<li class="clickable" onclick="drillItemInvoices(' + currentPageYear + ',\'' + escJs(row.name) + '\')"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></li>';
+    return '<li class="clickable"><button type="button" class="syy-analytics-link" data-syy-action="item" data-syy-id="'+esc(row.name)+'"><span class="top-rank">' + (i + 1) + '</span><span class="top-name">' + esc(row.name) + '</span><span class="top-amount">' + fmtMoney(row.amount) + '</span></button></li>';
   }).join('');
+  syyDelegateActions(el,{item:function(name){drillItemInvoices(currentPageYear,name);}});
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1656,12 +1660,13 @@ function renderDrillList(title, summaryHtml, list) {
         '<td>' + esc(fmtDateShort(it.invoiceDate)) + '</td>' +
         '<td>' + esc(it.buyerName || '-') + '</td>' +
         '<td style="text-align:right; font-family:monospace;">' + fmtMoney(it.grandTotal || 0) + '</td>' +
-        '<td style="text-align:center;"><button type="button" class="btn-icon-sm" onclick="event.stopPropagation(); openViewModal(\'' + it.id + '\')" title="ดู/พิมพ์">🔍</button></td>' +
+        '<td style="text-align:center;"><button type="button" class="btn-icon-sm" data-syy-action="invoice" data-syy-id="' + esc(it.id) + '" title="ดู/พิมพ์">🔍</button></td>' +
       '</tr>';
     }).join('');
   }
 
   var totalAmt = sorted.reduce(function(s, it) { return s + (it.grandTotal || 0); }, 0);
+  syyDelegateActions(tbody,{invoice:openViewModal});
   document.getElementById('drillFooterInfo').innerText = sorted.length + ' รายการ • รวม ' + fmtMoney(totalAmt) + ' บาท';
   openModal('drillModal');
 }
@@ -1689,7 +1694,7 @@ function drillAllInvoices(yearBE) {
 // 2) คลิกการ์ด "ลูกค้าที่มีธุรกรรม" → รายชื่อลูกค้าทั้งหมด พร้อมจำนวนใบ/ยอดรวม กดต่อดูใบของลูกค้านั้น
 function drillCustomerList(yearBE) {
   var yearItems = invoicesCache.filter(function(item) { return getInvoiceYearBE(item) === yearBE; });
-  var byBuyer = {};
+  var byBuyer = Object.create(null);
   yearItems.forEach(function(it) {
     var name = (it.buyerName || 'ไม่ระบุชื่อ').trim();
     if (!byBuyer[name]) byBuyer[name] = { count: 0, amount: 0 };
@@ -1708,9 +1713,9 @@ function drillCustomerList(yearBE) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="6">ไม่พบข้อมูล</td></tr>';
   } else {
     tbody.innerHTML = sorted.map(function(row, i) {
-      return '<tr class="clickable" style="cursor:pointer;" onclick="drillCustomerInvoices(' + yearBE + ',\'' + escJs(row.name) + '\')">' +
+      return '<tr>' +
         '<td style="text-align:center; color:#94a3b8;">' + (i + 1) + '</td>' +
-        '<td colspan="2" style="font-weight:600;">' + esc(row.name) + '</td>' +
+        '<td colspan="2" style="font-weight:600;"><button type="button" class="syy-analytics-link" data-syy-action="buyer" data-syy-id="'+esc(row.name)+'">' + esc(row.name) + '</button></td>' +
         '<td>' + row.count + ' ใบ</td>' +
         '<td style="text-align:right; font-family:monospace;">' + fmtMoney(row.amount) + '</td>' +
         '<td style="text-align:center; color:#94a3b8;">›</td>' +
@@ -1718,6 +1723,7 @@ function drillCustomerList(yearBE) {
     }).join('');
   }
   document.getElementById('drillFooterInfo').innerText = sorted.length + ' ราย • รวม ' + fmtMoney(yearItems.reduce(function(s, it) { return s + (it.grandTotal || 0); }, 0)) + ' บาท';
+  syyDelegateActions(tbody,{buyer:function(name){drillCustomerInvoices(yearBE,name);}});
   openModal('drillModal');
 }
 

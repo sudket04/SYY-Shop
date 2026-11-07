@@ -305,7 +305,7 @@
               <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:3px;border-radius:2px;background:#f59e0b;display:inline-block"></span>เบิกออก (Stock Out) · แกนขวา</span>
             </div>
           </div>
-          <div id="dashChartSvgWrap"></div>
+          <div id="dashChartSvgWrap" class="syy-data-chart"></div>
           <div id="dashChartNote" style="font-size:11.5px;color:var(--faint);padding:2px 0 6px 52px"></div>
         </div>
         <div class="card" style="padding:16px 18px;min-width:0;display:flex;flex-direction:column">
@@ -1024,7 +1024,7 @@
   function dashTh(y){ return y+543; }
   function dashBusinessNow(){var parts=businessDate().split('-').map(Number);return new Date(parts[0],parts[1]-1,parts[2],12);}
   function dashKeys(d){ var date=new Date(d.getTime()+7*3600000),y=date.getUTCFullYear(),m=date.getUTCMonth(),day=date.getUTCDate(); return {dayKey:y+'-'+m+'-'+day, monthKey:y+'-'+m, yearKey:String(y)}; }
-  function dashNewBucket(){ return {salesQty:0,salesValue:0,salesBills:{},issueQty:0,issueValue:0,recvQty:0,recvValue:0,recvUnknown:0,recvDocs:{},rows:[]}; }
+  function dashNewBucket(){ return {salesQty:0,salesValue:0,salesBills:Object.create(null),issueQty:0,issueValue:0,recvQty:0,recvValue:0,recvUnknown:0,recvDocs:Object.create(null),rows:[]}; }
   function dashFinalize(b){
     b=b||dashNewBucket();
     return {salesQty:b.salesQty,salesValue:b.salesValue,salesBills:Object.keys(b.salesBills).reduce(function(n,k){return n+Number(b.salesBills[k]);},0),
@@ -1033,10 +1033,9 @@
   }
 
   function dashBuildAggregates(){
-    var byDay={}, byMonth={}, byYear={}, byPM={};
-    var lastOut={}, lastSale={}, qty6mo={};
+    var byDay=Object.create(null), byMonth=Object.create(null), byYear=Object.create(null), byPM=Object.create(null);
+    var lastOut=Object.create(null), lastSale=Object.create(null), qty6mo=Object.create(null);
     var now=new Date(), sixMoAgo=new Date(now.getTime()-183*86400000);
-    var costMap={}; DASH.products.forEach(function(p){ costMap[p.productCode]=num(p.costPrice); });
 
     DASH.movements.forEach(function(m){
       var d=m.ts; if(!d||isNaN(d.getTime())) return;
@@ -1089,7 +1088,7 @@
       else if(qty<=rop*(1+buf)){ tag='ใกล้หมด'; tone='warn'; }
       return {p:p, code:p.productCode, dIssue:dIssue, dSale:dSale, idle:idle, rate:rate, cover:cover, value:value, qty:qty, rop:rop, tag:tag, tone:tone};
     });
-    var byCode={}; rows.forEach(function(r){ byCode[r.code]=r; });
+    var byCode=Object.create(null); rows.forEach(function(r){ byCode[r.code]=r; });
     DASH.health = {rows:rows, byCode:byCode};
   }
 
@@ -1315,7 +1314,7 @@
       gridLines.map(function(g){ return '<g><line x1="82" x2="730" y1="'+g.y+'" y2="'+g.y+'" stroke="#f1f5f9" stroke-width="1"></line>'+
         '<text x="76" y="'+g.ty+'" text-anchor="end" font-size="10" fill="#94a3b8" font-family="IBM Plex Mono, monospace">'+g.label+'</text>'+
         '<text x="738" y="'+g.ty+'" text-anchor="start" font-size="10" fill="#d9a441" font-family="IBM Plex Mono, monospace">'+g.labelR+'</text></g>'; }).join('')+
-      bars.map(function(b,i){ return '<g onclick="_dashBarPick['+i+']()" style="cursor:pointer">'+
+      bars.map(function(b,i){ return '<g data-period="'+i+'" role="button" tabindex="0" aria-label="'+esc(b.label+' · ยอดขาย '+money(series[i].sales)+' · เบิกออก '+series[i].qty+' ชิ้น')+'" style="cursor:pointer">'+
         '<rect x="'+b.hx+'" y="14" width="'+b.hw+'" height="200" fill="transparent"></rect>'+
         '<rect x="'+b.x+'" y="'+b.y+'" width="'+b.w+'" height="'+b.h+'" rx="3" fill="'+b.fill+'"></rect>'+
         '<text x="'+b.cx+'" y="230" text-anchor="middle" font-size="10" fill="'+b.labelFill+'" font-family="Noto Sans Thai, Inter, system-ui, sans-serif">'+esc(b.label)+'</text>'+
@@ -1324,6 +1323,9 @@
       dots.map(function(d){ return '<circle cx="'+d.x+'" cy="'+d.y+'" r="3.2" fill="#fff" stroke="#f59e0b" stroke-width="2"></circle>'; }).join('')+
       '</svg>';
     document.getElementById('dashChartSvgWrap').innerHTML=svg;
+    var chart=document.getElementById('dashChartSvgWrap');
+    function pickPeriod(event){if(event.type==='keydown'&&event.key!=='Enter'&&event.key!==' ')return;var target=event.target.closest('[data-period]');if(!target||!chart.contains(target))return;event.preventDefault();var pick=window._dashBarPick[Number(target.dataset.period)];if(typeof pick==='function')pick();if(event.type==='keydown'){var title=document.getElementById('dashChartTitle');title.tabIndex=-1;title.focus();}}
+    chart.onclick=pickPeriod;chart.onkeydown=pickPeriod;
 
     var now=new Date(), note='';
     if(DASH.gran==='m' && DASH.year===now.getFullYear()) note='* '+DASH_M_SHORT[now.getMonth()]+' เป็นข้อมูลถึงวันที่ '+now.getDate()+' (ยังไม่ครบเดือน)';
@@ -1334,7 +1336,7 @@
 
   /* ── render: มูลค่าสต๊อกตามหมวด ── */
   function dashRenderCatBars(){
-    var byCat={};
+    var byCat=Object.create(null);
     DASH.health.rows.forEach(function(r){ var c=r.p.categoryName||'ไม่ระบุหมวด'; byCat[c]=(byCat[c]||0)+r.value; });
     var totalValue=DASH.health.rows.reduce(function(s,r){return s+r.value;},0)||1;
     var catList=Object.keys(byCat).map(function(k){return [k,byCat[k]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,7);
@@ -1417,7 +1419,7 @@
 
   function dashRenderHealthFilterOptions(){
     function uniq(getter){
-      var seen={}, out=[];
+      var seen=Object.create(null), out=[];
       DASH.products.forEach(function(p){ var v=getter(p); if(v && !seen[v]){ seen[v]=1; out.push(v); } });
       return out.sort(function(a,b){return String(a).localeCompare(String(b),'th');});
     }

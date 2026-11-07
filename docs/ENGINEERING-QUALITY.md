@@ -197,3 +197,26 @@ Runtime ที่แก้ในรอบนี้: `Shared.html`, `UiSystem.htm
 ผลจบรอบนี้: **Unit 304/304, Browser เต็ม 173 กลุ่ม, Backend-integrated 10/10, Syntax 53 scripts + manifest, read model และ diff whitespace ผ่าน**. Axe เดิม 30 route/state scans และเพิ่มอีก 2 error-state scans ของ Product/Invoice: 0 findings ในขอบเขต automated tags ที่ตรวจ (`quality-followup-accessibility.json`); ยังไม่ใช่ manual WCAG certification
 
 **Firestore impact รอบต่อเนื่อง: ไม่มี query/write-path changes, ไม่มี RPC เพิ่มจาก UI interactions ที่ทดสอบ และไม่มีการเรียก Production DB/API. สถานะ: SOURCE VALIDATED; NOT SYNCED / NOT DEPLOYED.**
+
+## รอบกราฟ / Export / Typography / Form — 7 พฤศจิกายน 2026
+
+Baseline `f9c54fec4997601ce43eb188384fb368f15c9a47`; fetch แล้วตรงกับ `origin/main` ก่อนแก้ ใช้ local fixtures และ reviewed CDN bytes ที่ route ในเครื่อง ไม่เรียก Production และไม่เปลี่ยน Backend, auth/roles, transaction, VAT, stock, schema/index หรือ settings
+
+| ขอบเขต | ผลตรวจและการแก้ | หลักฐาน / ข้อจำกัด |
+|---|---|---|
+| Analytics data integrity | ชื่อ `__proto__`/`constructor`/`toString` ชน inherited properties ของ `{}` ทำให้ unique buyers/Top Items/หมวดสินค้าและ drill-down ผิด; `drillCustomerList` ยังแก้ property ของ Object.prototype ในหน้า fixture เดิม | regression ก่อนแก้พบ count 2 แทน 3 และ prototype ถูกแตะ; เปลี่ยนเฉพาะ read-view dictionaries เป็น null-prototype, คงสูตรยอดเงินเดิม; ตัด loop costMap ที่ไม่มีผู้ใช้ใน Dashboard ออก ไม่ใช่การแก้ DB |
+| Drill-down / keyboard | ปุ่มดู Invoice เดิมฝัง raw doc ID ใน onclick; แก้เป็น data + delegated handler; Top Buyer/Item และรายชื่อลูกค้าใช้ native buttons; SVG chart มีชื่อ/Tab/Enter/Space | hostile IDs เปิดเอกสารเดิมได้โดยไม่ execute payload; กราฟ Dashboard ใช้ callback เดิมและคืน focus ไปชื่อกราฟหลังเปลี่ยนช่วง; chart/analytics interactions ไม่เพิ่ม RPC ใน fixtures |
+| Mobile chart | Grid ขั้นต่ำ 320px ล้น viewport 320px ที่มี padding; SVG ถูกย่อจนป้ายอ่านยาก | grid ใช้ min(100%,320px), กราฟหลักเลื่อนแนวนอนภายในกรอบ, physical font ≥13px ใน 5 viewport widths 320–1920; ป้าย SVG ใช้สีเข้ม #475569; ไม่เปลี่ยนข้อมูล/ช่วง/ยอดรวม |
+| Typography | วัด computed styles ใน 15 routes + primary editors; text nodes ต่ำกว่า 13px ใน sample ลด 301 → 1 | body 16px, form labels/inputs 14px และ metadata ที่ตรวจ ≥13px; ยกเว้น Ctrl K ที่เป็น low-priority keyboard hint 10px; นับ layout text nodes ใน fixture ไม่ใช่จำนวน code sites ทั้งระบบ; SVG หลักตรวจแยก, A4/print/probe ไม่รวมใน inventory และไม่ปรับฟอนต์เอกสาร |
+| Product form | แยก Part Number/Barcode ที่ไม่บังคับเป็น native details เพื่อให้ข้อมูลหลักกระชับ | Add ว่างเริ่มย่อ; Edit/prefill/draft ที่มีรหัสเปิดแสดงค่าเดิม; error focus เปิด section ให้เอง; field IDs/values, images, stock baseline, validation และ save payload เดิม ไม่มี UI-preference writes |
+| Excel exports | ตรวจ Dashboard และ PO ด้วย SheetJS 0.20.3 จริง: serialize/read XLSX อีกครั้ง | Dashboard export ครบ 125 rows แม้ display window เล็กกว่า; รหัส 00123 ยังเป็น string, ราคา 0 ยังเป็น number, formula-like labels เป็น string ไม่มี cell.f; ไม่เติม apostrophe เปลี่ยนข้อมูล XLSX โดยไม่จำเป็น ไม่ใช่การทดสอบ Excel desktop หรือ CSV conversion โดยผู้ใช้ |
+
+Files: `index.html`, `Master_Tax_Invoice.html`, `Master_Products.html`, `UiSystem.html`, `tests/support/quality-display.cjs`, จุดเรียก suite เดิม และ living document นี้ เก็บ untracked audit เดิมไว้ ไม่แก้ runtime GS/manifest
+
+Artifacts: `quality-display-before.log`, `quality-typography-baseline.json`, `quality-typography-after.json`, `quality-display-targeted.log`, `quality-display-accessibility.json`, `quality-display-unit.log`, `quality-display-browser-full.log`, `quality-display-backend.log`, `quality-display-checks.json` ใน ignored `test-results/`
+
+งานต่อที่ต้องแยกจากผล automated: manual scanner 20 SKUs, screen reader, zoom 200/400%, user task timings และ business UAT; compact sparkline/print layouts ไม่อยู่ในข้ออ้างว่า text ทุกจุดทั้งระบบ ≥13px. การยืนยัน GAS p95/Firestore billed savings ยังต้อง Staging ที่อนุมัติแยก; Accounting/stock-ledger/auth owner decisions และ Backup health เดิมยังไม่เปลี่ยนสถานะ. Source-to-sink review รอบนี้ครอบคลุมจุดกราฟ/drill/export ข้างต้น ไม่ใช่ full penetration-test certification
+
+ผลตรวจจบรอบนี้: **Unit 304/304, Browser เต็ม 178 กลุ่ม (เปิด reviewed CDN/XLSX/PDF tests), Backend 10/10, syntax 53 scripts + manifest, read model และ diff whitespace ผ่าน**. Axe รวม 35 route/state scans (30 เดิม + 2 error states + 3 chart/advanced-field states): 0 findings ใน automated scope; ชุด targeted 5 กลุ่มผ่านซ้ำหลังปรับรายละเอียดสุดท้าย
+
+**Firestore impact: ไม่มี Backend/query changes หรือ RPC เพิ่มจาก UI interactions/Export ที่ทดสอบ และไม่มี Production API/DB operations. สถานะ SOURCE VALIDATED; NOT SYNCED / NOT DEPLOYED.**

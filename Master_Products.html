@@ -189,6 +189,9 @@
               </select>
             </div>
 
+            <details id="productAdvancedDetails" class="syy-advanced-fields full">
+              <summary>รหัสผู้ผลิตและบาร์โค้ด (ไม่บังคับ)</summary>
+              <div class="form-grid">
             <div class="form-group full">
               <label>รหัสจากผู้ผลิต (Part Number)</label>
               <input type="text" id="inp_partNumber" class="form-control" placeholder="เช่น 90915-YZZD4 (ไม่บังคับ)">
@@ -203,6 +206,8 @@
               </div>
               <div class="field-hint" id="barcodeFieldHint">ไม่บังคับ — สินค้าที่ไม่มีบาร์โค้ดจากโรงงาน ใช้ "รหัสสินค้า" สแกน/ค้นหาแทนได้อยู่แล้ว</div>
             </div>
+              </div>
+            </details>
 
             <div class="form-group">
               <label>แบรนด์</label>
@@ -1049,7 +1054,7 @@
     document.getElementById('modalTitle').innerText   = '🛒 เพิ่มข้อมูลสินค้า';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึก';
     document.getElementById('modalAlert').style.display = 'none';
-    openModal('productModal');syyDraftClean('product');
+    syncProductAdvanced();openModal('productModal');syyDraftClean('product');
   }
 
   var productModalIntent=0;
@@ -1090,9 +1095,10 @@
     document.getElementById('modalTitle').innerText   = '✏️ แก้ไขข้อมูลสินค้า (' + editingDocId + ')';
     document.getElementById('modalBtnSave').innerText = '💾 บันทึกการแก้ไข';
     document.getElementById('modalAlert').style.display = 'none';
-    openModal('productModal');syyDraftClean('product');loadEditProductImages(docId,intent);
+    syncProductAdvanced();openModal('productModal');syyDraftClean('product');loadEditProductImages(docId,intent);
   }
 
+  function syncProductAdvanced(){document.getElementById('productAdvancedDetails').open=!!(document.getElementById('inp_partNumber').value||document.getElementById('inp_barcode').value);}
   function closeProductModal(discard) {
     if(document.getElementById('modalBtnSave').disabled&&!syyUnknownWrites.saveProduct)return;
     if(!discard&&syyGuardDraft(function(){closeProductModal(true);},'product'))return;
@@ -1746,7 +1752,7 @@ function updateProductRecordCounts(text){['recordCount','recordCountToolbar'].fo
 <script>
 (function(){if(!PRODUCT_CAN_EDIT)return;syyDraftRegister('product',{
  capture:function(){if(productDraftRestore)return productDraftRestore;if(!document.getElementById('productModal').classList.contains('active'))return null;return {fields:syyReadFields('#productModal'),editingDocId:editingDocId,originalStock:document.getElementById('inp_currentStock').dataset.originalStock,cars:selectedCarIds,images:productImageUrls,base64:productImageDraftBase64,primary:productPrimaryImageIndex,imageDirty:productImageDraftDirty,imageUpdateTime:productImageUpdateTime,unknown:!!syyUnknownWrites.saveProduct};},
- restore:function(d){if(!d||!d.fields)return;productDraftRestore=d;if(!requireProductMasters(function(){syyDrafts.product.adapter.restore(d);}))return;if(d.editingDocId){if(!productsCache.some(function(p){return (p.id||p.productCode)===d.editingDocId;})){callApi('getProductById',[d.editingDocId],function(item){if(!item){toast('ไม่พบสินค้าเดิม กรุณาตรวจร่างกับผู้ดูแล','warn');return;}item.id=item.productCode;productsCache.push(item);syyDrafts.product.adapter.restore(d);},function(error){toast(syyErrorMessage(error),'err');});return;}if(!ensureProductImages(d.editingDocId,function(){syyDrafts.product.adapter.restore(d);}))return;openEditModal(d.editingDocId,true);}else openAddModal('',true);syyWriteFields(d.fields);document.getElementById('inp_currentStock').dataset.originalStock=d.originalStock;selectedCarIds=d.cars||[];if(d.imageDirty){productImageUrls=d.images||[];productImageDraftBase64=d.base64||[];productPrimaryImageIndex=d.primary||0;productImageDraftDirty=true;productImageUpdateTime=d.imageUpdateTime||'';}renderProductImageSlots(editingDocId);renderCarChips();if(d.unknown){syyUnknownWrites.saveProduct=true;syyLockUnknownWrite('saveProduct');}}
+ restore:function(d){if(!d||!d.fields)return;productDraftRestore=d;if(!requireProductMasters(function(){syyDrafts.product.adapter.restore(d);}))return;if(d.editingDocId){if(!productsCache.some(function(p){return (p.id||p.productCode)===d.editingDocId;})){callApi('getProductById',[d.editingDocId],function(item){if(!item){toast('ไม่พบสินค้าเดิม กรุณาตรวจร่างกับผู้ดูแล','warn');return;}item.id=item.productCode;productsCache.push(item);syyDrafts.product.adapter.restore(d);},function(error){toast(syyErrorMessage(error),'err');});return;}if(!ensureProductImages(d.editingDocId,function(){syyDrafts.product.adapter.restore(d);}))return;openEditModal(d.editingDocId,true);}else openAddModal('',true);syyWriteFields(d.fields);syncProductAdvanced();document.getElementById('inp_currentStock').dataset.originalStock=d.originalStock;selectedCarIds=d.cars||[];if(d.imageDirty){productImageUrls=d.images||[];productImageDraftBase64=d.base64||[];productPrimaryImageIndex=d.primary||0;productImageDraftDirty=true;productImageUpdateTime=d.imageUpdateTime||'';}renderProductImageSlots(editingDocId);renderCarChips();if(d.unknown){syyUnknownWrites.saveProduct=true;syyLockUnknownWrite('saveProduct');}}
 });})();
 </script>
 <script>

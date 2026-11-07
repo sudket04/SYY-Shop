@@ -9,6 +9,24 @@
 /* Stable content widths follow the information on each page, even after filtering. */
 [hidden]{display:none!important}
 @media screen{
+  :is(.section-label,.field-hint,.chip-code,.code-badge,.pn-badge,.bc-badge,.car-chip,.syy-select-meta,.hint,.card-sub,.result-count,.stat-label,.pill,.syy-data-status,.xlf-th-label,.dash-chip,.dash-sortbtn,.dash-alert-note,.dash-kpi-lb,.dash-health-tab .n):not(.a4-page *,.syy-print-probe *){font-size:13px!important}
+  :is(.form-group>label,.form-control):not(.a4-page *,.syy-print-probe *){font-size:14px!important}
+  :is(.seller-info-box,.search-hint,.stock-badge,.btn-add-mini,.btn-soft-green,.btn-soft-ghost,.placeholder-text,.record-count,.role-badge,.status-badge,.modal-section-label):not(.a4-page *,.syy-print-probe *){font-size:13px!important}
+  :is(.totals-row:not(.grand),.profit-row,.totals .row:not(.grand),.res-side,.item-basket-head,.product-image-position-ui,.b-sub,.part-badge,.zone-chip,.brand-chip,.model-chip,.car-count-badge,.sb-sub,.sb-search,.sb-avatar,.menu-badge,.dash-gran button,.empty-state .su,.dash-catbar-row,.dash-mover-rank,#dashHealthFoot):not(.a4-page *,.syy-print-probe *){font-size:13px!important}
+  :is([style*="font-size:9px"],[style*="font-size:9.5px"],[style*="font-size:10px"],[style*="font-size:10.5px"],[style*="font-size:11px"],[style*="font-size:11.5px"],[style*="font-size:12px"],[style*="font-size:12.5px"],[style*="font-size: 9px"],[style*="font-size: 9.5px"],[style*="font-size: 10px"],[style*="font-size: 10.5px"],[style*="font-size: 11px"],[style*="font-size: 11.5px"],[style*="font-size: 12px"],[style*="font-size: 12.5px"]):not(.a4-page *,.a4-page,.syy-print-probe *,.print-sheet *){font-size:13px!important}
+  :is(.table-wrap,.table-container) :is(td,th):not(.a4-page *,.syy-print-probe *){font-size:14px}
+  .syy-advanced-fields{border:1px solid var(--line,#dfe7ef);border-radius:10px;padding:10px 12px}
+  .syy-advanced-fields summary{cursor:pointer;font-size:14px;font-weight:600;min-height:36px;padding:6px 0;color:var(--primary,#005088)}
+  .syy-advanced-fields[open] summary{margin-bottom:10px}
+  .syy-analytics-link{display:flex;align-items:center;gap:8px;width:100%;padding:8px 4px;background:transparent;border:0;text-align:left;color:inherit;font:inherit;cursor:pointer;min-height:36px}
+  .syy-data-chart{overflow-x:auto;min-width:0;overscroll-behavior-x:contain}
+  #dashChartSvgWrap.syy-data-chart{aspect-ratio:auto}
+  #dashChartSvgWrap.syy-data-chart svg{min-width:860px}
+  #chartMonthly.syy-data-chart svg{min-width:760px}
+  .syy-data-chart svg text{font-size:13px;fill:#475569}
+  #userChip{font-size:13px}
+  .syy-data-chart [role="button"]:focus-visible{outline:2px solid #005088;outline-offset:2px}
+  @media(max-width:767px){.syy-advanced-fields summary,.syy-analytics-link,.dash-gran button{min-height:44px}}
   body[data-syy-layout]{--syy-content-width:1360px;font-family:'Noto Sans Thai','Inter',system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.65;letter-spacing:0}
   body[data-syy-layout="compact"]{--syy-content-width:1040px}
   body[data-syy-layout="compact"].syy-compact-list{--syy-content-width:880px}
@@ -25,7 +43,7 @@
   body[data-syy-layout] .mono{font-variant-numeric:tabular-nums}
   body[data-syy-layout] .view-field-tile .vft-label,body[data-syy-layout] .view-price-pill .vpp-label{font-size:12.5px}
   body[data-syy-layout] .view-field-tile .vft-value{font-size:14px;line-height:1.6}
-  body[data-syy-layout="users"]{font-size:15px;background:#f3f6fa}
+  body[data-syy-layout="users"]{font-size:16px;background:#f3f6fa}
   body[data-syy-layout="users"] .page-header{font-size:17px}
   body[data-syy-layout="users"] th{font-size:12.5px}
   body[data-syy-layout="users"] td{font-size:14px}
