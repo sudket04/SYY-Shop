@@ -237,3 +237,15 @@ Baseline `790c24ae3fcb20961f1f84cb51d831fa924d11c1`. ทดสอบใน Chrom
 งานค้างสำหรับการตรวจรับจริงคือเครื่องสแกน 20 SKU, การฟังผลด้วย Screen reader, ซูมผ่าน UI ของเบราว์เซอร์ และการวัดเวลา/Reads ที่ Staging. ใช้รายการตรวจใน `STAGING-UAT-2026-10-12.md` และ `STAGING-RESULTS.template.json` เมื่อมี Script ID/Project ID และ mailbox สำหรับทดสอบที่ยืนยันแล้ว
 
 ผลจบรอบนี้ **Unit 304/304, Browser 181 กลุ่ม, Backend-integrated 10/10, syntax, read model และ diff whitespace ผ่าน**. Enter-to-DOM ในรอบ Browser เต็มวัดได้ p50 14 ms และ p95 21 ms จาก 20 ตัวอย่างจำลอง. ขอบเขตการแก้อยู่ที่หน้าเว็บและชุดทดสอบ สถานะ Production ของชุดนี้คือยังไม่ Sync/Deploy
+
+## ห้องตรวจรับในเครื่องและซูม Chrome — 7 พฤศจิกายน 2026
+
+เริ่มจาก `17feae3bd51894385a7f8cd9e558c2b7a4ebd304`. เปิดด้วย `npm run uat:local` และใช้ URL `127.0.0.1` ที่คำสั่งพิมพ์ออกมา. หน้าเริ่มต้นมีลิงก์ 6 ขั้นตอนและฉลาก CODE128 จำนวน 20 รหัสสำหรับพิมพ์หรือเปิดบนจอแยก. ฉลากใช้ JsBarcode จากไฟล์ที่ผ่าน SHA-384 ใน `test-results/quality-cdn-assets`. ถ้าไฟล์ยังไม่พร้อม ให้รัน `npm run verify:cdn -- --download` แล้วเปิดห้องตรวจรับใหม่
+
+โหมดนี้ประมวลผลคำขออ่านด้วย fixture และคืนข้อความโหมดทดสอบเมื่อกดบันทึก. HTTP server รับเฉพาะ loopback และหน้าที่กำหนด. CSP จำกัดทรัพยากรและการเชื่อมต่อให้อยู่ที่ origin ของห้องตรวจรับ. เครื่องมืออยู่ใน `tests/browser.cjs` และ `tests/support/manual-uat.cjs`
+
+ตรวจซูมด้วยค่า page zoom ของโปรไฟล์ Chrome ชั่วคราว. ที่ 200% ได้ viewport 632×432 และ DPR 2. ที่ 400% ได้ 316×216 และ DPR 4. `visualViewport.scale` เป็น 1 ทั้งสองระดับ. ปุ่มหลักและช่องสแกนรับ focus และกดได้ครบทั้ง 12 กรณีใน Dashboard, POS, สินค้า, ใบกำกับภาษี, ใบเสนอราคา และรับสินค้า. [Chrome zoom preferences](https://chromium.googlesource.com/chromium/src/+/lkgr/chrome/browser/ui/zoom/chrome_zoom_level_prefs.cc), [Blink zoom conversion](https://chromium.googlesource.com/chromium/src/+/938b37a6d2886bf8335fc7db792f1eb46c65b2ae/third_party/blink/common/page/page_zoom.cc)
+
+หน้าเริ่มต้นวาดฉลากครบ 20 รหัส. เมื่อป้อนรหัสฉลากด้วยคีย์บอร์ด ตะกร้าได้ 20 SKU และ browser accessibility tree มีชื่อสินค้าบนช่องจำนวน. Unit 304/304, ตรวจการโหลดครบ 15 routes, ชุด UAT เดิม 3 กลุ่ม และ syntax ผ่าน. หลักฐานอยู่ใน `test-results/quality-native-zoom.json` และ `quality-native-zoom.log`
+
+ขั้นที่ต้องตรวจด้วยอุปกรณ์คือสแกนฉลาก 20 รหัสและฟังการประกาศของโปรแกรมอ่านหน้าจอ. งานวัด GAS/Firestore ต้องใช้ Staging ที่ระบุในแผนตรวจรับ. การเปลี่ยนแปลงรอบนี้อยู่ที่ห้องทดลองและชุดทดสอบ

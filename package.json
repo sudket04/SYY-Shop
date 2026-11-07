@@ -9,6 +9,7 @@
     "test:reads": "node tests/read-model.cjs",
     "test:browser": "node tests/browser.cjs",
     "test:browser-backend": "node tests/browser-backend.cjs",
+    "uat:local": "node tests/browser.cjs --serve-uat",
     "check": "node tests/syntax.cjs",
     "release:prepare": "node scripts/prepare-release.cjs"
   },

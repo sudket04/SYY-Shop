@@ -8,6 +8,8 @@ const {evaluateTemplate} = require('./support/templates.cjs');
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'test-results');
 fs.mkdirSync(output, {recursive:true});
+const manualUat = process.argv.includes('--serve-uat')
+  ? require('./support/manual-uat.cjs').createManualUat(output) : null;
 function render(file, role, channel = '', extra = {}) {
   // Evaluate top-level scriptlets instead of silently replacing missing variables.
   // include_() still returns raw fragments, as it does in the application.
@@ -50,19 +52,27 @@ window.google={script:{run:{withSuccessHandler:function(ok){var runner={withFail
 </script>`;
 const server = http.createServer((req,res)=>{
   const u = new URL(req.url,'http://localhost');
-  if(u.searchParams.get('fixture')==='login-sandbox'){
+  if(manualUat && manualUat.route(req,res,u,server.address().port)) return;
+  if(!manualUat && u.searchParams.get('fixture')==='login-sandbox'){
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
     res.end('<!DOCTYPE html><html><body><iframe id="loginFrame" title="Apps Script sandbox fixture" sandbox="allow-scripts allow-same-origin allow-forms" src="/?file=login.html" style="width:100%;height:900px;border:0"></iframe></body></html>');return;
   }
   const pages={login:'login.html',home:'index.html',stockissue:'StockIssue.html',products:'Master_Products.html',taxinvoice:'Master_Tax_Invoice.html',quotation:'Quotation.html',orders:'Purchase_Orders.html',brands:'Master_Brands.html',categories:'Master_Categories.html',zones:'Master_Zones.html'};
   const file = u.searchParams.get('file') || pages[u.searchParams.get('page')] || 'Quotation.html';
+  if(manualUat && !manualUat.accepts(file)) {res.writeHead(404).end();return;}
   if(!/^[A-Za-z_]+\.html$/.test(file)) {res.writeHead(400).end();return;}
   // A real child route receives its role from the same authenticated session as the shell.
   // Preserve that role in local iframe fixtures instead of silently testing staff under a Viewer shell.
   const referringRole=req.headers.referer?new URL(req.headers.referer,'http://localhost').searchParams.get('role'):null;
-  const expired=u.searchParams.get('token')==='expired-fixture';
-  let html=render(expired?'login.html':file,u.searchParams.get('role')||referringRole||'staff',u.searchParams.get('channel')||'',{embeddedSessionExpired:expired}).replace('<head>','<head>'+fixture);
-  if(u.searchParams.get('fixture')==='late-html'){
+  const expired=!manualUat&&u.searchParams.get('token')==='expired-fixture';
+  const role=manualUat?'staff':u.searchParams.get('role')||referringRole||'staff';
+  let html=render(expired?'login.html':file,role,u.searchParams.get('channel')||'',{embeddedSessionExpired:expired}).replace('<head>','<head>'+fixture);
+  if(manualUat) {
+    const bannerPosition = file==='index.html' ? '<div class="content">' : /<body\b[^>]*>/i;
+    html = html.replace('</head>',manualUat.bootstrap+'</head>')
+      .replace(bannerPosition, start => start+manualUat.banner);
+  }
+  if(!manualUat && u.searchParams.get('fixture')==='late-html'){
     const scripts=[];html=html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/g,(_,code)=>{scripts.push(code);return '';});
     // Model a host that installs app scripts after its document is already ready.
     html=html.replace('</body>','<script>window.addEventListener("load",function(){setTimeout(function(){for(const text of '+JSON.stringify(scripts).replace(/</g,'\\u003c')+'){const script=document.createElement("script");script.textContent=text;document.body.appendChild(script);}},0);});</script></body>');
@@ -1527,4 +1537,8 @@ async function main(){
   console.log('PASS: '+cases+' browser regression groups');
   fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({passed:cases,failed:0,environment:'Local Chromium with mocked Apps Script gateway; no production access'},null,2));
 }
-main().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();server.close();});
+if(manualUat) {
+  server.listen(0,'127.0.0.1',()=>console.log('Local UAT: http://127.0.0.1:'+server.address().port+'/'));
+} else {
+  main().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();server.close();});
+}
