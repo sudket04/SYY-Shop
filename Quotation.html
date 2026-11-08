@@ -351,6 +351,8 @@ var basket = [];             // {productCode, productName, partNumber, qty, unit
 var results = [], selIdx = 0, searchTimer = null;
 var stockFilter = 'all';
 var editingDocId = null;
+var editingQuoteVersion = "";
+var quoteRequestId = "";
 var quotationSaving = false;
 var quickCustomerSaving = false;
 var listStatusFilter = '';
@@ -782,6 +784,8 @@ function newQuotation(discard) {
   if (quotationSaving) return;
   if(!discard&&syyGuardDraft(function(){newQuotation(true);},'quotation'))return;
   editingDocId = null;
+  editingQuoteVersion = "";
+  quoteRequestId = "";
   basket = [];
   document.getElementById('selCustomer').value = '';
   document.getElementById('inpQuoteDate').value = businessDate();
@@ -801,6 +805,8 @@ function loadQuotationIntoBuild(docId,discard) {
   var q = quotations.find(function (x) { return x.id === docId; });
   if (!q) { toast('ไม่พบใบเสนอราคานี้', 'err'); return; }
   editingDocId = q.id;
+  editingQuoteVersion = q.updateTime || "";
+  quoteRequestId = "";
   basket = (q.items || []).map(function (it) {
     var p = products.find(function (x) { return x.productCode === it.productCode; });
     return { productCode: it.productCode, productName: it.productName, partNumber: it.partNumber || '',
@@ -839,6 +845,7 @@ function saveQuotationNow() {
 
   var d = {
     docId      : editingDocId,
+    expectedUpdateTime: editingQuoteVersion,
     customerId : customerId,
     quoteDate  : document.getElementById('inpQuoteDate').value,
     validDays  : document.getElementById('selValidDays').value,
@@ -850,6 +857,8 @@ function saveQuotationNow() {
       return { productCode: b.productCode, productName: b.productName, partNumber: b.partNumber, qty: b.qty, unitPrice: b.unitPrice, costPrice: b.costPrice };
     })
   };
+  if (!editingDocId) d.requestId = quoteRequestId ||= crypto.randomUUID();
+  syyDraftFlush();
 
   var btn = document.getElementById('btnSaveQuote');
   quotationSaving = true;
@@ -876,6 +885,11 @@ function saveQuotationNow() {
     } else {
       quotationSaving = false;
       btnDone(btn);
+      if (res && res.uncertain) {
+        syyUnknownWrites.saveQuotation = true;
+        syyLockUnknownWrite('saveQuotation');
+        syyDraftFlush();
+      }
       swyError(res && res.title || 'ล้มเหลว', res && res.message);
     }
   }, function (err) {
@@ -1128,7 +1142,11 @@ function changeStatus(docId, status) {
   var select=Array.from(document.querySelectorAll('[data-quote-status]')).find(function(el){return el.dataset.quoteStatus===docId;});if(select){select.disabled=true;select.setAttribute('aria-busy','true');}
   function done(){delete quotationStatusPending[docId];if(select&&select.isConnected){select.value=row.status;select.disabled=!!syyUnknownWrites.updateQuotationStatus;select.removeAttribute('aria-busy');if(select.disabled)select.title='ยังไม่ทราบผล · ตรวจสถานะก่อนทำรายการซ้ำ';}}
 
-  callApi('updateQuotationStatus', [docId, status], function (res) {
+  callApi('updateQuotationStatus', [docId, status, row.updateTime || ''], function (res) {
+    if (res && res.success) {
+      row.status = status;
+      row.updateTime = res.updateTime || '';
+    }
     done();if (res && res.success) { toast(res.message || 'เปลี่ยนสถานะเรียบร้อย'); loadPageData(currentPageYear === 'all' ? 'all' : currentPageYear); }
     else swyError(res && res.title || 'ล้มเหลว', res && res.message);
   }, function (err) { done();swyError('เกิดข้อผิดพลาด', esc(syyErrorMessage(err))); });
@@ -1197,8 +1215,8 @@ syyRegisterFreshness({reload:function(){loadPageData(currentPageYear,null,null,t
 </script>
 <script>
 syyOnReady(function(){syyDraftRegister('quotation',{
- capture:function(){return {fields:syyQuoteDraftFields(),basket:basket.map(function(b){return {productCode:b.productCode,productName:b.productName,partNumber:b.partNumber,qty:b.qty,unitPrice:b.unitPrice,costPrice:b.costPrice};}),raw:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {qty:row.querySelector('.quote-qty').value,price:row.querySelector('.price-input').value};}),editingDocId:editingDocId,customerOption:document.getElementById('selCustomer').selectedOptions[0]?.text||'',quoteBadge:document.getElementById('qtNoBadge').textContent,unknown:!!syyUnknownWrites.saveQuotation};},
- restore:function(d){if(!d||!Array.isArray(d.basket)||d.basket.length>200)return;editingDocId=d.editingDocId||null;basket=d.basket.map(function(b){var p=products.find(function(x){return x.productCode===b.productCode;});return Object.assign({},b,{stock:p?num(p.currentStock):0});});renderBasket();var customer=document.getElementById('selCustomer'),customerId=d.fields&&d.fields.selCustomer;if(customerId&&!Array.from(customer.options).some(function(o){return o.value===customerId;}))customer.add(new Option(d.customerOption||'ลูกค้าในร่างเดิม',customerId));syyWriteFields(d.fields);document.getElementById('qtNoBadge').textContent=d.quoteBadge||'ร่างที่กู้คืน (ยังไม่บันทึก)';Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).forEach(function(row,i){if(d.raw&&d.raw[i]){row.querySelector('.quote-qty').value=d.raw[i].qty;row.querySelector('.price-input').value=d.raw[i].price;}});switchTab('build');if(d.unknown){syyUnknownWrites.saveQuotation=true;syyLockUnknownWrite('saveQuotation');}}
+ capture:function(){return {fields:syyQuoteDraftFields(),basket:basket.map(function(b){return {productCode:b.productCode,productName:b.productName,partNumber:b.partNumber,qty:b.qty,unitPrice:b.unitPrice,costPrice:b.costPrice};}),raw:Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).map(function(row){return {qty:row.querySelector('.quote-qty').value,price:row.querySelector('.price-input').value};}),editingDocId:editingDocId,updateTime:editingQuoteVersion,requestId:quoteRequestId,customerOption:document.getElementById('selCustomer').selectedOptions[0]?.text||'',quoteBadge:document.getElementById('qtNoBadge').textContent,unknown:!!syyUnknownWrites.saveQuotation};},
+ restore:function(d){if(!d||!Array.isArray(d.basket)||d.basket.length>200)return;editingDocId=d.editingDocId||null;editingQuoteVersion=d.updateTime||"";quoteRequestId=d.requestId||"";basket=d.basket.map(function(b){var p=products.find(function(x){return x.productCode===b.productCode;});return Object.assign({},b,{stock:p?num(p.currentStock):0});});renderBasket();var customer=document.getElementById('selCustomer'),customerId=d.fields&&d.fields.selCustomer;if(customerId&&!Array.from(customer.options).some(function(o){return o.value===customerId;}))customer.add(new Option(d.customerOption||'ลูกค้าในร่างเดิม',customerId));syyWriteFields(d.fields);document.getElementById('qtNoBadge').textContent=d.quoteBadge||'ร่างที่กู้คืน (ยังไม่บันทึก)';Array.from(document.querySelectorAll('#itemBasket .item-basket-row')).forEach(function(row,i){if(d.raw&&d.raw[i]){row.querySelector('.quote-qty').value=d.raw[i].qty;row.querySelector('.price-input').value=d.raw[i].price;}});switchTab('build');if(d.unknown){syyUnknownWrites.saveQuotation=true;syyLockUnknownWrite('saveQuotation');}}
 });});
 </script>
 <script>

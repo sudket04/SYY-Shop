@@ -88,6 +88,7 @@ function doGet(e) {
   template.resetMode  = mode;
   template.resetToken = rtoken;
   if (page === 'taxinvoice') template.invoiceMathSource = calcTaxInvoiceTotals_.toString();
+  if (page === 'stockissue' || page === 'orders') template.stockQuantitySource = addStockQuantity_.toString();
 
   return template
     .evaluate()
@@ -968,6 +969,7 @@ function deleteFirestoreDocument_(collectionName,docId) {
 // ==========================================
 function saveMasterData_(collectionName, prefix, docId, dataObject, checkDuplicateName, editOptions) {
   try {
+    if (docId && !validDocumentId_(docId)) return {success:false, message:"รหัสเอกสารไม่ถูกต้อง"};
     dataObject=Object.assign({},dataObject);
     var expected=dataObject._expectedUpdateTime;delete dataObject._expectedUpdateTime;
     if(docId && !editOptions){
@@ -1024,7 +1026,7 @@ function saveMasterData_(collectionName, prefix, docId, dataObject, checkDuplica
 
     var id  = docId;
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + collectionName + "/" + id;
+            + "/databases/(default)/documents/" + collectionName + "/" + encodeURIComponent(id);
 
     if (editOptions) {
       var params = (editOptions.fieldPaths || Object.keys(dataObject)).map(function(field) {
@@ -1593,9 +1595,10 @@ function readExistingDocument_(collection, docId) {
 }
 
 function getProductRawFields_(docId) {
+  if (!validDocumentId_(docId)) return null;
   try {
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/Master_Products/" + docId;
+            + "/databases/(default)/documents/Master_Products/" + encodeURIComponent(docId);
     var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
     if (res.getResponseCode() !== 200) return null;
     return JSON.parse(res.getContentText()).fields || {};
@@ -2053,7 +2056,77 @@ function getNextInvoiceRunningNumber_(invoiceDateStr, excludeDocId) {
   return maxNum + 1;
 }
 
-function saveTaxInvoice_(d) {
+function documentEditConflict_() {
+  return {success:false, title:"ข้อมูลเปลี่ยนแปลง", message:"กรุณารีเฟรชเอกสารล่าสุดก่อนแก้ไขอีกครั้ง ข้อมูลในร่างยังอยู่"};
+}
+
+function documentCreateRequest_(type, d, username) {
+  if (!d.requestId || d.docId) return null;
+  if (typeof d.requestId !== "string" || !/^[A-Za-z0-9-]{8,80}$/.test(d.requestId)) throw Error("รหัสคำขอไม่ถูกต้อง");
+  var digest = hashPassword_(d.requestId, type + ":" + username).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return {id:"Request_" + type + "_" + digest, fingerprint:hashPassword_(JSON.stringify(canonicalRequest_(d)), digest)};
+}
+
+function replayDocumentCreate_(request, collection, resultKey, mapper) {
+  var receipt;
+  try { receipt = readExistingDocument_(DOC_NO_RESERVATION_COLLECTION, request.id); }
+  catch (e) { if (e.httpStatus === 404) return null; throw e; }
+  var fields = receipt.fields || {};
+  if (!safeEquals_(parseFirestoreValue_(fields.Request_Fingerprint) || "", request.fingerprint))
+    return {success:false, message:"รหัสคำขอนี้ถูกใช้กับข้อมูลอื่นแล้ว กรุณาตรวจสอบทะเบียนก่อนทำรายการใหม่"};
+  var id = parseFirestoreValue_(fields.Document_ID), number = parseFirestoreValue_(fields.Doc_No);
+  var result = {success:true, id:id, replayed:true, message:"บันทึกเอกสาร " + number + " ไว้แล้ว"};
+  try {
+    var doc = readExistingDocument_(collection, id);
+    result[resultKey] = mapper(doc);
+    result.updateTime = doc.updateTime;
+    // A lost commit response can interrupt the normal year registration.
+    var isQuote = resultKey === "quotation";
+    var date = isQuote ? result.quotation.quoteDate : result.invoice.invoiceDate;
+    if (isValidBusinessDate_(date)) {
+      var yearBE = Number(date.slice(0,4)) + 543;
+      if (appendYearMeta_(isQuote ? QUOTATION_YEARS_ID : TAX_INVOICE_YEARS_ID, yearBE, isQuote ? discoverQuotationYears_ : null))
+        clearCollectionCache_(collection);
+    }
+  } catch (e) {
+    result.refreshWarning = "รายการนี้เคยบันทึกแล้ว กรุณารีเฟรชเพื่อตรวจสอบเลขที่ " + number;
+  }
+  return result;
+}
+
+function commitDocumentCreate_(request, collection, prefix, type, number, fields, resultKey, mapper) {
+  var numberId = type + "__" + number.replace(/[^A-Za-z0-9]/g, "_");
+  for (var attempt = 0; attempt < 2; attempt++) {
+    var id = allocateNextAutoId_(collection, prefix, attempt > 0);
+    var doc = {name:fsDocPath_(collection,id), fields:mapToFirestoreFields_(fields)};
+    var receipt = {Doc_No:number, Document_ID:id, Request_Fingerprint:request.fingerprint, Reserved_At:new Date().toISOString()};
+    try {
+      var result = fsCommit_([
+        {update:doc,currentDocument:{exists:false}},
+        {update:{name:fsDocPath_(DOC_NO_RESERVATION_COLLECTION,numberId),fields:mapToFirestoreFields_({Doc_No:number,Reserved_At:receipt.Reserved_At})},currentDocument:{exists:false}},
+        {update:{name:fsDocPath_(DOC_NO_RESERVATION_COLLECTION,request.id),fields:mapToFirestoreFields_(receipt)},currentDocument:{exists:false}}
+      ], true);
+      if (result.ok) {
+        var version = ((result.writeResults || [])[0] || {}).updateTime || "";
+        return {success:true, id:id, updateTime:version, message:"บันทึกข้อมูลเรียบร้อย"};
+      }
+      var replay = replayDocumentCreate_(request, collection, resultKey, mapper);
+      if (replay) return replay;
+      if (result.status >= 500) return {success:false, uncertain:true, message:"ยังไม่ทราบผลการบันทึก กรุณาตรวจทะเบียนก่อนทำรายการใหม่"};
+      if (!isPreconditionFailure_(result.message) && !/ALREADY_EXISTS/.test(result.message))
+        return {success:false, message:"บันทึกเอกสารไม่สำเร็จ กรุณาลองใหม่"};
+    } catch (e) {
+      try {
+        var recovered = replayDocumentCreate_(request, collection, resultKey, mapper);
+        if (recovered) return recovered;
+      } catch (ignored) {}
+      return {success:false, uncertain:true, message:"ยังไม่ทราบผลการบันทึก กรุณาตรวจทะเบียนก่อนทำรายการใหม่"};
+    }
+  }
+  return {success:false, numberConflict:true};
+}
+
+function saveTaxInvoice_(d, callerUsername) {
   d = d || {};
   var items = Array.isArray(d.items) ? d.items : [];
   if (!items.length) {
@@ -2090,11 +2163,17 @@ function saveTaxInvoice_(d) {
     return { success:false, message:"วันที่ใบกำกับภาษีไม่ถูกต้อง" };
   }
 
+  var request = documentCreateRequest_("TaxInvoice", d, callerUsername || getCurrentUsername_());
+  if (request) {
+    var replay = replayDocumentCreate_(request, "Master_Tax_Invoice", "invoice", mapTaxInvoiceQueryDoc_);
+    if (replay) return replay;
+  }
   var invoiceNo = "";
   var existingDoc = null;
   if (d.docId) {
     try {
       existingDoc = readExistingDocument_("Master_Tax_Invoice", d.docId);
+      if (d.expectedUpdateTime !== undefined && d.expectedUpdateTime !== existingDoc.updateTime) return documentEditConflict_();
       invoiceNo = parseFirestoreValue_((existingDoc.fields || {}).Invoice_No) || "";
       if (!invoiceNo) return { success:false, message:"ไม่พบเลขที่เอกสารเดิม กรุณาตรวจสอบก่อนแก้ไข" };
     } catch (e) {
@@ -2124,7 +2203,7 @@ function saveTaxInvoice_(d) {
     var editRes = saveMasterData_("Master_Tax_Invoice", "TX", d.docId, dataObject, null, {updateTime:existingDoc.updateTime});
     if (editRes.success) {
       try { updateTaxInvoiceYearsMeta_(invoiceYearBE); } catch (metaError) { editRes.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
-      editRes.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + editRes.id, fields:mapToFirestoreFields_(dataObject)});
+      editRes.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + editRes.id, fields:mapToFirestoreFields_(dataObject),updateTime:editRes.updateTime});
     }
     return editRes;
   }
@@ -2142,13 +2221,16 @@ function saveTaxInvoice_(d) {
     var candidateNo = buildInvoiceNoForMonth_(invoiceDate, runningNum);
 
     // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบกำกับภาษีพร้อมกัน (ดู reserveDocNo_)
-    if (!reserveDocNo_("TaxInvoice", candidateNo)) continue;
+    if (!request && !reserveDocNo_("TaxInvoice", candidateNo)) continue;
 
     dataObject.Invoice_No = candidateNo;
-    var res = saveMasterData_("Master_Tax_Invoice", "TX", d.docId || null, dataObject, null);
+    var res = request ? commitDocumentCreate_(request,"Master_Tax_Invoice","TX","TaxInvoice",candidateNo,dataObject,"invoice",mapTaxInvoiceQueryDoc_)
+      : saveMasterData_("Master_Tax_Invoice", "TX", d.docId || null, dataObject, null);
+    if (res.numberConflict) continue;
+    if (res.replayed || res.uncertain) return res;
     if (res.success) {
       try { updateTaxInvoiceYearsMeta_(invoiceYearBE); } catch (metaError) { res.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
-      res.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + res.id, fields:mapToFirestoreFields_(dataObject)});
+      res.invoice = mapTaxInvoiceQueryDoc_({name:"Master_Tax_Invoice/" + res.id, fields:mapToFirestoreFields_(dataObject),updateTime:res.updateTime});
       return res;
     }
     lastErr = res.message;
@@ -2190,6 +2272,7 @@ function mapTaxInvoiceQueryDoc_(doc) {
   try { items = JSON.parse(parseFirestoreValue_(f.Items_JSON) || "[]"); } catch (e) { items = []; }
   return {
     id           : doc.name.split('/').pop(),
+    updateTime   : doc.updateTime || "",
     invoiceNo    : parseFirestoreValue_(f.Invoice_No)    || "",
     invoiceDate  : parseFirestoreValue_(f.Invoice_Date)  || "",
     buyerName    : parseFirestoreValue_(f.Buyer_Name)    || "",
@@ -2313,29 +2396,32 @@ function getNextQuoteRunningNumber_(quoteDateStr, excludeDocId) {
  */
 function saveQuotation_(d, callerUsername) {
   d = d || {};
+  var user = callerUsername || getCurrentUsername_();
+  var request = documentCreateRequest_("Quotation", d, user);
+  if (request) {
+    var replay = replayDocumentCreate_(request, QUOTATION_COLLECTION, "quotation", mapQuotationDoc_);
+    if (replay) return replay;
+  }
   var items = Array.isArray(d.items) ? d.items : [];
-  if (items.some(function(it) {
-    return !it || !String(it.productCode || "").trim() || !isFinite(Number(it.qty)) || Number(it.qty) <= 0 ||
-      it.unitPrice === "" || it.unitPrice === null || it.unitPrice === undefined ||
-      !isFinite(Number(it.unitPrice)) || Number(it.unitPrice) < 0 ||
-      !isFinite(Number(it.costPrice || 0)) || Number(it.costPrice || 0) < 0;
+  if (items.length > 200 || items.some(function(it) {
+    return !it || !validDocumentId_(it.productCode) || !validBusinessNumber_(it.qty,0,true) ||
+      !validBusinessNumber_(it.unitPrice,0,false) ||
+      !validBusinessNumber_(it.costPrice == null || it.costPrice === "" ? 0 : it.costPrice,0,false);
   })) return {success:false, message:"รายการสินค้าต้องมีจำนวนมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป"};
-  var cleanItems = items.filter(function(it) {
-    return it && String(it.productCode || "").trim() && parseFloat(it.qty) > 0 && parseFloat(it.unitPrice) >= 0;
-  }).map(function(it) {
+  var cleanItems = items.map(function(it) {
     return {
       productCode : String(it.productCode).trim(),
       productName : String(it.productName || "").trim(),
       partNumber  : String(it.partNumber  || "").trim(),
-      qty         : parseFloat(it.qty)       || 0,
-      unitPrice   : parseFloat(it.unitPrice) || 0,
-      costPrice   : parseFloat(it.costPrice) || 0
+      qty         : Number(it.qty),
+      unitPrice   : Number(it.unitPrice),
+      costPrice   : Number(it.costPrice || 0)
     };
   });
   if (!cleanItems.length) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเพิ่มรายการสินค้าอย่างน้อย 1 รายการ" };
   }
-  if (!String(d.customerId || "").trim()) {
+  if (!validDocumentId_(d.customerId)) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเลือกลูกค้า" };
   }
 
@@ -2343,6 +2429,7 @@ function saveQuotation_(d, callerUsername) {
   if (d.docId) {
     try { existingDoc = readExistingDocument_(QUOTATION_COLLECTION, d.docId); }
     catch (e) { return {success:false, message:e.message}; }
+    if (d.expectedUpdateTime !== undefined && d.expectedUpdateTime !== existingDoc.updateTime) return documentEditConflict_();
   }
   var ef = existingDoc ? existingDoc.fields || {} : {};
   // Preserve the customer snapshot when editing the same document/customer.
@@ -2364,7 +2451,6 @@ function saveQuotation_(d, callerUsername) {
   var validUntil = addCalendarDays_(quoteDate,validDays);
 
   var totals = calcQuoteTotals_(cleanItems, d.discPct);
-  var user   = callerUsername || getCurrentUsername_();
   var nowIso = new Date().toISOString();
 
   var quoteNo = "", status = "ร่าง", createdUser = user, createdAt = nowIso;
@@ -2413,7 +2499,7 @@ function saveQuotation_(d, callerUsername) {
     if (editRes.success) {
       try { updateQuotationYearsMeta_(quoteYearBE); } catch (metaError) { editRes.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
       var savedFields = Object.assign({}, ef, mapToFirestoreFields_(dataObject));
-      editRes.quotation = mapQuotationDoc_({id:editRes.id, fields:savedFields});
+      editRes.quotation = mapQuotationDoc_({id:editRes.id, fields:savedFields,updateTime:editRes.updateTime});
     }
     return editRes;
   }
@@ -2431,13 +2517,16 @@ function saveQuotation_(d, callerUsername) {
     var candidateNo = buildQuoteNoForMonth_(quoteDate, runningNum);
 
     // ★ จองเลขที่แบบ atomic ก่อนบันทึกจริง — กันเลขซ้ำเมื่อมีคนออกใบเสนอราคาพร้อมกัน (ดู reserveDocNo_)
-    if (!reserveDocNo_("Quotation", candidateNo)) continue;
+    if (!request && !reserveDocNo_("Quotation", candidateNo)) continue;
 
     dataObject.Quote_No = candidateNo;
-    var res = saveMasterData_(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId || null, dataObject, null);
+    var res = request ? commitDocumentCreate_(request,QUOTATION_COLLECTION,QUOTATION_PREFIX,"Quotation",candidateNo,dataObject,"quotation",mapQuotationDoc_)
+      : saveMasterData_(QUOTATION_COLLECTION, QUOTATION_PREFIX, d.docId || null, dataObject, null);
+    if (res.numberConflict) continue;
+    if (res.replayed || res.uncertain) return res;
     if (res.success) {
       try { updateQuotationYearsMeta_(quoteYearBE); } catch (metaError) { res.refreshWarning="เอกสารบันทึกแล้ว แต่ปีในรายการยังไม่อัปเดต กรุณาแจ้งผู้ดูแลระบบ"; }
-      res.quotation = mapQuotationDoc_({id:res.id, fields:mapToFirestoreFields_(dataObject)});
+      res.quotation = mapQuotationDoc_({id:res.id, fields:mapToFirestoreFields_(dataObject),updateTime:res.updateTime});
       return res;
     }
     lastErr = res.message;
@@ -2451,11 +2540,13 @@ function saveQuotation_(d, callerUsername) {
 
 function mapQuotationDoc_(doc) {
   var f = doc.fields || {};
+  var id = doc.id || doc.name.split('/').pop();
   var items = [];
   try { items = JSON.parse(parseFirestoreValue_(f.Items_JSON) || "[]"); } catch (e) {}
   return {
-    id              : doc.id,
-    quoteNo         : parseFirestoreValue_(f.Quote_No)          || doc.id,
+    id              : id,
+    updateTime      : doc.updateTime || "",
+    quoteNo         : parseFirestoreValue_(f.Quote_No)          || id,
     quoteDate       : parseFirestoreValue_(f.Quote_Date)        || "",
     validUntil      : parseFirestoreValue_(f.Valid_Until)       || "",
     validDays       : parseFloat(parseFirestoreValue_(f.Valid_Days)) || 0,
@@ -2554,29 +2645,20 @@ function discoverQuotationYears_() {
 
 // ★ FIX (โควตา Firestore Reads): รับ yearFilter เพิ่ม — ค่าเริ่มต้น (ไม่ส่ง/undefined) ใช้ปีปัจจุบัน
 //   แทนการดึงใบเสนอราคาทั้งหมดทุกปีเหมือนเดิม (getQuotationList เต็มยังเรียกได้ถ้าส่ง "all" มาชัดเจน)
-function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(function(doc){return mapQuotationDoc_({id:doc.name.split('/').pop(),fields:doc.fields||{}});}),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getQuotationAvailableYears_()};}
+function getQuotationListData_(yearFilter,options){var page=queryDocumentPage_('Quotations','Quote_Date',yearFilter,options);return {quotations:page.docs.map(mapQuotationDoc_),pageInfo:page.pageInfo,availableYears:options&&(options.cursor||(options.search&&(options.search.number||options.search.from||options.search.to)))?undefined:getQuotationAvailableYears_()};}
 
 function getQuotationPageData_(yearFilter,options){options=options||{};validateDocumentSections_(options);var result=options.editorOnly?{}:getQuotationListData_(yearFilter,options);if(!options.deferSections)documentPageSections_(result,options);result.seller=TAX_INVOICE_SELLER;result.marginMin=QUOTATION_MARGIN_MIN;result.statuses=QUOTATION_STATUSES;return result;}
 
-function updateQuotationStatus_(docId, status) {
+function updateQuotationStatus_(docId, status, expectedUpdateTime) {
   if (QUOTATION_STATUSES.indexOf(status) === -1) {
     return { success: false, title: "ไม่ถูกต้อง", message: "สถานะไม่ถูกต้อง" };
   }
   try {
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/" + QUOTATION_COLLECTION + "/" + docId
-            + "?updateMask.fieldPaths=Status&updateMask.fieldPaths=Updated_At";
-    var res = UrlFetchApp.fetch(url, {
-      method  : "patch",
-      headers : getAuthHeader_(),
-      payload : JSON.stringify({ fields: mapToFirestoreFields_({ Status: status, Updated_At: new Date().toISOString() }) }),
-      muteHttpExceptions: true
-    });
-    if (res.getResponseCode() === 200) {
-      clearCollectionCache_(QUOTATION_COLLECTION);
-      return { success: true, title: "สำเร็จ", message: "เปลี่ยนสถานะเรียบร้อย" };
-    }
-    return { success: false, title: "ล้มเหลว", message: res.getContentText() };
+    var version = expectedUpdateTime || readExistingDocument_(QUOTATION_COLLECTION, docId).updateTime;
+    var res = saveMasterData_(QUOTATION_COLLECTION, QUOTATION_PREFIX, docId,
+      { Status: status, Updated_At: new Date().toISOString() }, null, { updateTime: version });
+    if (res.success) res.message = "เปลี่ยนสถานะเรียบร้อย";
+    return res;
   } catch (e) {
     return { success: false, title: "ข้อผิดพลาด", message: e.message };
   }
@@ -3415,6 +3497,7 @@ function getPurchaseOrderPageUncached_(options){
 }
 
 function updatePurchaseOrderStatus_(docId, newStatus) {
+  if (!validDocumentId_(docId)) return {success:false, message:"รหัสเอกสารไม่ถูกต้อง"};
   try {
     if (["Pending","Ordered","Cancelled"].indexOf(newStatus) < 0) return {success:false, message:"สถานะไม่ถูกต้อง"};
     if (newStatus === "Received" || newStatus === "PartiallyReceived") {
@@ -3422,7 +3505,7 @@ function updatePurchaseOrderStatus_(docId, newStatus) {
     }
 
     var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-            + "/databases/(default)/documents/Purchase_Orders/" + docId;
+            + "/databases/(default)/documents/Purchase_Orders/" + encodeURIComponent(docId);
     var getRes = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
     if (getRes.getResponseCode() !== 200) {
       return { success: false, title: "ไม่พบข้อมูล", message: "ไม่พบใบสั่งซื้อนี้" };
@@ -3498,7 +3581,7 @@ function receiveGoods_(d, callerUsername) {
   var commitAttempted=false;
   try {
     d = d || {};
-    if (!d.poId) return fail("ไม่พบเลขที่ใบสั่งซื้อ");
+    if (!validDocumentId_(d.poId)) return fail("รหัสใบสั่งซื้อไม่ถูกต้อง");
     if (!String(d.invoiceNo || "").trim()) return fail("กรุณากรอกเลขที่ Invoice");
     if (!validDateOnly_(d.receiptDate)) return fail("กรุณาระบุวันที่รับสินค้า");
     if (!String(d.receiverName || "").trim()) return fail("กรุณากรอกชื่อผู้รับสินค้า");
@@ -3510,7 +3593,7 @@ function receiveGoods_(d, callerUsername) {
     if (replay) return replay;
     var nowIso = new Date().toISOString(), docNo = request.docNo;
     var poUrl = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-              + "/databases/(default)/documents/Purchase_Orders/" + d.poId;
+              + "/databases/(default)/documents/Purchase_Orders/" + encodeURIComponent(d.poId);
     var MAX_ATTEMPTS = 3;
 
     for (var attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -3532,15 +3615,15 @@ function receiveGoods_(d, callerUsername) {
       var receiveMap = Object.create(null);
       reqItems.forEach(function(it) {
         var code = String(it.productCode || "");
-        receiveMap[code] = (receiveMap[code] || 0) + Number(it.qtyReceivedNow);
+        receiveMap[code] = addStockQuantity_(receiveMap[code] || 0, Number(it.qtyReceivedNow));
       });
       var allComplete = true, receiptLineItems = [], stockAdditions = [];
       poItems = poItems.map(function(it) {
         var already = parseFloat(it.receivedQty || 0), ordered = parseFloat(it.qty || 0);
-        var remaining = Math.max(ordered - already, 0);
+        var remaining = Math.max(addStockQuantity_(ordered, -already), 0);
         var receiveNow = Object.prototype.hasOwnProperty.call(receiveMap,it.productCode) ? receiveMap[it.productCode] : 0;
         if (!isFinite(receiveNow) || receiveNow < 0 || receiveNow > remaining) throw new Error("จำนวนรับสินค้าเกินจำนวนคงค้าง: " + it.productCode);
-        var newReceived = already + receiveNow;
+        var newReceived = addStockQuantity_(already, receiveNow);
         if (newReceived < ordered) allComplete = false;
         if (receiveNow > 0) {
           receiptLineItems.push({ productCode:it.productCode, productName:it.productName, qtyReceivedNow:receiveNow });
@@ -3577,20 +3660,15 @@ function receiveGoods_(d, callerUsername) {
       var writes = [];
       stockAdditions.forEach(function(l, i) {
         var info = stockMap[l.productCode], qty = parseFloat(l.qty || 0);
-        var stockWrite = {
-          transform: {
-            document: fsDocPath_("Master_Products", l.productCode),
-            fieldTransforms: [{ fieldPath:"Current_Stock", increment:{ doubleValue:qty } }]
-          }
-        };
-        if (info.updateTime) stockWrite.currentDocument = { updateTime:info.updateTime };
-        writes.push(stockWrite);
+        var after = addStockQuantity_(info.stock, qty);
+        if (!validBusinessNumber_(after, -Number.MAX_SAFE_INTEGER, false)) throw Error("ยอดสต๊อกเกินขอบเขต");
+        writes.push(stockQuantityWrite_(l.productCode, info.stock, qty, after, info.updateTime));
         writes.push({ update:{
           name:fsDocPath_(STOCK_MOVEMENT_COLLECTION, docNo + "-" + (i + 1)),
           fields:{
             Doc_No:{stringValue:docNo}, Type:{stringValue:"IN"},
             Product_Code:{stringValue:l.productCode}, Product_Name:{stringValue:String(l.productName || info.name)},
-            Qty:{doubleValue:qty}, Stock_Before:{doubleValue:info.stock}, Stock_After:{doubleValue:info.stock + qty},
+            Qty:{doubleValue:qty}, Stock_Before:{doubleValue:info.stock}, Stock_After:{doubleValue:after},
             Reason:{stringValue:"รับของตาม PO"}, Ref_No:{stringValue:String(d.poId)},
             User:{stringValue:user}, Timestamp:{stringValue:nowIso}
           }
@@ -3619,7 +3697,7 @@ function receiveGoods_(d, callerUsername) {
       });
       var result = {success:true,title:"สำเร็จ",message:allComplete ? "บันทึกรับสินค้าครบถ้วน และอัปเดตสต็อกเรียบร้อย" : "บันทึกรับสินค้าบางส่วน และอัปเดตสต็อกเรียบร้อย",
         status:newStatus,po:{poId:d.poId,status:newStatus,items:poItems,receipts:receipts},
-        productStocks:stockAdditions.map(function(l) {var info=stockMap[l.productCode];return {productCode:l.productCode,currentStock:info.stock+l.qty,minStock:info.minStock,costPrice:info.costPrice,sellingPrice:info.sellingPrice};})};
+        productStocks:stockAdditions.map(function(l) {var info=stockMap[l.productCode];return {productCode:l.productCode,currentStock:addStockQuantity_(info.stock,l.qty),minStock:info.minStock,costPrice:info.costPrice,sellingPrice:info.sellingPrice};})};
       sealStockRequest_(writes,request,result);
       commitAttempted=true;
       var commit = fsCommit_(writes);
@@ -3736,8 +3814,7 @@ function safeEquals_(a, b) {
 // ★ NEW: เช็คว่ารหัสผ่านใหม่ซ้ำกับรหัสผ่านปัจจุบันของ user หรือไม่ (กันตั้งรหัสเดิมซ้ำ)
 //   ใช้ salt เดิมของ user มา hash รหัสใหม่แล้วเทียบกับ Password_Hash ปัจจุบัน
 function isSamePassword_(user, newPassword) {
-  if (!user || !user.Password_Hash || !user.Salt) return false;
-  return safeEquals_(hashPassword_(newPassword, user.Salt), user.Password_Hash);
+  return verifyStoredPassword_(newPassword, user);
 }
 
 var BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -3789,16 +3866,15 @@ function computeTotp_(secretB32, timeStep) {
   return ("000000" + otp).slice(-6);
 }
 
-function verifyTotp_(secretB32, code) {
-  if (!secretB32 || !code) return false;
-  var clean = String(code).replace(/\D/g, "");
-  if (clean.length !== 6) return false;
+function matchingTotpStep_(secretB32, code) {
+  var clean = String(code || "").trim();
+  if (!secretB32 || !/^\d{6}$/.test(clean)) return null;
 
   var now = Math.floor(Date.now() / 1000 / 30);
-  for (var drift = -1; drift <= 1; drift++) {
-    if (safeEquals_(computeTotp_(secretB32, now + drift), clean)) return true;
+  for (var drift = 1; drift >= -1; drift--) {
+    if (safeEquals_(computeTotp_(secretB32, now + drift), clean)) return now + drift;
   }
-  return false;
+  return null;
 }
 // ★ FIX: เดิมผูก session กับ User-Agent เพื่อกันขโมย token — แต่ UA ที่ doGet() เช็คมาจาก query
 //   parameter (?ua=...) ที่ฝังไปพร้อม token ในลิงก์เดียวกันตอน redirect หลัง login สำเร็จ
@@ -3905,7 +3981,9 @@ function generateRecoveryCodes_() {
 function consumeRecoveryCode_(user, code) {
   try {
     var fresh = readAuthUser_(user.docId);
-    if (!fresh.updateTime || fresh.Status !== "Active" || fresh.Password_Hash !== user.Password_Hash) return false;
+    if (!fresh.updateTime || fresh.Status !== "Active" || !fresh.Totp_Enabled ||
+        fresh.Totp_Secret_Enc !== user.Totp_Secret_Enc || fresh.Password_Hash !== user.Password_Hash ||
+        fresh.Session_Version !== user.Session_Version || Date.parse(fresh.Locked_Until) > Date.now()) return false;
     var list = JSON.parse(fresh.Recovery_Codes || "[]");
     var target = hashPassword_(String(code).trim().toUpperCase(), "recovery");
     var idx = list.findIndex(function(hash) { return safeEquals_(hash, target); });
@@ -3925,47 +4003,52 @@ function authLogin(username, password, otpCode, userAgent) {
 
     var genericFail = { success: false, message: "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" };
 
-    if (!user) return genericFail;
-
-    if (user.Status !== "Active") return { success: false, message: "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ" };
-
-    if (user.Locked_Until) {
-      var lockedUntil = new Date(user.Locked_Until);
-      if (!isNaN(lockedUntil.getTime()) && lockedUntil > new Date()) {
-        var mins = Math.ceil((lockedUntil - new Date()) / 60000);
-        return { success: false, message: "บัญชีถูกล็อกชั่วคราว กรุณารออีก " + mins + " นาที" };
-      }
-    }
-
-    if (!safeEquals_(hashPassword_(password, user.Salt), user.Password_Hash)) {
-      var failed=recordFailedLogin_(user.docId);
-      if(!failed.ok)return {success:false,message:'ตรวจสอบบัญชีไม่สำเร็จ กรุณาลองใหม่'};
-      if(failed.locked)return {success:false,message:'บัญชีถูกล็อกชั่วคราว '+AUTH_LOCK_MINUTES+' นาที'};
+    if (!user || user.Status !== "Active" || Date.parse(user.Locked_Until) > Date.now()) {
+      encodePasswordHash_(password, "syy-login-timing-v1");
       return genericFail;
     }
 
+    var legacyPassword = !usesPasswordKdf_(user.Password_Hash);
+    if (!verifyStoredPassword_(password, user)) {
+      if (legacyPassword) encodePasswordHash_(password, "syy-login-timing-v1");
+      recordFailedLogin_(user.docId);
+      return genericFail;
+    }
+
+    var otpStep = null;
+    var otpFailure = {success:false, needOtp:true, message:"รหัส OTP ไม่ถูกต้องหรือใช้แล้ว กรุณารอรหัสใหม่"};
     if (user.Totp_Enabled) {
       if (!otpCode) {
         return { success: false, needOtp: true, message: "กรุณากรอกรหัส 6 หลักจากแอป Authenticator" };
       }
       var secret = decryptSecret_(user.Totp_Secret_Enc);
-      var otpOk = verifyTotp_(secret, otpCode);
-
-      if (!otpOk) otpOk = consumeRecoveryCode_(user, otpCode);
-
-      if (!otpOk) {
-        if(!recordFailedLogin_(user.docId).ok)return {success:false,message:'ตรวจสอบบัญชีไม่สำเร็จ กรุณาลองใหม่'};
-        return { success: false, needOtp: true, message: "รหัส OTP ไม่ถูกต้อง" };
+      otpStep = matchingTotpStep_(secret, otpCode);
+      if (otpStep !== null && otpStep <= (Number(user.Last_Totp_Step) || 0)) return otpFailure;
+      if (otpStep === null && !consumeRecoveryCode_(user, otpCode)) {
+        recordFailedLogin_(user.docId);
+        return otpFailure;
       }
     }
 
+    var nextPasswordHash = legacyPassword ? encodePasswordHash_(password, user.Salt) : user.Password_Hash;
     var verified=readAuthUser_(user.docId);
     if(verified.Status!=='Active' || verified.Password_Hash!==user.Password_Hash || verified.Session_Version!==user.Session_Version ||
-      new Date(verified.Locked_Until).getTime()>Date.now())return genericFail;
-    if(!updateUserFields_(user.docId,{Failed_Attempts:0,Locked_Until:'',Last_Login:new Date().toISOString()},verified.updateTime))
+      verified.Totp_Enabled!==user.Totp_Enabled || verified.Totp_Secret_Enc!==user.Totp_Secret_Enc ||
+      Date.parse(verified.Locked_Until)>Date.now())return genericFail;
+    var loginFields = {Failed_Attempts:0,Locked_Until:'',Last_Login:new Date().toISOString()};
+    if (otpStep !== null) {
+      if (otpStep <= (Number(verified.Last_Totp_Step) || 0)) return otpFailure;
+      loginFields.Last_Totp_Step = otpStep;
+    }
+    if (legacyPassword) {
+      loginFields.Password_Hash = nextPasswordHash;
+      loginFields.Session_Version = user.Session_Version;
+    }
+    if(!updateUserFields_(user.docId,loginFields,verified.updateTime))
       return {success:false,message:'บัญชีเปลี่ยนแปลงแล้ว กรุณาลองเข้าสู่ระบบใหม่'};
     user=readAuthUser_(user.docId);
-    if(user.Status!=='Active' || user.Password_Hash!==verified.Password_Hash || user.Session_Version!==verified.Session_Version)return genericFail;
+    if(user.Status!=='Active' || user.Password_Hash!==nextPasswordHash || user.Session_Version!==verified.Session_Version ||
+      user.Totp_Enabled!==verified.Totp_Enabled || user.Totp_Secret_Enc!==verified.Totp_Secret_Enc)return genericFail;
     // เช็คว่าต้องบังคับเปลี่ยนรหัสผ่านก่อนหรือไม่
     var mustChange = user.Must_Change_Password === true;
     if (!mustChange && user.Password_Changed_At) {
@@ -4001,7 +4084,7 @@ function authLogin(username, password, otpCode, userAgent) {
 
   } catch (e) {
     console.error("authLogin error:", e);
-    return { success: false, message: "เกิดข้อผิดพลาดในระบบ: " + e.message };
+    return { success: false, message: "ตรวจสอบการเข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่" };
   }
 }
 
@@ -4282,7 +4365,9 @@ function clientReadVersion_(scopes){
   var keys=scopes.map(function(name){return collectionCacheBaseKey_(name)+'__disabled';}),disabled=CacheService.getScriptCache().getAll(keys);
   if(keys.some(function(key){return disabled[key];}))throw new Error('Cache bypass');
   var props=PropertiesService.getScriptProperties().getProperties();
-  return (scopes.indexOf('Stock_Movements')>=0||scopes.indexOf('Quotations')>=0?'stock-correction-v1|':'')+scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
+  return (scopes.indexOf('Stock_Movements')>=0||scopes.indexOf('Quotations')>=0?'stock-correction-v1|':'')+
+    (scopes.indexOf('Quotations')>=0||scopes.indexOf('Master_Tax_Invoice')>=0?'document-versions-v1|':'')+
+    scopes.map(function(name){return props['cache_gen_'+name]||'0';}).join('|');
 }
 function clientReadExpiry_(scopes,maxAge){
   var expiry=Date.now()+maxAge;
@@ -4322,6 +4407,17 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
       return { success: false, message: "รูปแบบข้อมูลคำขอไม่ถูกต้อง" };
     }
     var a = args || [];
+    if (fnName === "saveQuotation" || fnName === "saveTaxInvoice") {
+      var documentInput = a[0] || {};
+      if (documentInput.docId) {
+        if (!validDocumentId_(documentInput.docId) || typeof documentInput.expectedUpdateTime !== "string" ||
+            !documentInput.expectedUpdateTime || documentInput.expectedUpdateTime.length > 100) return documentEditConflict_();
+      } else if (typeof documentInput.requestId !== "string" || !/^[A-Za-z0-9-]{8,80}$/.test(documentInput.requestId)) {
+        return {success:false, message:"กรุณารีเฟรชหน้าเพื่อส่งรายการพร้อมรหัสคำขอ"};
+      }
+    }
+    if (fnName === "updateQuotationStatus" && (!validDocumentId_(a[0]) || typeof a[2] !== "string" || !a[2] || a[2].length > 100))
+      return documentEditConflict_();
     // Completing bills may include lines outside the recent-history window.
     // Keep the same staff boundary as the existing full-detail endpoint.
     if(fnName==='getStockMovementPage'&&a[0]&&a[0].billMode===true&&userRank<ROLE_RANK.staff)
@@ -4332,7 +4428,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     }
 
     var identityPositions = {resetUserPassword:1, toggleUserStatus:2, updateUserAccount:4,
-      issueStock:1, receiveGoods:1, saveQuotation:1, markQuotationStockIssued:2,
+      issueStock:1, receiveGoods:1, saveQuotation:1, saveTaxInvoice:1, markQuotationStockIssued:2,
       getStockIssueCorrectionPreview:1,correctStockIssue:1};
     a = a.slice();
     if (Object.prototype.hasOwnProperty.call(identityPositions, fnName)) {
@@ -4504,7 +4600,7 @@ function setupFirstAdmin_() {
     if(existingUsers.docs.some(function(d){return normalizedDuplicateKey_(parseFirestoreValue_((d.fields||{}).Username))==='admin';}))return {success:false,message:'มีผู้ใช้ admin อยู่แล้ว ใช้ลืมรหัสผ่านเพื่อขอลิงก์ใหม่'};
     var salt=makeSalt_();
     var result=saveMasterData_(AUTH_USERS_COLLECTION,'U',null,{Username:'admin',Full_Name:'ผู้ดูแลระบบ',Email:ADMIN_EMAIL,
-      Password_Hash:hashPassword_(generateTempPassword_(),salt),Salt:salt,Role:'admin',Status:'Active',Totp_Enabled:'false',
+      Password_Hash:encodePasswordHash_(generateTempPassword_(),salt),Salt:salt,Role:'admin',Status:'Active',Totp_Enabled:'false',
       Totp_Secret_Enc:'',Recovery_Codes:'[]',Failed_Attempts:0,Locked_Until:'',Last_Login:'',Session_Version:Utilities.getUuid(),
       Password_Changed_At:'',Must_Change_Password:'true'},null);
     if(!result || !result.success)return {success:false,message:'สร้าง admin ไม่สำเร็จ'};
@@ -4529,7 +4625,7 @@ function authChangePassword_(token, oldPassword, newPassword) {
   var user = readAuthUser_(session.docId);
   if (!user) return { success: false, message: "ไม่พบบัญชีผู้ใช้" };
 
-  if (!safeEquals_(hashPassword_(oldPassword, user.Salt), user.Password_Hash)) {
+  if (!verifyStoredPassword_(oldPassword, user)) {
     return { success: false, message: "รหัสผ่านเดิมไม่ถูกต้อง" };
   }
 
@@ -4539,7 +4635,7 @@ function authChangePassword_(token, oldPassword, newPassword) {
 
   var newSalt = makeSalt_();
   var ok = updateUserFields_(user.docId, {
-    Password_Hash        : hashPassword_(newPassword, newSalt),
+    Password_Hash        : encodePasswordHash_(newPassword, newSalt),
     Salt                 : newSalt,
     Password_Changed_At  : new Date().toISOString(),
     Must_Change_Password : "false"
@@ -4570,7 +4666,8 @@ function authConfirmTotpSetup_(token, otpCode) {
   var secret = CacheService.getScriptCache().get("totpsetup_" + token);
   if (!secret) return { success: false, message: "หมดเวลาตั้งค่า กรุณาเริ่มใหม่อีกครั้ง" };
 
-  if (!verifyTotp_(secret, otpCode)) {
+  var otpStep = matchingTotpStep_(secret, otpCode);
+  if (otpStep === null) {
     return { success: false, message: "รหัส OTP ไม่ถูกต้อง กรุณาตรวจสอบเวลาในเครื่องและลองใหม่" };
   }
 
@@ -4581,8 +4678,9 @@ function authConfirmTotpSetup_(token, otpCode) {
   var ok = updateUserFields_(user.docId, {
     Totp_Enabled    : "true",
     Totp_Secret_Enc : encryptSecret_(secret),
-    Recovery_Codes  : recovery.hashedJson
-  });
+    Recovery_Codes  : recovery.hashedJson,
+    Last_Totp_Step  : otpStep
+  }, user.updateTime);
 
   CacheService.getScriptCache().remove("totpsetup_" + token);
 
@@ -4602,15 +4700,16 @@ function authDisableTotp_(token, password) {
   var user = findUserByUsername_(session.username);
   if (!user) return { success: false, message: "ไม่พบบัญชีผู้ใช้" };
 
-  if (!safeEquals_(hashPassword_(password, user.Salt), user.Password_Hash)) {
+  if (!verifyStoredPassword_(password, user)) {
     return { success: false, message: "รหัสผ่านไม่ถูกต้อง" };
   }
 
   var ok = updateUserFields_(user.docId, {
     Totp_Enabled    : "false",
     Totp_Secret_Enc : "",
-    Recovery_Codes  : "[]"
-  });
+    Recovery_Codes  : "[]",
+    Last_Totp_Step  : 0
+  }, user.updateTime);
 
   return ok ? { success: true, message: "ปิดการยืนยันตัวตน 2 ชั้นแล้ว" }
             : { success: false, message: "บันทึกไม่สำเร็จ" };
@@ -4696,7 +4795,7 @@ function authResetPassword(resetToken,newPassword) {
     if(!raw)return {success:false,message:'ลิงก์หมดอายุหรือถูกใช้แล้ว กรุณาขอลิงก์ใหม่'};
     var data=JSON.parse(raw),user=resetTokenUser_(data);
     if(isSamePassword_(user,newPassword))return {success:false,message:'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม'};
-    var salt=makeSalt_(),sessionVersion=Utilities.getUuid(),hash=hashPassword_(newPassword,salt);
+    var salt=makeSalt_(),sessionVersion=Utilities.getUuid(),hash=encodePasswordHash_(newPassword,salt);
     var ok=updateUserFields_(user.docId,{Password_Hash:hash,Salt:salt,Session_Version:sessionVersion,
       Password_Changed_At:new Date().toISOString(),Must_Change_Password:'false',Failed_Attempts:0,Locked_Until:''},user.updateTime);
     if(!ok){
@@ -4780,7 +4879,7 @@ function createUserAccount_(email, fullName, role) {
     Username             : username,
     Full_Name            : cleanName,
     Email                : cleanEmail,
-    Password_Hash        : hashPassword_(tempPassword, salt),
+    Password_Hash        : encodePasswordHash_(tempPassword, salt),
     Salt                 : salt,
     Role                 : cleanRole,
     Status               : "Active",
@@ -5007,7 +5106,7 @@ function authChangePasswordForced(tempToken, newPassword, userAgent) {
     }
 
     var sessionVersion=Utilities.getUuid();
-    var newSalt = makeSalt_(),newHash=hashPassword_(newPassword,newSalt);
+    var newSalt = makeSalt_(),newHash=encodePasswordHash_(newPassword,newSalt);
     var ok = updateUserFields_(user.docId, {
       Session_Version      : sessionVersion,
       Password_Hash        : newHash,
@@ -5126,10 +5225,10 @@ function getProductStockMap_(codes) {
 
 /**
  * ★ ตัดสต๊อก — ใช้จากหน้า StockIssue.html
- * d = { reason, refNo, note, allowNegative, items:[{productCode, productName, qty, expectedUnitPrice}] }
+ * d = { reason, refNo, note, items:[{productCode, productName, qty, expectedUnitPrice}] }
  * callerUsername = username จริงจาก session (apiGateway inject ให้อัตโนมัติ)
  *
- * ทำใน commit เดียว: ลดสต๊อก (fieldTransform increment ค่าลบ) + เขียน Stock_Movements ทุกบรรทัด
+ * ทำใน commit เดียว: ปรับสต๊อกพร้อม precondition + เขียน Stock_Movements ทุกบรรทัด
  * ถ้าคอมมิตไม่ผ่าน จะไม่มีอะไรถูกเขียนเลย (atomic) — สต๊อกกับ log จึงไม่หลุดจากกัน
  */
 function issueStockFromClient_(d, callerUsername) {
@@ -5175,7 +5274,7 @@ function issueStock_(d, callerUsername, requireReviewedPrice) {
         }
         merged[code].expectedUnitPrice = reviewedPrice;
       }
-      merged[code].qty += Number(it.qty);
+      merged[code].qty = addStockQuantity_(merged[code].qty, Number(it.qty));
     });
     var lines0 = Object.keys(merged).map(function (k) { return merged[k]; });
 
@@ -5188,7 +5287,7 @@ function issueStock_(d, callerUsername, requireReviewedPrice) {
 
     // ★ FIX: เดิมอ่านสต๊อกมาตรวจ "พอไหม" ครั้งเดียวแล้วค่อยเขียน increment แยกจังหวะกัน — ถ้า 2 คำขอ
     //   ตัดสต๊อกสินค้าตัวเดียวกัน (เช่นชิ้นสุดท้าย) มาพร้อมกันพอดี ทั้งคู่จะอ่านเจอว่า "พอ" ก่อนที่อีกฝ่าย
-    //   จะเขียนจริง ทำให้สต๊อกติดลบได้ทั้งที่ไม่มีใครสั่ง allowNegative เลย — ผูก updateTime ตอนอ่านเป็น
+    //   จะเขียนจริง ทำให้สต๊อกติดลบได้ — ผูก updateTime ตอนอ่านเป็น
     //   precondition ตอนเขียน ถ้ามีคนแก้สินค้าตัวเดียวกันแทรกก่อน commit ทั้งชุดจะถูกปฏิเสธ (atomic)
     //   แล้ววนกลับไปอ่าน-ตรวจ-เขียนใหม่ในรอบถัดไปแทน
     var MAX_ATTEMPTS = 3;
@@ -5213,7 +5312,7 @@ function issueStock_(d, callerUsername, requireReviewedPrice) {
         var info = stockMap[l.productCode];
         if (!info || !info.updateTime) { notFound.push(l.productCode); return; }
         l.before     = info.stock;
-        l.after      = info.stock - l.qty;
+        l.after      = addStockQuantity_(info.stock, -l.qty);
         l.minStock   = info.minStock;
         l.costPrice  = info.costPrice;
         l.updateTime = info.updateTime;
@@ -5223,7 +5322,7 @@ function issueStock_(d, callerUsername, requireReviewedPrice) {
       });
 
       if (notFound.length)     return fail("ไม่พบสินค้ารหัส: " + notFound.join(", "));
-      if (insufficient.length && !d.allowNegative) {
+      if (insufficient.length) {
         return fail("จำนวนที่ตัดเกินสต๊อกคงเหลือ: " + insufficient.map(function (x) {
           return x.productName + " (คงเหลือ " + x.stock + " ต้องการ " + x.need + ")";
         }).join(", "), { insufficient: insufficient });
@@ -5237,14 +5336,7 @@ function issueStock_(d, callerUsername, requireReviewedPrice) {
       var writes = bill.writes.slice();
       lines.forEach(function (l, i) {
         // 1) ลดสต๊อก — ผูก precondition กับ updateTime ที่อ่านมาข้างบน
-        var stockWrite = {
-          transform: {
-            document: fsDocPath_("Master_Products", l.productCode),
-            fieldTransforms: [{ fieldPath: "Current_Stock", increment: { doubleValue: -l.qty } }]
-          }
-        };
-        if (l.updateTime) stockWrite.currentDocument = { updateTime: l.updateTime };
-        writes.push(stockWrite);
+        writes.push(stockQuantityWrite_(l.productCode, l.before, -l.qty, l.after, l.updateTime));
 
         // 2) บันทึกประวัติ (1 บรรทัด = 1 เอกสาร ทำให้ดูประวัติรายสินค้าได้)
         writes.push({
@@ -5708,23 +5800,24 @@ function appendYearMeta_(id, yearBE, initialYears) {
   var res = UrlFetchApp.fetch(url, {method:"get",headers:getAuthHeader_(),muteHttpExceptions:true});
   if (res.getResponseCode() !== 200 && res.getResponseCode() !== 404) throw new Error("อ่านข้อมูลปีเอกสารไม่สำเร็จ");
   var emptyMetadata=res.getResponseCode()===404;
-  if(res.getResponseCode()===200){var existing=parseFirestoreValue_((JSON.parse(res.getContentText()).fields||{}).Years)||[];if(!Array.isArray(existing))throw new Error("ข้อมูลปีเอกสารไม่ถูกต้อง");if(existing.map(Number).indexOf(yearBE)>=0)return;emptyMetadata=existing.length===0;}
+  if(res.getResponseCode()===200){var existing=parseFirestoreValue_((JSON.parse(res.getContentText()).fields||{}).Years)||[];if(!Array.isArray(existing))throw new Error("ข้อมูลปีเอกสารไม่ถูกต้อง");if(existing.map(Number).indexOf(yearBE)>=0)return false;emptyMetadata=existing.length===0;}
   var result,values=[yearBE];
   if(initialYears&&emptyMetadata){var initial=initialYears();if(!Array.isArray(initial))throw new Error('ข้อมูลปีเอกสารไม่ถูกต้อง');values=Array.from(new Set(initial.concat([yearBE]).map(Number)));if(values.some(function(year){return !Number.isInteger(year)||year<2400||year>3000;}))throw new Error('ปีเอกสารไม่ถูกต้อง');}
   if (res.getResponseCode() === 404) {
     result = fsCommit_([{update:{name:fsDocPath_(META_COLLECTION,id),fields:{Years:{arrayValue:{values:values.map(function(year){return {integerValue:String(year)};})}}}},currentDocument:{exists:false}}]);
-    if (result.ok) return;
+    if (result.ok) return true;
     if (!isPreconditionFailure_(result.message) && !/ALREADY_EXISTS/i.test(result.message)) throw new Error(result.message);
   }
   result = fsCommit_([{transform:{document:fsDocPath_(META_COLLECTION,id),fieldTransforms:[{fieldPath:"Years",appendMissingElements:{values:values.map(function(year){return {integerValue:String(year)};})}}]},currentDocument:{exists:true}}]);
   if (!result.ok) throw new Error("บันทึกปีเอกสารไม่สำเร็จ: " + result.message);
+  return true;
 }
 
 
 function canonicalRequest_(value) {
   if (Array.isArray(value)) return value.map(canonicalRequest_);
   if (value && typeof value === "object") {
-    var out = {}; Object.keys(value).sort().forEach(function(k) {if (k !== "requestId") out[k]=canonicalRequest_(value[k]);}); return out;
+    var out = Object.create(null); Object.keys(value).sort().forEach(function(k) {if (k !== "requestId") out[k]=canonicalRequest_(value[k]);}); return out;
   }
   return value;
 }
@@ -5881,7 +5974,9 @@ function buildStockCorrection_(draft,user) {
   codes=Array.from(new Set(codes));var stocks=draft.action==='amend'?{}:getProductStockMap_(codes),changes=[];
   if(draft.action!=='amend')codes.forEach(function(code){
     var p=stocks[code];if(!p||!p.updateTime)throw Error('ไม่พบสินค้า '+code);
-    var returned=original.filter(function(m){return m.productCode===code;}).reduce(function(n,m){return n+m.qty;},0),next=draft.items.find(function(m){return m.productCode===code;}),delta=returned-(next?next.qty:0),after=p.stock+delta;
+    var returned=original.filter(function(m){return m.productCode===code;}).reduce(function(n,m){return addStockQuantity_(n,m.qty);},0);
+    var next=draft.items.find(function(m){return m.productCode===code;});
+    var delta=addStockQuantity_(returned,-(next?next.qty:0)),after=addStockQuantity_(p.stock,delta);
     if(!validBusinessNumber_(p.stock,-Number.MAX_SAFE_INTEGER,false)||!Number.isFinite(delta)||Math.abs(after)>Number.MAX_SAFE_INTEGER)throw Error('ยอดสต๊อกไม่ถูกต้องสำหรับสินค้า '+code);
     if(delta<0&&after<0)throw Error('สต๊อกไม่พอสำหรับสินค้า '+code);
     changes.push({productCode:code,productName:p.name,before:p.stock,delta:delta,after:after,updateTime:p.updateTime});
@@ -5937,7 +6032,7 @@ function correctStockIssue_(input,user) {
       writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,doc.id),fields:mapToFirestoreFields_(fields)},updateMask:{fieldPaths:Object.keys(fields)},updateTransforms:[],currentDocument:{updateTime:doc.updateTime}});
     });
     if(draft.action!=='amend'){
-      plan.changes.filter(function(x){return x.delta!==0;}).forEach(function(x){writes.push({transform:{document:fsDocPath_('Master_Products',x.productCode),fieldTransforms:[{fieldPath:'Current_Stock',increment:{doubleValue:x.delta}}]},currentDocument:{updateTime:x.updateTime}});});
+      plan.changes.filter(function(x){return x.delta!==0;}).forEach(function(x){writes.push(stockQuantityWrite_(x.productCode,x.before,x.delta,x.after,x.updateTime));});
       // Negative OUT is an accounting reversal, never a PO receipt. A distinct
       // Doc_No preserves drilldown identity; Bill_Count_Delta nets the count.
       plan.original.forEach(function(m,i){var x=plan.changes.find(function(c){return c.productCode===m.productCode;});
@@ -6097,6 +6192,29 @@ function validBusinessNumber_(value, minimum, strictlyPositive) {
   if(typeof value!=="number" && typeof value!=="string")return false;
   if(typeof value==="string" && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim()))return false;
   var number=Number(value);return isFinite(number) && number<=Number.MAX_SAFE_INTEGER && (strictlyPositive ? number>minimum : number>=minimum);
+}
+
+// Use the decimal form of the numbers so quantities such as 0.3 - 0.1 remain 0.2.
+// The stock form and the Firestore commit use this same calculation.
+function addStockQuantity_(left, right) {
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return NaN;
+  if (Number.isSafeInteger(left) && Number.isSafeInteger(right)) return left + right;
+  function parts(value) {
+    var scientific = String(value).split("e"), decimal = scientific[0].split(".");
+    return {units:BigInt(decimal.join("")), scale:(decimal[1] || "").length - Number(scientific[1] || 0)};
+  }
+  var a = parts(left), b = parts(right), scale = Math.max(a.scale,b.scale);
+  var units = a.units * 10n ** BigInt(scale-a.scale) + b.units * 10n ** BigInt(scale-b.scale);
+  return Number(String(units) + "e" + String(-scale));
+}
+
+function stockQuantityWrite_(code, before, delta, after, updateTime) {
+  if (!updateTime) throw Error("ตรวจสอบเวอร์ชันสต๊อกไม่สำเร็จ");
+  var name = fsDocPath_("Master_Products", code), currentDocument = {updateTime:updateTime};
+  if (Number.isSafeInteger(before) && Number.isSafeInteger(delta)) {
+    return {transform:{document:name,fieldTransforms:[{fieldPath:"Current_Stock",increment:{doubleValue:delta}}]},currentDocument:currentDocument};
+  }
+  return {update:{name:name,fields:{Current_Stock:{doubleValue:after}}},updateMask:{fieldPaths:["Current_Stock"]},currentDocument:currentDocument};
 }
 
 function canonicalBackupValue_(value) {

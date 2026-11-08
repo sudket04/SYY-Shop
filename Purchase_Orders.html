@@ -308,6 +308,7 @@
 <?!= include_('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
+  var addStockQuantity = <?!= typeof stockQuantitySource === 'string' ? stockQuantitySource : 'null' ?>;
   var WEB_APP_URL = "<?= webAppUrl ?>";
 /* ══════════════════════════════════════════════════════════════
    XLFILTER ENGINE — ตัวกรอง/เรียงข้อมูลแบบ Excel สำหรับตาราง
@@ -913,13 +914,13 @@
     document.getElementById('receiveItemsBody').innerHTML = (po.items || []).map(function(it) {
       var received  = parseFloat(it.receivedQty || 0);
       var ordered   = parseFloat(it.qty || 0);
-      var remaining = Math.max(ordered - received, 0);
+      var remaining = Math.max(addStockQuantity(ordered, -received), 0);
       return '<tr data-product="' + escHtml(it.productCode) + '" data-remaining="' + remaining + '">' +
         '<td>' + escHtml(it.productName) + '</td>' +
         '<td class="text-center">' + ordered + '</td>' +
         '<td class="text-center">' + received + '</td>' +
         '<td class="text-center recv-remaining">' + remaining + '</td>' +
-        '<td class="text-center"><input type="number" min="0" max="' + remaining + '" class="recv-qty-input" aria-label="จำนวนที่รับ ' + escHtml(it.productName || it.productCode) + '" value="' + remaining + '" onchange="onReceiveQtyInput(this)"></td>' +
+        '<td class="text-center"><input type="number" min="0" step="any" max="' + remaining + '" class="recv-qty-input" aria-label="จำนวนที่รับ ' + escHtml(it.productName || it.productCode) + '" value="' + remaining + '" onchange="onReceiveQtyInput(this)"></td>' +
         '</tr>';
     }).join('');
 
@@ -939,12 +940,7 @@
   }
 
   function onReceiveQtyInput(inputEl) {
-    var row = inputEl.closest('tr');
-    var remaining = parseFloat(row.getAttribute('data-remaining'));
-    var val = parseFloat(inputEl.value);
-    if (isNaN(val) || val < 0) val = 0;
-    if (val > remaining) val = remaining;
-    inputEl.value = val;
+    if (!inputEl.validity.valid) inputEl.reportValidity();
     updateReceiveCompleteBanner();
   }
 
@@ -955,9 +951,9 @@
     rows.forEach(function(row) {
       var remaining = parseFloat(row.getAttribute('data-remaining'));
       var input = row.querySelector('.recv-qty-input');
-      var val = parseFloat(input.value || 0);
-      if (val > 0) anyEntered = true;
-      if (val < remaining) allComplete = false;
+      var val = Number(input.value);
+      if (input.validity.valid && val > 0) anyEntered = true;
+      if (!input.validity.valid || val < remaining) allComplete = false;
     });
 
     var banner = document.getElementById('receiveCompleteBanner');
@@ -1008,10 +1004,15 @@
 
     var items = [];
     var allComplete = true;
+    var invalidQty = Array.from(document.querySelectorAll('#receiveItemsBody .recv-qty-input')).find(function(input){return !input.validity.valid;});
+    if (invalidQty) {
+      invalidQty.reportValidity();
+      return;
+    }
     document.querySelectorAll('#receiveItemsBody tr').forEach(function(row) {
       var productCode = row.getAttribute('data-product');
       var remaining   = parseFloat(row.getAttribute('data-remaining'));
-      var val = parseFloat(row.querySelector('.recv-qty-input').value || 0);
+      var val = Number(row.querySelector('.recv-qty-input').value);
       if (val < remaining) allComplete = false;
       if (val > 0) items.push({ productCode: productCode, qtyReceivedNow: val });
     });

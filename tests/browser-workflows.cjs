@@ -269,6 +269,21 @@ async function main() {
     await page.locator('#movementDetailBody .product-name-cell').getByText(/ผ้าเบรกทดสอบ/).waitFor();
   });
 
+  await check('POS: adding a fractional-stock product defaults to available quantity and commits it exactly',async()=>{
+    store.put('Master_Products/P-FRACTION',{Product_Name:'สินค้าทศนิยม',Barcode:'900001',
+      Current_Stock:0.3,Cost_Price:10,Selling_Price:20,Status:'Active'});
+    api.clearCollectionCache_('Master_Products');
+    await open('stockissue');
+    await page.waitForFunction(()=>products.some(p=>p.productCode==='P-FRACTION'));
+    await fill({searchInput:'900001',inpRefNo:'UAT-FRACTION'});
+    await page.locator('#searchInput').press('Enter');
+    assert.equal(await page.locator('#basketLines input[type=number]').inputValue(),'0.3');
+    await click('#btnConfirm');
+    await confirm();
+    await page.waitForFunction(()=>!issueBusy&&document.getElementById('btnConfirm').disabled);
+    assert.equal(store.value('Master_Products/P-FRACTION','Current_Stock'),0);
+  });
+
   await check('Quotation: Viewer picks customer and SKU, types quantity and saves',async()=>{
     await open('quotation','viewer');
     await page.waitForFunction(()=>document.querySelector('#selCustomer option[value="C001"]'));

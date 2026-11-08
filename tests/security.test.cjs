@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-const sources = ['Code.gs', 'ProductImagesV2.gs'].map(file => fs.readFileSync(path.join(root, file), 'utf8'));
+const sources = ['Code.gs', 'ProductImagesV2.gs', 'PasswordKdf.gs'].map(file => fs.readFileSync(path.join(root, file), 'utf8'));
 const declared = [...sources.join('\n').matchAll(/^function\s+(\w+)\s*\(/gm)].map(m => m[1]);
 const publicNames = declared.filter(name => !name.endsWith('_'));
 const expectedPublic = ['doGet','apiGateway','apiGatewayV2','authLogin','authForgotPassword','authVerifyResetToken','authResetPassword','authChangePasswordForced'];
@@ -21,7 +21,7 @@ function setup() {
     CacheService:{getScriptCache:()=>({get:key=>cache.get(key)||null,put:(key,value)=>cache.set(key,value),remove:key=>cache.delete(key)})},
     PropertiesService:{getScriptProperties:()=>({getProperty:key=>props[key]||null,setProperty:(key,value)=>props[key]=value,setProperties:values=>Object.assign(props,values)})},
     LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock(){}}),getUserLock:()=>({tryLock:()=>true,releaseLock(){}})},
-    Utilities:{base64Encode:v=>Buffer.from(v).toString('base64'),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,value)=>Array.from(require('node:crypto').createHash('sha256').update(String(value)).digest()),getUuid:()=> 'dummy-'+(++sequence),formatDate:()=> '2026-10-11'},
+    Utilities:{newBlob:v=>({getBytes:()=>Array.from(Buffer.from(v,'utf8'))}),base64Encode:v=>Buffer.from(v).toString('base64'),DigestAlgorithm:{SHA_256:'sha256'},computeDigest:(_,value)=>Array.from(require('node:crypto').createHash('sha256').update(String(value)).digest()),getUuid:()=> 'dummy-'+(++sequence),formatDate:()=> '2026-10-11'},
     ScriptApp:{getOAuthToken:()=> 'dummy-oauth',getService:()=>({getUrl:()=> 'https://example.invalid/shop'}),
       WeekDay:{SUNDAY:'SUNDAY'},getProjectTriggers:()=>[],deleteTrigger:t=>removed.push(t),
       newTrigger(handler){const config={handler}; const builder={
@@ -96,7 +96,8 @@ test('all V1 operations retain names, private dispatch, response and existing ro
       let reached=false;
       s.c.getSession_=()=>s.session(role);
       s.c.API_FUNCTIONS[name]=()=>{reached=true;return {success:true,id:'unchanged-response'};};
-      const args=name==='saveMasterData'?['Master_Brands','B','',{Brand_Name:'B'},'B']:[];
+      const documentArgs={saveTaxInvoice:[{requestId:'test-request'}],saveQuotation:[{requestId:'test-request'}],updateQuotationStatus:['Q1','ร่าง','v1']};
+      const args=name==='saveMasterData'?['Master_Brands','B','',{Brand_Name:'B'},'B']:documentArgs[name]||[];
       const result=s.rpc('apiGateway',['dummy',name,args]);
       const allowed=roles[role]>=roles[minRole];
       assert.equal(reached,allowed,name+'/'+role);assert.equal(result.success,allowed,name+'/'+role);
@@ -157,7 +158,7 @@ test('login and OTP pre-login endpoint still issue existing sessions',()=>{
   const s=setup();const user=s.loginUser();
   let result=s.rpc('authLogin',['staff','password',undefined,'ua']);
   assert.equal(result.success,true);assert.equal(s.c.getSession_(result.token).role,'staff');
-  user.Totp_Enabled=true;s.c.decryptSecret_=()=> 'dummy-secret';s.c.verifyTotp_=(_,otp)=>otp==='123456';
+  user.Totp_Enabled=true;s.c.decryptSecret_=()=> 'dummy-secret';s.c.matchingTotpStep_=(_,otp)=>otp==='123456'?100:null;
   assert.equal(s.rpc('authLogin',['staff','password',undefined,'ua']).needOtp,true);
   result=s.rpc('authLogin',['staff','password','123456','ua']);assert.equal(result.success,true);
   assert.equal(s.c.getSession_(result.token).username,'staff');assert(s.network.every(x=>x.options.method==='get'));
@@ -169,7 +170,8 @@ test('forgot, verify and reset endpoints retain valid reset flow without a sessi
   const token=key.slice('pwreset_'.length);
   assert.equal(s.rpc('authVerifyResetToken',[token]).success,true);
   assert.equal(s.rpc('authResetPassword',[token,'new-password']).success,true);
-  assert.equal(s.writes.length,1);assert.equal(s.writes[0].data.Password_Hash,'hash:new-password');
+  assert.equal(s.writes.length,1);assert.match(s.writes[0].data.Password_Hash,/^pbkdf2-sha256\$600000\$/);
+  assert.equal(s.c.verifyStoredPassword_('new-password',{Password_Hash:s.writes[0].data.Password_Hash,Salt:s.writes[0].data.Salt}),true);
   assert.equal(s.rpc('authVerifyResetToken',[token]).success,false);assert(s.network.every(x=>x.options.method==='get'));
 });
 test('forced password change remains available before login and creates a session',()=>{

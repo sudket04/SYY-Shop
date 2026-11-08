@@ -128,7 +128,7 @@ function setup(options={}){
     ScriptApp:{getOAuthToken:()=> 'mock',getService:()=>({getUrl:()=> 'https://example.invalid/shop'})},
     Session:{getEffectiveUser:()=>owner,getActiveUser:()=>owner},MimeType:{PLAIN_TEXT:'text/plain'},MailApp:{sendEmail(){}}
   });
-  for(const file of ['Code.gs','ProductImagesV2.gs'])vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..','..',file),'utf8'),c);
+  for(const file of ['Code.gs','ProductImagesV2.gs','PasswordKdf.gs'])vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..','..',file),'utf8'),c);
   c.BACKUP_FOLDER_ID=''; // Fixtures never target the user's actual Drive destination.
   if(options.legacyBackup)vm.runInContext('backupAllDataToBackup_ = '+require('./legacy-backup.cjs').toString(),c);
   c.readTime='2026-10-11T05:10:00.000Z';c.logActivity_=()=>{};

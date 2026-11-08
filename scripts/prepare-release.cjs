@@ -33,7 +33,7 @@ function stagingSource(source,project,mailbox) {
     '  MailApp.sendEmail('+JSON.stringify(mailbox)+', "[STAGING] " + subject, body);\n}\n';
 }
 function validateSources(files) {
-  for(const name of ['Code.gs','ProductImagesV2.gs','index.html','login.html','Shared.html','appsscript.json'])
+  for(const name of ['Code.gs','ProductImagesV2.gs','PasswordKdf.gs','index.html','login.html','Shared.html','appsscript.json'])
     if(!files.has(name))throw Error('Missing release dependency: '+name);
   for(const [name,bytes] of files) {
     const source=bytes.toString('utf8');

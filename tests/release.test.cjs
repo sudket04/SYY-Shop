@@ -10,7 +10,7 @@ const staging={stagingProjectId:'fixture-staging-shop',stagingMailbox:'tester@ex
 test('review bundle includes complete client/backend, checksums, routes and manifest without credentials',()=>{
   const before=sha(fs.readFileSync(path.join(root,'Code.gs'))),result=prepareRelease();
   assert.equal(result.mode,'review');assert.equal(result.targetProjectId,null);assert.equal(result.deployed,false);
-  assert.equal(result.files.length,25);assert(result.files.some(f=>f.name==='UiBootstrap.html'));
+  assert.equal(result.files.length,26);assert(result.files.some(f=>f.name==='UiBootstrap.html'));
   const metadata=verifyRelease(result.directory);
   assert.equal(metadata.commit,result.commit);
   assert(metadata.files.every(f=>f.sha256===f.originalSha256));
@@ -31,7 +31,7 @@ test('generated staging source isolates Firestore, Drive folders/properties and 
   const productionImages=s.makeFolder(s.c.PRODUCT_IMAGE_FOLDER_NAME),productionBackups=s.makeFolder(s.c.BACKUP_FOLDER_NAME);
   s.props.PRODUCT_IMAGE_DRIVE_FOLDER_ID=productionImages.getId();
   s.c.MailApp.sendEmail=(...args)=>mail.push(args);
-  for(const file of ['Code.gs','ProductImagesV2.gs'])
+  for(const file of ['Code.gs','ProductImagesV2.gs','PasswordKdf.gs'])
     vm.runInContext(fs.readFileSync(path.join(result.directory,'source',file),'utf8'),s.c);
   assert.equal(s.c.PROJECT_ID,staging.stagingProjectId);
   assert.equal(s.c.BACKUP_FOLDER_ID,'');

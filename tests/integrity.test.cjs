@@ -8,6 +8,164 @@ const issue={requestId:'request-stock-0001',reason:'ขายหน้าร้�
 const receive={requestId:'request-receive-0001',poId:'PO1',invoiceNo:'INV1',receiptDate:'2026-10-11',receiverName:'Staff',deliveryNoteNo:'DN1',items:[{productCode:'P1',qtyReceivedNow:5}]};
 function po(s){s.put('Purchase_Orders/PO1',{Status:'Ordered',Vendor_ID:'V1',Items_JSON:JSON.stringify([{productCode:'P1',productName:'Part',qty:10,costPrice:75,receivedQty:0}]),Receipts_JSON:'[]'});}
 
+function gatewayFixture(role) {
+  const s=setup();s.seed();s.put('Master_Customers/C1',{Customer_Name:'Buyer'});
+  const user=s.user({Role:role}),token=s.c.createSession_(user).token;
+  return {...s,api:(name,...args)=>s.c.apiGateway(token,name,args)};
+}
+
+const invoiceRequest={requestId:'invoice-create-0001',invoiceDate:'2026-10-11',buyerName:'Buyer',items:[{name:'Part',qty:1,unitPrice:100}]};
+const quoteRequest={requestId:'quote-create-0001',quoteDate:'2026-10-11',customerId:'C1',items:[{productCode:'P1',qty:1,unitPrice:100}]};
+
+test('status changes reject cross-collection paths, retain encoded document IDs and cannot resurrect deleted quotes',()=>{
+  const s=gatewayFixture('staff'),version=s.docs.get('Master_Products/P1').updateTime;
+  for (const id of ['../Master_Products/P1','../Master_Users/U1','..','x/P1','%2e%2e%2fMaster_Products%2fP1']) {
+    assert.equal(s.api('updateQuotationStatus',id,'ส่งลูกค้าแล้ว',version).success,false,id);
+    assert.equal(s.api('updatePurchaseOrderStatus',id,'Ordered').success,false,id);
+  }
+  assert.equal(s.docs.get('Master_Products/P1').updateTime,version);
+  assert.equal(s.value('Master_Users/U1','Status'),'Active');
+  assert.equal(s.api('updateQuotationStatus','MISSING','ส่งลูกค้าแล้ว',version).success,false);
+  assert(!s.docs.has('Quotations/MISSING'));
+  s.put('Quotations/Q?% 1',{Quote_No:'Q1',Status:'ร่าง'});
+  const key='Quotations/Q?% 1',expected=s.docs.get(key).updateTime;
+  assert.equal(s.api('updateQuotationStatus','Q?% 1','ส่งลูกค้าแล้ว',expected).success,true);
+  assert.equal(s.api('updateQuotationStatus','Q?% 1','ร่าง',expected).success,false);
+  s.c.beforePatch=id=>s.docs.delete(id);
+  assert.equal(s.api('updateQuotationStatus','Q?% 1','ร่าง',s.docs.get(key).updateTime).success,false);
+  assert(!s.docs.has(key));
+});
+
+test('document retries recover one saved number after response loss and never re-create a deleted document',()=>{
+  for (const [operation,collection,number,payload,key] of [
+    ['saveTaxInvoice','Master_Tax_Invoice','Invoice_No',invoiceRequest,'invoice'],
+    ['saveQuotation','Quotations','Quote_No',quoteRequest,'quotation']
+  ]) {
+    const s=gatewayFixture('viewer'),commit=s.c.UrlFetchApp.fetch;
+    let lost=false;
+    s.c.UrlFetchApp.fetch=(url,options)=>{
+      if (!lost && url.endsWith('documents:commit') && JSON.parse(options.payload).writes.some(w=>w.update?.name.includes('/'+collection+'/'))) {
+        lost=true;s.c.loseCommitResponse=true;
+      }
+      return commit(url,options);
+    };
+    const first=s.api(operation,payload),again=s.api(operation,plain(payload));
+    assert(lost);assert.equal(first.success,true,first.message);assert(first.replayed);
+    assert.equal(again.id,first.id);assert(again.replayed);
+    assert.equal(again[key].updateTime,s.docs.get(collection+'/'+first.id).updateTime);
+    const metadata=key==='invoice'?'tax_invoice_years':'quotation_years';
+    assert(s.value('Meta_Counters/'+metadata,'Years').map(Number).includes(2569));
+    assert(s.value(collection+'/'+first.id,number));
+    assert.equal(s.api(operation,{...payload,note:'changed'}).success,false);
+    const documents=()=>[...s.docs.keys()].filter(id=>id.startsWith(collection+'/'));
+    assert.deepEqual(documents(),[collection+'/'+first.id]);
+    s.docs.delete(collection+'/'+first.id);
+    assert(s.api(operation,payload).replayed);
+    assert.deepEqual(documents(),[]);
+  }
+});
+
+test('two simultaneous invoice creates with one request ID allocate one invoice number',()=>{
+  const s=gatewayFixture('viewer');
+  const fetch=s.c.UrlFetchApp.fetch;
+  s.c.UrlFetchApp.fetch=(url,options)=>{
+    if (url.endsWith('documents:commit') && !s.c.beforeCommit && !s.second &&
+        JSON.parse(options.payload).writes.some(w=>w.update?.name.includes('/Master_Tax_Invoice/'))) {
+      s.c.beforeCommit=()=>{s.second={pending:true};s.second=s.api('saveTaxInvoice',invoiceRequest);};
+    }
+    return fetch(url,options);
+  };
+  const first=s.api('saveTaxInvoice',invoiceRequest);
+  assert(first.success,first.message);assert(s.second.success,s.second.message);
+  assert.equal(first.id,s.second.id);
+  assert.equal(first.invoice.invoiceNo,s.second.invoice.invoiceNo);
+  assert.equal([...s.docs.keys()].filter(id=>id.startsWith('Master_Tax_Invoice/')).length,1);
+});
+
+test('invoice and quotation edits require the version originally displayed and preserve the winning edit',()=>{
+  for (const [operation,collection,load,key,payload] of [
+    ['saveTaxInvoice','Master_Tax_Invoice','getTaxInvoiceListData','invoices',invoiceRequest],
+    ['saveQuotation','Quotations','getQuotationListData','quotations',quoteRequest]
+  ]) {
+    const s=gatewayFixture('viewer'),created=s.api(operation,payload);
+    assert(created.success,created.message);
+    const original=s.api(load,2569)[key].find(d=>d.id===created.id);
+    assert(original.updateTime);
+    const edit={...payload,docId:created.id,expectedUpdateTime:original.updateTime};
+    assert(s.api(operation,{...edit,note:'window A'}).success);
+    assert.equal(s.api(operation,{...edit,note:'stale window B'}).success,false);
+    assert.equal(s.api(operation,{...edit,expectedUpdateTime:'',note:'no version'}).success,false);
+    assert.equal(s.value(collection+'/'+created.id,'Note'),'window A');
+  }
+});
+
+test('quotation rejects the entire request for malformed decimal prices or quantities',()=>{
+  const s=gatewayFixture('viewer'),good=quoteRequest.items[0];
+  for (const field of ['qty','unitPrice','costPrice']) {
+    assert.equal(s.api('saveQuotation',{...quoteRequest,items:[good,{...good,[field]:'0x10'}]}).success,false,field);
+  }
+  assert.equal(s.commits.length,0);
+  const result=s.api('saveQuotation',{...quoteRequest,items:[{...good,qty:'0.3',unitPrice:'0'}]});
+  assert(result.success,result.message);assert.equal(result.quotation.items[0].qty,0.3);assert.equal(result.quotation.items[0].unitPrice,0);
+});
+
+test('stock rejects availability override and commits exact fractional sales and receipts',()=>{
+  const s=gatewayFixture('staff');
+  s.put('Master_Products/P1',{Product_Name:'Part',Current_Stock:0.3,Selling_Price:200,Cost_Price:75});
+  const sell=(id,qty,extra={})=>s.api('issueStock',{...issue,requestId:id,items:[{productCode:'P1',qty,expectedUnitPrice:200}],...extra});
+  assert.equal(sell('override-test-0001',0.30000000000000004,{allowNegative:true}).success,false);
+  assert.equal(s.commits.length,0);
+  assert(sell('fraction-sale-0001',0.1).success);assert.equal(s.value('Master_Products/P1','Current_Stock'),0.2);
+  assert(sell('fraction-sale-0002',0.2).success);assert.equal(s.value('Master_Products/P1','Current_Stock'),0);
+  s.put('Purchase_Orders/PO1',{Status:'Ordered',Items_JSON:JSON.stringify([{productCode:'P1',qty:0.3,costPrice:75}]),Receipts_JSON:'[]'});
+  const get=(id,qty)=>s.api('receiveGoods',{...receive,requestId:id,deliveryNoteNo:id,items:[{productCode:'P1',qtyReceivedNow:qty}]});
+  const first=get('fraction-recv-0001',0.1),second=get('fraction-recv-0002',0.2);
+  assert.equal(first.status,'PartiallyReceived',first.message);
+  assert.equal(second.status,'Received',second.message);
+  assert.equal(s.value('Master_Products/P1','Current_Stock'),0.3);
+  assert.equal(JSON.parse(s.value('Purchase_Orders/PO1','Items_JSON'))[0].receivedQty,0.3);
+});
+
+test('password KDF matches Node crypto for UTF-8 and upgrades only after successful authentication',()=>{
+  const s=setup(),password='อะไหล่-😀-password',salt='fixture-salt';
+  const expected=require('node:crypto').pbkdf2Sync(password,salt,600000,32,'sha256').toString('base64');
+  assert.equal(s.c.encodePasswordHash_(password,salt),'pbkdf2-sha256$600000$'+expected);
+  const legacy=s.user({Session_Version:'current-session'}),login=s.c.authLogin('admin','old-password');
+  assert(login.success,login.message);
+  assert.match(s.value('Master_Users/U1','Password_Hash'),/^pbkdf2-sha256\$600000\$/);
+  assert.equal(s.value('Master_Users/U1','Session_Version'),legacy.Session_Version);
+  assert(s.c.authLogin('admin','old-password').success);
+});
+
+test('login errors for unknown, inactive, locked and incorrect credentials share a response',()=>{
+  const s=setup();
+  s.user({Status:'Inactive'});
+  const initialHash=s.value('Master_Users/U1','Password_Hash');
+  const unknown=plain(s.c.authLogin('absent-user','wrong-password'));
+  assert.deepEqual(plain(s.c.authLogin('admin','wrong-password')),unknown);
+  s.user({Locked_Until:new Date(Date.now()+60_000).toISOString()});
+  assert.deepEqual(plain(s.c.authLogin('admin','old-password')),unknown);
+  s.user();
+  assert.deepEqual(plain(s.c.authLogin('admin','wrong-password')),unknown);
+  assert.equal(s.value('Master_Users/U1','Password_Hash'),initialHash);
+  assert.equal(s.value('Master_Users/U1','Failed_Attempts'),1);
+});
+
+test('a TOTP accepted in a concurrent login cannot be reused and recovery codes remain single-use',()=>{
+  const s=setup(),secret='JBSWY3DPEHPK3PXP',recovery='ABCD-EFGH-IJKL';
+  s.user({Totp_Enabled:'true',Totp_Secret_Enc:s.c.encryptSecret_(secret),
+    Recovery_Codes:JSON.stringify([s.c.hashPassword_(recovery,'recovery')])});
+  const otp=s.c.computeTotp_(secret,Math.floor(Date.now()/30_000));
+  let winner;
+  s.c.beforePatch=()=>{winner=s.c.authLogin('admin','old-password',otp);};
+  const loser=s.c.authLogin('admin','old-password',otp);
+  assert(winner?.success,winner?.message);assert.equal(loser.success,false);assert.equal(loser.token,undefined);
+  const replay=s.c.authLogin('admin','old-password',otp);
+  assert.equal(replay.success,false);assert.equal(replay.token,undefined);assert(replay.needOtp);
+  assert(s.c.authLogin('admin','old-password',recovery).success);
+  assert.equal(s.c.authLogin('admin','old-password',recovery).success,false);
+});
+
 test('stock retry replays committed result without a second stock or movement write',()=>{
   const s=setup();s.seed();const first=s.c.issueStock_(issue,'staff'),second=s.c.issueStock_(plain(issue),'staff');
   assert.equal(first.success,true,first.message);assert.equal(second.docNo,first.docNo);assert.equal(second.replayed,true);assert.equal(s.value('Master_Products/P1','Current_Stock'),8);assert.equal(s.commits.length,1);assert.equal(s.docs.size,5);
@@ -83,7 +241,7 @@ test('failed password write keeps the original session; user read outage fails c
 });
 test('recovery code is consumed only after a successful preconditioned write',()=>{
   for(const mode of ['normal','failure','concurrent']){
-    const s=setup();const hash=s.c.hashPassword_('RECOVERY','recovery'),u=s.user({Recovery_Codes:JSON.stringify([hash])});
+    const s=setup();const hash=s.c.hashPassword_('RECOVERY','recovery'),u=s.user({Totp_Enabled:'true',Recovery_Codes:JSON.stringify([hash])});
     if(mode==='failure')s.c.failRequest=(_,o)=>o.method==='patch'?503:0;
     if(mode==='concurrent')s.c.beforePatch=()=>assert.equal(s.c.consumeRecoveryCode_(u,'RECOVERY'),true);
     assert.equal(s.c.consumeRecoveryCode_(u,'RECOVERY'),mode==='normal');
