@@ -1995,19 +1995,21 @@ function calcTaxInvoiceTotals_(items) {
     var fraction = parts[2] || '';
     return {digits:BigInt(parts[1]+fraction),exponent:Number(parts[3] || 0)-fraction.length};
   }
-  function roundRatio(value, divisor) {return (value + divisor / 2n) / divisor;}
-  var subtotal = 0n, lineTotals = [], maxCents = 4503599627370495n;
+  // Apps Script's save parser rejects BigInt literals such as 2 followed by n.
+  var two = BigInt(2), ten = BigInt(10);
+  function roundRatio(value, divisor) {return (value + divisor / two) / divisor;}
+  var subtotal = BigInt(0), lineTotals = [], maxCents = BigInt(4503599627370495);
   for (var i=0;i<items.length;i++) {
     var qty = decimal(items[i].qty), price = decimal(items[i].unitPrice);
     if (!qty || !price) return null;
     var cents = qty.digits * price.digits, exponent = qty.exponent + price.exponent + 2;
-    if (exponent >= 0) cents *= 10n ** BigInt(exponent);
-    else cents = roundRatio(cents, 10n ** BigInt(-exponent));
+    if (exponent >= 0) cents *= ten ** BigInt(exponent);
+    else cents = roundRatio(cents, ten ** BigInt(-exponent));
     subtotal += cents;
     if (subtotal > maxCents) return null;
     lineTotals.push(Number(cents) / 100);
   }
-  var vat = roundRatio(subtotal * 7n,100n), total = subtotal + vat;
+  var vat = roundRatio(subtotal * BigInt(7),BigInt(100)), total = subtotal + vat;
   if (total > maxCents) return null;
   return {subtotal:Number(subtotal)/100,vat:Number(vat)/100,total:Number(total)/100,lineTotals:lineTotals};
 }
@@ -6204,7 +6206,8 @@ function addStockQuantity_(left, right) {
     return {units:BigInt(decimal.join("")), scale:(decimal[1] || "").length - Number(scientific[1] || 0)};
   }
   var a = parts(left), b = parts(right), scale = Math.max(a.scale,b.scale);
-  var units = a.units * 10n ** BigInt(scale-a.scale) + b.units * 10n ** BigInt(scale-b.scale);
+  var ten = BigInt(10);
+  var units = a.units * ten ** BigInt(scale-a.scale) + b.units * ten ** BigInt(scale-b.scale);
   return Number(String(units) + "e" + String(-scale));
 }
 

@@ -8,6 +8,13 @@ const issue={requestId:'request-stock-0001',reason:'ขายหน้าร้�
 const receive={requestId:'request-receive-0001',poId:'PO1',invoiceNo:'INV1',receiptDate:'2026-10-11',receiverName:'Staff',deliveryNoteNo:'DN1',items:[{productCode:'P1',qtyReceivedNow:5}]};
 function po(s){s.put('Purchase_Orders/PO1',{Status:'Ordered',Vendor_ID:'V1',Items_JSON:JSON.stringify([{productCode:'P1',productName:'Part',qty:10,costPrice:75,receivedQty:0}]),Receipts_JSON:'[]'});}
 
+test('Apps Script invoice and stock helpers avoid BigInt literals rejected by the save parser',()=>{
+  const {c}=setup();
+  for(const helper of [c.calcTaxInvoiceTotals_,c.addStockQuantity_])assert.doesNotMatch(helper.toString(),/\b\d+n\b/);
+  assert.equal(c.calcTaxInvoiceTotals_([{qty:0.1,unitPrice:12.05}]).total,1.29);
+  assert.equal(c.addStockQuantity_(0.3,-0.1),0.2);
+});
+
 function gatewayFixture(role) {
   const s=setup();s.seed();s.put('Master_Customers/C1',{Customer_Name:'Buyer'});
   const user=s.user({Role:role}),token=s.c.createSession_(user).token;
