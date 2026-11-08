@@ -3,7 +3,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const {default:AxeBuilder}=require('@axe-core/playwright');
 module.exports=async function({pageFor,check,output}){
  const audits=[];
- async function auditErrors(page,file){const result=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();audits.push({file,state:'validation errors',violations:result.violations});fs.writeFileSync(path.join(output,'quality-followup-accessibility.json'),JSON.stringify(audits,null,2));assert.deepEqual(result.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)})),[],file);}
+ async function auditErrors(page,file){
+  await page.locator('.modal-overlay.active .modal-box').last().evaluate(box=>Promise.all(box.getAnimations().map(animation=>animation.finished.catch(()=>{}))));
+  const result=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
+  audits.push({file,state:'validation errors',violations:result.violations});
+  fs.writeFileSync(path.join(output,'quality-followup-accessibility.json'),JSON.stringify(audits,null,2));
+  assert.deepEqual(result.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)})),[],file);
+ }
  await check('V2 follow-up icon upgrade never reparses escaped emoji text as HTML',async()=>{
   const p=await pageFor('Master_Brands.html');
   const payload='<img src=x onerror="window.fixtureXss=true">📦 อะไหล่ & <b>ชื่อ</b>';
