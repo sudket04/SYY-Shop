@@ -108,7 +108,7 @@ module.exports = async function ({pageFor, check, output}) {
       renderHistoryTab();
     }, sku);
     await page.waitForFunction(() => syyUxBusy === 0);
-    const receive = page.getByRole('button', {name:'บันทึกรับสินค้า', exact:true});
+    const receive = page.getByRole('button', {name:'บันทึกรับสินค้า PO-UAT', exact:true});
     await receive.click();
     assert.equal(await page.locator('#receiveItemsBody tr').getAttribute('data-product'), sku);
     const quantity = page.getByRole('spinbutton', {name:'จำนวนที่รับ อะไหล่รุ่น B', exact:true});

@@ -25,11 +25,8 @@
   .stat-icon.green{background:#dcfce7}.stat-icon.yellow{background:#fef9c3}
   .stat-value{font-size:20px;font-weight:600;color:#1e293b;line-height:1}
   .stat-label{font-size:11px;color:var(--muted);margin-top:3px}
-  .search-wrap{position:relative;max-width:360px;margin-bottom:16px}
-  .search-wrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none}
-  .search-input{width:100%;padding:9px 12px 9px 34px;border:1px solid #cbd5e1;border-radius:8px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:13px;outline:none;background:#fff}
-  .search-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,80,136,.12)}
-  .vendor-card{background:#fff;border-radius:12px;border:1px solid var(--line);box-shadow:var(--shadow);margin-bottom:16px;overflow:hidden}
+  .purchase-create-tools,.vendor-card{margin-bottom:16px}
+  .purchase-create-tools .toolbar:last-child{border-bottom:0}
   .vendor-head{background:var(--bg);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;border-bottom:1px solid var(--line-soft)}
   .vendor-name{font-size:15px;font-weight:600;color:#1e293b;display:flex;align-items:center;gap:8px}
   .vendor-meta{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:4px}
@@ -38,7 +35,8 @@
   .order-table-wrap{overflow-x:auto}
   table.order-table{width:100%;border-collapse:collapse;font-size:13px}
   table.order-table th{background:var(--line-soft);color:#475569;text-align:left;padding:9px 12px;font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
-  table.order-table td{padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle;white-space:nowrap}
+  table.order-table td{padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+  table.order-table td:nth-child(2),table.history-table td:nth-child(3){overflow-wrap:anywhere}
   table.order-table tr:last-child td{border-bottom:none}
   table.order-table tr:hover td{background:var(--bg)}
   .stock-pair{font-size:12px}
@@ -52,7 +50,10 @@
   .no-vendor-card .title{font-size:13px;font-weight:600;color:#92400e;margin-bottom:8px;display:flex;align-items:center;gap:6px}
   .no-vendor-list{display:flex;flex-wrap:wrap;gap:6px}
   .no-vendor-chip{font-size:12px;background:#fff;border:1px solid #fcd34d;color:#92400e;border-radius:20px;padding:3px 10px}
-  table.history-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+  table.history-table{width:100%;min-width:860px}
+  .history-table .row-actions{flex-wrap:wrap}
+  .po-number{font-variant-numeric:tabular-nums;overflow-wrap:anywhere;text-align:left}
+  .history-table .po-number{height:auto;min-height:36px;white-space:normal}
   .status-select{padding:5px 9px;border-radius:20px;font-family:'Noto Sans Thai','Inter',system-ui,sans-serif;font-size:11.5px;font-weight:600;border:1px solid;cursor:pointer;outline:none}
   .status-Pending{background:#fef9c3;color:#92400e;border-color:#fde68a}
   .status-Ordered{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
@@ -89,9 +90,9 @@
   table.confirm-items td{padding:7px 10px;border-bottom:1px solid var(--line-soft)}
   table.confirm-items tfoot td{font-weight:600;color:var(--primary);border-top:2px solid var(--line)}
   .btn.is-loading{opacity:.6;pointer-events:none}
-  .pill-group{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
   .receive-required label .req{color:#dc2626}
   @media(max-width:767px){.stat-strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.stat-card{min-width:0;padding:12px 10px;gap:8px}.stat-card>div{min-width:0}.stat-label{font-size:12px;overflow-wrap:break-word}.stat-value{font-size:18px}.vendor-name{overflow-wrap:anywhere}.tab-bar{overflow-x:auto}.tab-btn{flex-shrink:0}.order-table-wrap,.table-scroll{max-width:100%}}
+  @media(max-width:767px){table.history-table{min-width:0}}
   @media(max-width:359px){.stat-strip{grid-template-columns:minmax(0,1fr)}}
   </style>
 </head>
@@ -133,10 +134,16 @@
       </div>
     </div>
 
-    <div class="search-wrap">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input type="text" id="createSearchBar" class="search-input" placeholder="ค้นหาสินค้า, ผู้จัดจำหน่าย..." oninput="renderCreateTab()">
-    </div>
+    <section class="card purchase-create-tools" aria-labelledby="purchaseCreateTitle">
+      <div class="toolbar"><strong id="purchaseCreateTitle">สินค้าที่ต้องสั่งซื้อ</strong></div>
+      <div class="toolbar">
+        <div class="search">
+          <span class="ico" aria-hidden="true">⌕</span>
+          <input type="search" id="createSearchBar" class="input" aria-label="ค้นหาสินค้าที่ต้องสั่งซื้อ" placeholder="ค้นหารหัส / สินค้า / ผู้จัดจำหน่าย / รุ่นรถ" autocomplete="off" oninput="renderCreateTab()">
+        </div>
+        <span class="count" id="purchaseCreateCount" role="status"></span>
+      </div>
+    </section>
 
     <div id="noVendorWarning" style="display:none;"></div>
     <div id="vendorGroupsContainer"></div>
@@ -144,22 +151,21 @@
 
   <!-- ===== TAB: ประวัติการสั่งซื้อ ===== -->
   <div class="tab-panel" id="tabHistory">
-
-    <div class="pill-group" id="statusPills">
-      <button class="pill active" data-status="all"       onclick="setStatusFilter('all', this)">ทั้งหมด</button>
-      <button class="pill"        data-status="Pending"    onclick="setStatusFilter('Pending', this)">🕐 รอดำเนินการ</button>
-      <button class="pill"        data-status="Ordered"    onclick="setStatusFilter('Ordered', this)">📦 สั่งซื้อแล้ว</button>
-      <button class="pill"        data-status="PartiallyReceived" onclick="setStatusFilter('PartiallyReceived', this)">🔶 ได้รับบางส่วน</button>
-      <button class="pill"        data-status="Received"   onclick="setStatusFilter('Received', this)">ได้รับครบแล้ว</button>
-      <button class="pill"        data-status="Cancelled"  onclick="setStatusFilter('Cancelled', this)">ยกเลิก</button>
-    </div>
-
-    <div class="table-wrap">
+    <section class="card" id="purchaseHistoryCard" aria-labelledby="purchaseHistoryTitle">
+      <div class="toolbar"><strong id="purchaseHistoryTitle">ประวัติการสั่งซื้อ</strong><span class="count" id="purchaseHistoryCount" role="status"></span></div>
+      <div class="toolbar" id="statusPills" role="group" aria-label="สถานะใบสั่งซื้อ">
+        <button type="button" class="pill active" data-status="all" aria-pressed="true" onclick="setStatusFilter('all')">ทั้งหมด</button>
+        <button type="button" class="pill" data-status="Pending" aria-pressed="false" onclick="setStatusFilter('Pending')">รอดำเนินการ</button>
+        <button type="button" class="pill" data-status="Ordered" aria-pressed="false" onclick="setStatusFilter('Ordered')">สั่งซื้อแล้ว</button>
+        <button type="button" class="pill" data-status="PartiallyReceived" aria-pressed="false" onclick="setStatusFilter('PartiallyReceived')">ได้รับบางส่วน</button>
+        <button type="button" class="pill" data-status="Received" aria-pressed="false" onclick="setStatusFilter('Received')">ได้รับครบแล้ว</button>
+        <button type="button" class="pill" data-status="Cancelled" aria-pressed="false" onclick="setStatusFilter('Cancelled')">ยกเลิก</button>
+      </div>
       <div class="xlf-filter-summary" id="xlfSummary">
         <span id="xlfSummaryText"></span>
-        <button type="button" onclick="XLF.clearAll('orders'); renderHistoryTab();">ล้างตัวกรองทั้งหมด</button>
+        <button type="button" onclick="XLF.clearAll('orders'); renderHistoryTab();">ล้างตัวกรองคอลัมน์</button>
       </div>
-      <div class="order-table-wrap">
+      <div class="table-wrap">
         <table class="history-table">
           <thead id="historyThead">
             <tr>
@@ -178,7 +184,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
   </div>
   </div>
 
@@ -273,7 +279,7 @@
     <div class="modal-box">
       <div class="modal-header">
         <span id="detailHeaderTitle">🔍 รายละเอียดใบสั่งซื้อ</span>
-        <button class="modal-close" onclick="closeDetailModal()">×</button>
+        <button type="button" class="modal-close" aria-label="ปิดรายละเอียดใบสั่งซื้อ" onclick="closeDetailModal()">×</button>
       </div>
       <div class="modal-body">
         <div class="confirm-vendor-box">
@@ -308,6 +314,7 @@
 <?!= include_('Shared'); ?>
 <script>
   var AUTH_TOKEN  = "<?= authToken ?>";
+  var USER_ROLE = "<?= userRole ?>";
   var addStockQuantity = <?!= typeof stockQuantitySource === 'string' ? stockQuantitySource : 'null' ?>;
   var WEB_APP_URL = "<?= webAppUrl ?>";
 /* ══════════════════════════════════════════════════════════════
@@ -322,8 +329,8 @@
   // ==========================================
   var lowStockItems   = [];   // สินค้าสต็อกต่ำ (จาก getLowStockProductsForOrder)
   var purchaseOrders  = [];   // ประวัติใบสั่งซื้อ (จาก getPurchaseOrders)
-  var pendingSummary={codes:{},pendingCount:0},documentPager,purchaseLoadSequence=0,purchasePageLoaded=false,purchaseCreateLoaded=false,purchaseHistoryLoaded=false;
-  syyOnReady(function(){documentPager=syyDocumentPager({container:'#tabHistory',api:'getPurchaseOrderPageData',key:'purchaseOrders',id:'poId',rows:function(){return purchaseOrders;},render:function(){renderHistoryTab();updateStatCards();}});});
+  var pendingSummary={codes:{},pendingCount:0},documentPager,purchaseLoadSequence=0,purchaseLoadingSection='',purchasePageLoaded=false,purchaseCreateLoaded=false,purchaseHistoryLoaded=false;
+  syyOnReady(function(){documentPager=syyDocumentPager({container:'#purchaseHistoryCard',searchBefore:'#xlfSummary',readOptions:{section:'history'},api:'getPurchaseOrderPageData',key:'purchaseOrders',id:'poId',rows:function(){return purchaseOrders;},render:function(){renderHistoryTab();updateStatCards();}});});
   var pendingProductCodes = {}; // productCode ที่มีคำสั่งซื้อค้างอยู่ (Pending/Ordered)
   var checkedState    = {};   // { productCode: true/false } เช็คบ็อกซ์ที่เลือกไว้
   var qtyState        = {};   // { productCode: qty } จำนวนที่จะสั่ง (แก้ไขได้)
@@ -347,26 +354,36 @@
     loadAll();
   });
 
-  XLF.bindHeaderClicks('#historyThead', function() { return purchaseOrders; }, renderHistoryTab);
+  XLF.bindHeaderClicks('#historyThead', purchaseHistoryRows, renderHistoryTab);
+  syyDelegateActions('#historyTableBody',{view:openDetailModal,receive:openReceiveModal,remove:onDeleteOrder});
 
-  function loadAll(force) {
-    var savedView=!purchasePageLoaded&&syyLocalGet('view','orders'),section=savedView&&savedView.tab==='history'||document.getElementById('tabHistory').classList.contains('active')?'history':'create';
-    if(force===true||syyReadFresh){purchaseCreateLoaded=false;purchaseHistoryLoaded=false;}
-    var request=++purchaseLoadSequence,revision=syyDataStarted();if(documentPager)documentPager.beginRefresh();
+  function loadAll(force,requestedSection) {
+    var savedView=!purchasePageLoaded&&syyLocalGet('view','orders');
+    var section=requestedSection||(savedView&&savedView.tab==='history'||document.getElementById('tabHistory').classList.contains('active')?'history':'create');
+    var options={section:section,force:force===true};
+    if(section==='history'){
+      var savedSearch=syyLocalGet('view','purchaseOrders');
+      var search=purchaseHistoryLoaded&&documentPager?documentPager.searchOptions():savedSearch&&savedSearch.search;
+      if(search&&(search.number||search.from||search.to))options.search=search;
+    }
+    if(force===true||syyReadFresh){if(section==='history')purchaseCreateLoaded=false;else purchaseHistoryLoaded=false;}
+    purchaseLoadingSection=section;
+    var request=++purchaseLoadSequence,revision=syyDataStarted();
+    if(documentPager)documentPager.beginRefresh();
     var btn = document.getElementById('btnRefresh');
-    btn.classList.add('is-loading');
+    btn.classList.add('is-loading');btn.disabled=true;
 
-    // ★ ใช้ endpoint รวม getPurchaseOrderPageData() แทนการเรียก getLowStockProductsForOrder()
-    //   + getPurchaseOrders() แยกกัน 2 รอบ (ซึ่งแต่ละรอบดึงข้อมูลผู้จัดจำหน่ายซ้ำกันเอง)
-    //   ฝั่ง server ดึงข้อมูลผู้จัดจำหน่ายแค่ครั้งเดียว ใช้ร่วมกันทั้ง 2 ส่วน
-    callApi('getPurchaseOrderPageData', [{section:section,force:force===true}], function(data, readInfo) {
+    callApi('getPurchaseOrderPageData', [options], function(data, readInfo) {
         if(request!==purchaseLoadSequence)return;
-        if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();btn.classList.remove('is-loading');return;}
-        if(purchasePageLoaded&&readInfo&&readInfo.manual&&readInfo.notModified){if(section==='history')purchaseHistoryLoaded=true;else purchaseCreateLoaded=true;if(documentPager)documentPager.cancel();syyDataLoaded(data&&data.snapshotLoadedAt);btn.classList.remove('is-loading');return;}
+        finish();
+        if(revision!==syyDataRevision()){syyDataFailed();if(documentPager)documentPager.cancel();return;}
+        if(purchasePageLoaded&&readInfo&&readInfo.manual&&readInfo.notModified){if(section==='history')purchaseHistoryLoaded=true;else purchaseCreateLoaded=true;if(documentPager)documentPager.cancel();syyDataLoaded(data&&data.snapshotLoadedAt);return;}
         syyDataLoaded(data&&data.snapshotLoadedAt);purchasePageLoaded=true;
         if(Array.isArray(data&&data.lowStockItems)){lowStockItems=data.lowStockItems;purchaseCreateLoaded=true;}
         if(Array.isArray(data&&data.purchaseOrders)){purchaseOrders=data.purchaseOrders;purchaseHistoryLoaded=true;}
-        if(data.pendingSummary)pendingSummary=data.pendingSummary;if(documentPager&&Array.isArray(data.purchaseOrders)){documentPager.reset(data.pageInfo,readInfo&&readInfo.manual);var saved=syyLocalGet('view','purchaseOrders');if(saved&&saved.search&&(saved.search.number||saved.search.from||saved.search.to))document.querySelector('.syy-document-search').requestSubmit();}else if(documentPager)documentPager.cancel();
+        if(data.pendingSummary)pendingSummary=data.pendingSummary;
+        if(documentPager&&Array.isArray(data.purchaseOrders))documentPager.reset(data.pageInfo,readInfo&&readInfo.manual);
+        else if(documentPager)documentPager.cancel();
 
         lowStockItems.forEach(function(p) {
           if (!(p.productCode in qtyState)) qtyState[p.productCode] = p.suggestedQty;
@@ -378,17 +395,23 @@
         renderCreateTab();
         renderHistoryTab();
         updateStatCards();
-        btn.classList.remove('is-loading');
       }, function(err) {
         if(request!==purchaseLoadSequence)return;
+        finish();
         syyDataFailed();if(documentPager)documentPager.cancel();
-        if(purchasePageLoaded){btn.classList.remove('is-loading');toast(syyErrorMessage(err)+' · แสดงข้อมูลเดิมที่โหลดสำเร็จ','err');return;}
-        document.getElementById('vendorGroupsContainer').innerHTML =
-          '<div class="empty-state"><div class="ic">⚠️</div><div class="ti">โหลดข้อมูลไม่สำเร็จ</div><div class="su">' + esc(syyErrorMessage(err)) + '</div></div>';
-        document.getElementById('historyTableBody').innerHTML =
-          emptyStateHtml(8,{icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err)});
-        btn.classList.remove('is-loading');
+        if(section==='history'?purchaseHistoryLoaded||purchaseOrders.length:purchaseCreateLoaded||lowStockItems.length){
+          toast(syyErrorMessage(err)+' · แสดงข้อมูลเดิมที่โหลดสำเร็จ','err');return;
+        }
+        if(section==='history'){
+          document.getElementById('historyTableBody').innerHTML=emptyStateHtml(8,{title:'โหลดประวัติไม่สำเร็จ',sub:syyErrorMessage(err)});
+        }else{
+          document.getElementById('vendorGroupsContainer').innerHTML='<div class="empty-state"><div class="ti">โหลดข้อมูลไม่สำเร็จ</div><div class="su">'+esc(syyErrorMessage(err))+'</div></div>';
+        }
       });
+    function finish(){
+      purchaseLoadingSection='';
+      btn.classList.remove('is-loading');btn.disabled=false;
+    }
   }
 
   function rebuildPendingProductCodes(changed){
@@ -452,7 +475,7 @@
     document.getElementById('tabBtnHistory').classList.toggle('active', tab === 'history');
     document.getElementById('tabCreate').classList.toggle('active', tab === 'create');
     document.getElementById('tabHistory').classList.toggle('active', tab === 'history');
-    if(purchasePageLoaded&&(tab==='history'?!purchaseHistoryLoaded:!purchaseCreateLoaded))loadAll();
+    if(tab!==purchaseLoadingSection&&(tab==='history'?!purchaseHistoryLoaded:!purchaseCreateLoaded))loadAll(false,tab);
   }
 
   // ==========================================
@@ -466,13 +489,16 @@
     var q = document.getElementById('createSearchBar').value.toLowerCase().trim();
     var container = document.getElementById('vendorGroupsContainer');
     var noVendorBox = document.getElementById('noVendorWarning');
+    if(!purchaseCreateLoaded&&!lowStockItems.length)return;
 
     var filtered = lowStockItems.filter(function(p) {
       return !q ||
+        (p.productCode || '').toLowerCase().includes(q) ||
         (p.productName || '').toLowerCase().includes(q) ||
         (p.vendorName  || '').toLowerCase().includes(q) ||
         (p.carModel    || '').toLowerCase().includes(q);
     });
+    document.getElementById('purchaseCreateCount').textContent=filtered.length.toLocaleString('th-TH')+' รายการ';
 
     if (lowStockItems.length === 0) {
       container.innerHTML = '<div class="empty-state"><div class="ic">🎉</div><div class="ti">ยอดเยี่ยม! ไม่มีสินค้าที่สต็อกต่ำกว่าขั้นต่ำในตอนนี้</div></div>';
@@ -526,6 +552,7 @@
     container.innerHTML = vendorIds.map(function(vid) {
       return buildVendorGroupHtml(groups[vid]);
     }).join('');
+    container.querySelectorAll('.order-table tbody').forEach(syyTableCards);
   }
 
   function buildVendorGroupHtml(g) {
@@ -563,7 +590,7 @@
 
     var vendorSelectedTotal = computeVendorTotal(g);
 
-    return '<div class="vendor-card" id="vgroup_' + escHtml(g.vendorId) + '">' +
+    return '<div class="card vendor-card" id="vgroup_' + escHtml(g.vendorId) + '">' +
       '<div class="vendor-head">' +
         '<div>' +
           '<div class="vendor-name">🏢 ' + escHtml(g.vendorName) + taxWarning + '</div>' +
@@ -571,7 +598,7 @@
         '</div>' +
       '</div>' +
       '<div class="order-table-wrap"><table class="order-table"><thead><tr>' +
-        '<th></th><th>ชื่อสินค้า</th><th class="text-center">ประเภท</th><th>สต็อก (ปัจจุบัน/ขั้นต่ำ)</th>' +
+        '<th>เลือก</th><th>ชื่อสินค้า</th><th class="text-center">ประเภท</th><th>สต็อก (ปัจจุบัน/ขั้นต่ำ)</th>' +
         '<th>รุ่นรถ</th><th class="text-right">ราคาทุน/หน่วย</th><th class="text-center">จำนวนที่จะสั่ง</th><th class="text-right">รวม</th>' +
       '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
       '<div class="vendor-selection"><button type="button" class="btn btn-ghost" onclick="selectVendorItems(\''+escJs(g.vendorId)+'\',true)">เลือกทั้งหมดของผู้จำหน่ายนี้</button><button type="button" class="btn btn-ghost" onclick="selectVendorItems(\''+escJs(g.vendorId)+'\',false)">ล้างการเลือก</button></div>'+
@@ -763,41 +790,39 @@
   // ==========================================
   // TAB 2: ประวัติการสั่งซื้อ
   // ==========================================
-  function setStatusFilter(status, el) {
+  var purchaseColumns=[
+    {col:'poId',label:'เลขที่ใบสั่งซื้อ',type:'text'},
+    {col:'orderDate',label:'วันที่',type:'text'},
+    {col:'vendorName',label:'ผู้จัดจำหน่าย',type:'text'},
+    {col:'itemCount',label:'จำนวนรายการ',type:'number',className:'text-center'},
+    {col:'totalQty',label:'รวม (ชิ้น)',type:'number',className:'text-center'},
+    {col:'totalAmount',label:'มูลค่ารวม (฿)',type:'number',className:'text-right'},
+    {col:'status',label:'สถานะ',type:'text'}
+  ];
+  function setStatusFilter(status) {
     historyStatusFilter = status;
-    document.querySelectorAll('#statusPills .pill').forEach(function(b) { b.classList.remove('active'); });
-    el.classList.add('active');
     renderHistoryTab();
   }
 
+  function purchaseHistoryRows(){
+    return purchaseOrders.filter(function(po){
+      return historyStatusFilter==='all'||po.status===historyStatusFilter;
+    }).map(function(po){return Object.assign({},po,{itemCount:(po.items||[]).length});});
+  }
+
   function renderHistoryTab() {
-  if(documentPager)documentPager.render();
-    var thead = document.getElementById('historyThead');
-    var headerHtml =
-      '<tr>' +
-        XLF.th('เลขที่ใบสั่งซื้อ', 'orders', 'poId') +
-        XLF.th('วันที่', 'orders', 'orderDate') +
-        XLF.th('ผู้จัดจำหน่าย', 'orders', 'vendorName') +
-        '<th class="text-center">จำนวนรายการ</th>' +
-        '<th class="text-center">รวม (ชิ้น)</th>' +
-        '<th class="text-right">มูลค่ารวม (฿)</th>' +
-        XLF.th('สถานะ', 'orders', 'status') +
-        '<th class="text-center col-sticky-right">จัดการ</th>' +
-      '</tr>';
-
-    syySetMarkup(thead,headerHtml);
-    var tbody = document.getElementById('historyTableBody');
-
-    // ★ ชั้นที่ 1: filter สถานะจาก pill ปุ่มด้านบน (ระบบเดิม)
-    var byStatus = purchaseOrders.filter(function(po) {
-      return historyStatusFilter === 'all' || po.status === historyStatusFilter;
+    document.querySelectorAll('#statusPills [data-status]').forEach(function(button){
+      var selected=button.dataset.status===historyStatusFilter;
+      button.classList.toggle('active',selected);button.setAttribute('aria-pressed',String(selected));
     });
-
-    // ★ ชั้นที่ 2: filter/sort แบบ Excel จากหัวคอลัมน์ (ใหม่) — ทำงานร่วมกับ pill แบบ AND
-    var list = XLF.apply('orders', byStatus, [
-      { col: 'poId' }, { col: 'orderDate' }, { col: 'vendorName' }, { col: 'status' }
-    ]);
-
+    var thead = document.getElementById('historyThead');
+    syySetMarkup(thead,'<tr>'+purchaseColumns.map(function(column){
+      return XLF.th(column.label,'orders',column.col,column);
+    }).join('')+'<th class="text-center col-sticky-right">จัดการ</th></tr>');
+    var tbody = document.getElementById('historyTableBody');
+    if(!purchaseHistoryLoaded&&!purchaseOrders.length){syyTableCards(tbody);return;}
+    var byStatus=purchaseHistoryRows(),list=XLF.apply('orders',byStatus,purchaseColumns);
+    document.getElementById('purchaseHistoryCount').textContent=list.length+' ใบในข้อมูลที่โหลด';
     var summaryEl = document.getElementById('xlfSummary');
     if (XLF.anyActiveFilter('orders')) {
       summaryEl.classList.add('show');
@@ -807,53 +832,49 @@
       summaryEl.classList.remove('show');
     }
 
+    if(documentPager)list=documentPager.window(list,historyStatusFilter+JSON.stringify(XLF.snapshot('orders')));
     if (!list.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:40px; color:#94a3b8;">📭 ' +
-        (purchaseOrders.length ? 'ไม่พบรายการที่ตรงกับตัวกรอง' : 'ไม่พบประวัติการสั่งซื้อ') + '</td></tr>';
+      tbody.innerHTML=emptyStateHtml(8,{title:purchaseOrders.length?'ไม่พบรายการที่ตรงกับตัวกรอง':'ไม่พบประวัติการสั่งซื้อ'});
+      syyTableCards(tbody);
       return;
     }
 
-    list=documentPager?documentPager.window(list,historyStatusFilter+JSON.stringify(XLF.snapshot?XLF.snapshot('orders'):{})):list;
+    var canManage=USER_ROLE==='admin'||USER_ROLE==='staff';
     syyPatchRows(tbody,list.map(function(po) {
       var totalReceived = (po.items || []).reduce(function(s, it) { return s + parseFloat(it.receivedQty || 0); }, 0);
       var qtyCell = escHtml(po.totalQty) + (totalReceived > 0 ? '<div class="qty-progress">รับแล้ว ' + totalReceived + ' / ' + escHtml(po.totalQty) + '</div>' : '');
-
       var statusCell;
-      var isLocked  = (po.status === 'Received' || po.status === 'Cancelled');
-
-      if (isLocked) {
-        // ★ สถานะสิ้นสุดแล้ว — ล็อก ไม่ให้แก้ไขต่อ
-        statusCell = '<span class="status-locked-badge status-' + po.status + '">' + STATUS_LABELS[po.status] + '</span>';
-      } else if (po.status === 'PartiallyReceived') {
-        // ★ ได้รับบางส่วนแล้ว — ไม่ให้ยกเลิก ต้องรับของที่เหลือหรือรับต่อผ่านปุ่ม "รับสินค้า" เท่านั้น
-        statusCell = '<span class="status-locked-badge status-PartiallyReceived">' + STATUS_LABELS.PartiallyReceived + '</span>';
-      } else if(Object.prototype.hasOwnProperty.call(STATUS_LABELS,po.status)) {
+      var id=escHtml(po.poId);
+      var editable=canManage&&['Pending','Ordered'].includes(po.status);
+      if(editable){
         var opts = ['Pending', 'Ordered', 'Cancelled'].map(function(s) {
           return '<option value="' + s + '" ' + (s === po.status ? 'selected' : '') + '>' + STATUS_LABELS[s] + '</option>';
         }).join('');
-        statusCell = '<select class="status-select status-' + escHtml(po.status) + '" onchange="onStatusChange(\'' + escJs(po.poId) + '\', this)">' + opts + '</select>';
+        statusCell = '<select aria-label="สถานะใบสั่งซื้อ '+id+'" class="status-select status-' + escHtml(po.status) + '" onchange="onStatusChange(\'' + escJs(po.poId) + '\', this)">' + opts + '</select>';
+      } else if(Object.prototype.hasOwnProperty.call(STATUS_LABELS,po.status)){
+        statusCell='<span class="status-locked-badge status-'+escHtml(po.status)+'">'+STATUS_LABELS[po.status]+'</span>';
       } else statusCell='<span class="status-locked-badge">'+escHtml(po.status||'ไม่ระบุสถานะ')+'</span>';
 
-      var receiveBtn = (po.status === 'Pending' || po.status === 'Ordered' || po.status === 'PartiallyReceived')
-        ? '<button class="btn btn-icon receive" title="บันทึกรับสินค้า" onclick="openReceiveModal(\'' + escJs(po.poId) + '\')">📥</button>'
-        : '';
+      function action(name,style,title,icon){
+        return '<button type="button" class="btn btn-icon '+style+'" data-syy-action="'+name+'" data-syy-id="'+id+'" aria-label="'+title+' '+id+'" title="'+title+'">'+syyIcon(icon)+'</button>';
+      }
+      var actions=action('view','view','ดูรายละเอียด','view');
+      if(canManage&&['Pending','Ordered','PartiallyReceived'].includes(po.status))actions+=action('receive','receive','บันทึกรับสินค้า','download');
+      if(USER_ROLE==='admin')actions+=action('remove','del','ลบใบสั่งซื้อ','trash');
 
       var vendorNameCell = escHtml(po.vendorName) +
         (!po.vendorTaxId ? ' <span title="ยังไม่มีเลขผู้เสียภาษีของผู้จำหน่ายรายนี้" style="color:#b45309;">⚠️</span>' : '');
+      var total=syyRecordedNumber(po,'totalAmount');
 
-      return '<tr data-row-key="'+esc(po.poId)+'">' +
-        '<td><b>' + escHtml(po.poId) + '</b></td>' +
+      return '<tr data-row-key="'+id+'">' +
+        '<td><button type="button" class="btn btn-ghost po-number" data-syy-action="view" data-syy-id="'+id+'" aria-label="เปิดใบสั่งซื้อ '+id+'">'+id+'</button></td>' +
         '<td>' + escHtml(po.orderDate) + '</td>' +
         '<td>' + vendorNameCell + '</td>' +
-        '<td class="text-center">' + (po.items ? po.items.length : 0) + '</td>' +
+        '<td class="text-center">' + po.itemCount + '</td>' +
         '<td class="text-center">' + qtyCell + '</td>' +
-        '<td class="text-right">฿ ' + escHtml(po.totalAmount.toLocaleString('th-TH', {maximumFractionDigits:2})) + '</td>' +
+        '<td class="text-right mono">' + purchaseAmount(total) + '</td>' +
         '<td>' + statusCell + '</td>' +
-        '<td class="text-center col-sticky-right"><span class="row-actions">' +
-          receiveBtn +
-          '<button class="btn btn-icon view" title="ดูรายละเอียด" onclick="openDetailModal(\'' + escJs(po.poId) + '\')">🔍</button>' +
-          '<button class="btn btn-icon del" title="ลบ" onclick="onDeleteOrder(\'' + escJs(po.poId) + '\')">🗑️</button>' +
-        '</span></td>' +
+        '<td class="text-center col-sticky-right"><span class="row-actions">'+actions+'</span></td>' +
       '</tr>';
     }).join(''));syyTableCards(tbody);
   }
@@ -868,7 +889,7 @@
         if (res.success) {
           var po = purchaseOrders.find(function(p) { return p.poId === poId; });
           if (po) po.status = newStatus;
-          updateStatCards();
+          renderPurchaseOrderState(po?[po]:[]);
         } else {
           swyError('อัปเดตสถานะไม่สำเร็จ', res.message);
           refreshPurchaseOrder(poId);
@@ -1103,12 +1124,12 @@
     document.getElementById('detailOrderMeta').innerText = 'วันที่สั่งซื้อ: ' + po.orderDate + '  •  สถานะ: ' + (STATUS_LABELS[po.status] || po.status);
 
     document.getElementById('detailItemsBody').innerHTML = (po.items || []).map(function(it) {
-      var lineTotal = it.qty * it.costPrice;
-      return '<tr><td>' + escHtml(it.productName) + '</td><td class="text-center">' + escHtml(it.qty) + '</td>' +
-        '<td class="text-right">฿ ' + escHtml(it.costPrice.toLocaleString('th-TH',{maximumFractionDigits:2})) + '</td>' +
-        '<td class="text-right">฿ ' + lineTotal.toLocaleString('th-TH',{maximumFractionDigits:2}) + '</td></tr>';
+      var qty=syyRecordedNumber(it,'qty'),cost=syyRecordedNumber(it,'costPrice');
+      return '<tr><td>' + escHtml(it.productName||it.productCode||'—') + '</td><td class="text-center">' + (qty===null?'—':qty) + '</td>' +
+        '<td class="text-right">' + purchaseAmount(cost) + '</td>' +
+        '<td class="text-right">' + purchaseAmount(qty===null||cost===null?null:qty*cost) + '</td></tr>';
     }).join('');
-    document.getElementById('detailTotalAmount').innerText = '฿ ' + po.totalAmount.toLocaleString('th-TH', {maximumFractionDigits:2});
+    document.getElementById('detailTotalAmount').innerText=purchaseAmount(syyRecordedNumber(po,'totalAmount'));
     document.getElementById('detailNoteText').innerText = po.note || '—';
 
     var logWrap = document.getElementById('detailReceiptsLog');
@@ -1133,6 +1154,10 @@
 
   function closeDetailModal() {
     closeModal('detailModal');
+  }
+
+  function purchaseAmount(value){
+    return Number.isFinite(value)?'฿ '+value.toLocaleString('th-TH',{maximumFractionDigits:2}):'—';
   }
 
   document.getElementById('btnDetailExport').addEventListener('click', function() {
@@ -1186,7 +1211,7 @@ syyRegisterFreshness({reload:loadAll,canRefresh:function(){return !receiveBusy &
   stock:function(stocks){syyApplyStockRows(lowStockItems,stocks);renderCreateTab();updateStatCards();}});
 </script>
 <script>
-function renderPurchaseOrderState(){rebuildPendingProductCodes();renderCreateTab();renderHistoryTab();updateStatCards();}
+function renderPurchaseOrderState(changed){rebuildPendingProductCodes(changed);renderCreateTab();renderHistoryTab();updateStatCards();}
 function upsertPurchaseOrder(po){if(!po||!po.poId)return;var index=purchaseOrders.findIndex(function(item){return item.poId===po.poId;});if(index>=0)purchaseOrders[index]=Object.assign({},purchaseOrders[index],po);else purchaseOrders.unshift(po);rebuildPendingProductCodes([index>=0?purchaseOrders[index]:po]);renderPurchaseOrderState();}
 function refreshPurchaseOrder(id){callApi('getPurchaseOrderPageData',[{poId:id}],function(data){upsertPurchaseOrder(data.po);},function(){toast('โหลดสถานะล่าสุดไม่สำเร็จ กรุณารีเฟรช','warn');});}
 </script>

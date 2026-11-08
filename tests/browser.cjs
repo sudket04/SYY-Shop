@@ -866,8 +866,13 @@ async function main(){
         else if(typeof quotations!=='undefined'){quotations=Array.from({length:120},(_,i)=>({id:'Q'+i,quoteNo:'Q '+i,quoteDate:'2026-10-11',customerName:'Buyer',grandTotal:i,status:'ร่าง',items:[]}));listStatusFilter='';renderList();switchTab('list');}
         else if(typeof invoicesCache!=='undefined'){invoicesCache=Array.from({length:120},(_,i)=>Object.assign({},fixtureInvoice,{id:'T'+i}));renderRows();}
         else if(typeof purchaseOrders!=='undefined'){purchaseOrders=Array.from({length:120},(_,i)=>({poId:'O'+i,orderDate:'2026-10-11',vendorName:'Vendor',status:'Pending',items:[],totalQty:0,totalAmount:0}));historyStatusFilter='all';renderHistoryTab();switchTab('history');}
-        else{fixtureMovements=Array.from({length:80},(_,i)=>({id:'M'+i,docNo:'MV'+i,type:'OUT',productCode:'P1',productName:'Test Part',qty:1,timestamp:'2026-10-11T05:00:00Z'}));switchTab('history');loadMovements();}
-      });await p.waitForTimeout(80);const before=await p.evaluate(()=>apiCalls.length);
+        else{fixtureMovements=Array.from({length:80},(_,i)=>({id:'M'+i,docNo:'MV'+i,type:'OUT',productCode:'P1',productName:'Test Part',qty:1,timestamp:'2026-10-11T05:00:00Z'}));switchTab('history');}
+      });
+      if(file==='StockIssue.html'){
+        await p.locator('#mvAll').click();
+        await p.waitForFunction(()=>mvPage.complete&&!mvPage.busy);
+      }
+      await p.waitForTimeout(80);const before=await p.evaluate(()=>apiCalls.length);
       for(const size of [{width:1365,height:720},{width:1920,height:1080},{width:390,height:568},{width:320,height:420}]){
         await p.setViewportSize(size);await p.evaluate(()=>{window.scrollTo(0,0);syyFitTableFooters();});await p.waitForTimeout(80);
         const footer=p.locator('.syy-table-footer:visible').first(),wrap=p.locator('.syy-table-viewport:visible').first();assert.equal(await footer.count(),1,file);
@@ -1465,6 +1470,55 @@ async function main(){
   await check('PO history can load while create data is held; refreshing a separate pending summary never resurrects stale history rows',async()=>{
     const p=await pageFor('Purchase_Orders.html');await p.evaluate(()=>{purchaseHistoryLoaded=false;purchaseCreateLoaded=false;const old=respond;respond=(fn,args)=>fn==='getPurchaseOrderPageData'&&args[0]?.section==='history'?{purchaseOrders:[{poId:'PO1',poNumber:'PO1',status:'Pending',totalAmount:100,totalQty:1,vendorName:'Vendor',items:[{productCode:'P1',qty:1}],orderDate:'2026-10-28'}],pendingSummary:{orders:{PO1:{status:'Pending',codes:['P1']}},pendingCount:1},pageInfo:{hasMore:false}}:fn==='getPurchaseOrderPageData'&&args[0]?.section==='create'?{lowStockItems:[],pendingSummary:{orders:{},pendingCount:0}}:old(fn,args);switchTab('history');});await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>purchaseHistoryLoaded),true);assert.equal(await p.evaluate(()=>purchaseCreateLoaded),false);assert.equal(await p.locator('#statLowCount').innerText(),'—');assert.equal(await p.locator('#statPendingPO').innerText(),'1');await p.evaluate(()=>{apiHold='getPurchaseOrderPageData';switchTab('create');});await p.waitForFunction(()=>apiPending.length===1);await p.evaluate(()=>switchTab('history'));assert.equal(await p.locator('#historyTableBody tr').count(),1);await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForFunction(()=>purchaseCreateLoaded);assert.equal(await p.locator('#statPendingPO').innerText(),'0');assert.equal(await p.evaluate(()=>!!pendingProductCodes.P1),false);assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Purchase tables use Master controls, keep staff actions scoped and search the history section once',async()=>{
+    const p=await pageFor('Purchase_Orders.html','staff');
+    await p.evaluate(()=>{
+      purchaseHistoryLoaded=false;purchaseCreateLoaded=true;
+      lowStockItems=[{productCode:'CODE-70',productName:'Brake shoe',vendorId:'V1',vendorName:'Vendor',suggestedQty:2,costPrice:15}];
+      renderCreateTab();
+      const rows=[['PO-1','Pending',100],['PO-2','Received',20]].map(([poId,status,totalAmount])=>({
+        poId,status,totalAmount,orderDate:'2026-10-28',vendorName:'Vendor',totalQty:1,items:[{productCode:'CODE-70',qty:1}]
+      }));
+      const old=respond;
+      respond=(fn,args)=>{
+        if(fn!=='getPurchaseOrderPageData'||args[0]?.section!=='history')return old(fn,args);
+        const search=args[0].search||{};
+        return {purchaseOrders:rows.filter(row=>!search.number||row.poId===search.number),pageInfo:{hasMore:false,search}};
+      };
+    });
+    await p.locator('#createSearchBar').fill('CODE-70');
+    assert.match(await p.locator('#purchaseCreateCount').innerText(),/1 รายการ/);
+    await p.locator('#tabBtnHistory').click();
+    await p.waitForFunction(()=>purchaseHistoryLoaded&&!documentPager.busy());
+    const reads=await p.evaluate(()=>apiCalls.length);
+    await p.locator('#historyThead [data-xlf-col=totalAmount]').click();
+    await p.locator('.xlf-sort-btn[data-dir=asc]').click();
+    assert.equal(await p.locator('#historyTableBody .po-number').first().innerText(),'PO-2');
+    await p.locator('#statusPills [data-status=Pending]').click();
+    assert.equal(await p.locator('#statusPills [data-status=Pending]').getAttribute('aria-pressed'),'true');
+    assert.equal(await p.locator('#historyTableBody .po-number').innerText(),'PO-1');
+    assert.equal(await p.locator('#historyTableBody button.receive').count(),1);
+    assert.equal(await p.locator('#historyTableBody button.del').count(),0);
+    await p.locator('#historyTableBody .po-number').click();
+    await p.locator('#detailModal.active').waitFor();
+    assert.match(await p.locator('#detailItemsBody').innerText(),/CODE-70.*—/s);
+    assert.equal(await p.evaluate(()=>apiCalls.length),reads);
+    await p.locator('#detailModal .modal-close').click();
+    await p.locator('#statusPills [data-status=all]').click();
+    await p.locator('.syy-document-search [name=number]').fill('PO-2');
+    await p.locator('.syy-document-search [type=submit]').click();
+    await p.waitForFunction(()=>!documentPager.busy());
+    assert.equal(await p.locator('#historyTableBody .po-number').innerText(),'PO-2');
+    assert.equal(await p.evaluate(()=>apiCalls.length),reads+1);
+    assert.equal(await p.evaluate(()=>apiCalls.at(-1).args[0].section),'history');
+    await p.locator('#btnRefresh').click();
+    await p.waitForFunction(()=>!purchaseLoadingSection&&!documentPager.busy());
+    assert.equal(await p.locator('.syy-document-search [name=number]').inputValue(),'PO-2');
+    assert.equal(await p.locator('#historyTableBody .po-number').innerText(),'PO-2');
+    assert.equal(await p.evaluate(()=>apiCalls.length),reads+2);
+    await p.evaluate(()=>{XLF.clearAll('orders');renderHistoryTab();syyLocalSet('view','purchaseOrders',null);});
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
   await check('Bill UX basket cards recalculate without RPC, preserve a new sale and never submit F4 in edit mode',async()=>{
     const p=await pageFor('StockIssue.html','admin');await p.waitForFunction(()=>apiCalls.some(call=>call.fn==='getProductImageBatch'));await p.evaluate(()=>{
       basket=[];addToBasket('P1');document.getElementById('inpRefNo').value='new-sale-draft';products[0].currentStock=12;products[0].costPrice=999;
@@ -1483,7 +1537,32 @@ async function main(){
       fixtureMovements=Array.from({length:65},(_,i)=>[0,1].map(j=>({id:'B'+i+'-'+j,docNo:'B'+i,billNo:'SI-20261028-'+String(i+1).padStart(4,'0'),timestamp:new Date(Date.UTC(2026,9,28,10,0,i)).toISOString(),type:'OUT',productCode:'P'+j,productName:j?'Hidden searchable part':'Part',qty:1,unitPrice:10.25,costPrice:5,hasUnitPrice:true,hasCostPrice:true,issueStatus:i===3?'cancelled':'active',user:'recorded-user',reason:'ขายหน้าร้าน'}))).flat();switchTab('history');
     });await p.waitForFunction(()=>!mvPage.busy&&movements.length>0);assert.equal(await p.locator('#panelHistory thead th').count(),6);assert.equal(await p.locator('#mvBody tr').count(),25);assert.match(await p.locator('#mvBody').innerText(),/20\.50/);assert.equal(await p.evaluate(()=>apiCalls.some(x=>x.fn==='getStockMovementDetail')),false);
     await p.locator('#mvAll').click();await p.waitForFunction(()=>mvPage.complete&&!mvPage.busy);assert.equal(await p.locator('#mvBody tr').count(),50);const reads=await p.evaluate(()=>apiCalls.length);await p.locator('#mvViewNext').click();assert.equal(await p.locator('#mvBody tr').count(),15);assert.equal(await p.evaluate(()=>mvViewPage),2);await p.locator('#mvViewPrev').click();assert.equal(await p.evaluate(()=>mvViewPage),1);assert.equal(await p.evaluate(()=>apiCalls.length),reads);
-    await p.locator('#mvSearchInput').fill('Hidden searchable');assert.equal(await p.locator('#mvBody tr').count(),50);assert.equal(await p.evaluate(()=>movementBillRows().length),65);assert.equal(await p.evaluate(()=>apiCalls.length),reads);await p.screenshot({path:path.join(output,'history-bill-summary.png')});await p.locator('#mvViewNext').click();await p.evaluate(()=>loadMovements());await p.waitForFunction(()=>!mvPage.busy&&!mvPage.restoreView);assert.equal(await p.evaluate(()=>mvViewPage),2);assert.equal(await p.locator('#mvSearchInput').inputValue(),'Hidden searchable');assert.equal(await p.locator('#mvBody tr').count(),15);assert.deepEqual(p.errors,[]);await p.close();
+    await p.locator('#mvThead [data-xlf-col=billLabel]').click();
+    await p.locator('.xlf-sort-btn[data-dir=asc]').click();
+    assert.equal(await p.locator('#mvBody .movement-link').first().innerText(),'SI-20261028-0001');
+    await p.locator('#mvPageSize').selectOption('25');
+    assert.equal(await p.locator('#mvBody tr').count(),25);
+    await p.locator('#mvPageSize').selectOption('50');
+    await p.evaluate(()=>{XLF.clearAll('stockHistory');renderMovements();});
+    await p.locator('#mvSearchInput').fill('Hidden searchable');
+    assert.equal(await p.locator('#mvBody tr').count(),50);
+    assert.equal(await p.evaluate(()=>movementBillRows().length),65);
+    assert.equal(await p.evaluate(()=>apiCalls.length),reads);
+    await p.locator('#mvViewNext').click();
+    await p.evaluate(()=>{apiHold='getStockMovementPage';loadMovements();});
+    await p.waitForFunction(()=>apiPending.length===1);
+    assert.equal(await p.locator('#mvBody tr').count(),15);
+    assert.equal(await p.locator('#mvViewStatus').innerText(),'หน้า 2 / 2');
+    await p.evaluate(()=>{apiFailure='getStockMovementPage';apiHold='';apiPending.shift()();});
+    await p.waitForFunction(()=>!mvPage.busy);
+    assert.match(await p.locator('#mvPageStatus').innerText(),/แสดงข้อมูลที่โหลดสำเร็จ/);
+    assert.equal(await p.locator('#mvBody tr').count(),15);
+    await p.evaluate(()=>{apiFailure='';loadMovements();});
+    await p.waitForFunction(()=>!mvPage.busy&&!mvPage.restoreView);
+    assert.equal(await p.evaluate(()=>mvViewPage),2);
+    assert.equal(await p.locator('#mvSearchInput').inputValue(),'Hidden searchable');
+    assert.equal(await p.locator('#mvBody tr').count(),15);
+    assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Bill UX Dashboard shows Thai date, original actor and decimal money, paginates locally and retains net correction ledger',async()=>{
     const p=await pageFor('index.html');await p.evaluate(()=>{
