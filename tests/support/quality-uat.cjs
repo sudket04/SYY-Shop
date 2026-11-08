@@ -79,7 +79,7 @@ module.exports = async function ({pageFor, check, output}) {
     const payloads = await page.evaluate(() => apiCalls.filter(call => call.fn==='issueStock').map(call => call.args[0]));
     assert.equal(payloads.length, 1);
     assert.equal(payloads[0].items.length, 21);
-    assert.deepEqual(payloads[0].items[0], {productCode:'UAT499',productName:'อะไหล่สำหรับทดสอบ 499',qty:2.5});
+    assert.deepEqual(payloads[0].items[0], {productCode:'UAT499',productName:'อะไหล่สำหรับทดสอบ 499',qty:2.5,expectedUnitPrice:200});
     assert(payloads[0].requestId);
     await page.evaluate(() => {apiHold=''; apiPending.shift()();});
     await page.waitForFunction(() => basket.length === 0 && !issueBusy);

@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '../..');
+let invoiceMathSource;
 function evaluateTemplate(file, values = {}) {
   const source = fs.readFileSync(path.join(root, file), 'utf8');
   let program = 'const output=[];\n', offset = 0;
@@ -17,6 +18,7 @@ function evaluateTemplate(file, values = {}) {
   return vm.runInNewContext(program, {
     include_: name => fs.readFileSync(path.join(root, name + '.html'), 'utf8'),
     __escape: value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])),
+    ...(file==='Master_Tax_Invoice.html' ? {invoiceMathSource:invoiceMathSource ||= require('./services.cjs').setup().c.calcTaxInvoiceTotals_.toString()} : {}),
     ...values
   }, {filename: file, timeout: 1000});
 }

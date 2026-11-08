@@ -26,6 +26,20 @@ test('product pages carry verified and unknown image status without requesting a
  assert(JSON.parse(browse.options.payload).structuredQuery.select.fields.some(field=>field.fieldPath==='Has_Image'));
  assert.equal(s.reads.Product_Images,undefined);
 });
+test('exact barcode preserves leading zeroes, includes legacy numeric matches and pages duplicate barcodes',()=>{
+ const s=fixture(4);
+ s.docs.get('Master_Products/P00000').fields.Barcode={stringValue:'00123'};
+ s.docs.get('Master_Products/P00001').fields.Barcode={doubleValue:123};
+ s.docs.get('Master_Products/P00002').fields.Barcode={stringValue:'123'};
+ const options={cursorMode:true,searchMode:'barcode',search:'123',includeImages:false,pageSize:1};
+ const first=s.c.getProductCatalogPage_(options);
+ assert.equal(first.products[0].productCode,'P00001');assert.equal(first.hasMore,true);
+ const second=s.c.getProductCatalogPage_({...options,page:2,cursor:first.nextCursor});
+ assert.equal(second.products[0].productCode,'P00002');assert.equal(second.hasMore,false);
+ assert.deepEqual(plain(s.c.getProductCatalogPage_({...options,search:'00123'}).products.map(row=>row.productCode)),['P00000']);
+ assert.deepEqual(plain(s.c.getProductCatalogPage_({...options,filters:{partType:['เทียบ']}}).products.map(row=>row.productCode)),['P00002']);
+ assert.equal(s.reads.Product_Images,undefined);
+});
 test('10,000 products: first page reads no full image collection, warm repeat is zero extra data reads; counts and end-of-catalog search remain global',()=>{
  const old=fixture(),legacy=old.c.getAllProducts_();const s=fixture(),first=s.c.getAllProducts_({paged:true,includeMasters:true,pageSize:50});
  assert.equal(first.total,10000);assert.equal(first.products.length,50);assert.equal(first.masters.brands[0].Name,'ยี่ห้อไทย');

@@ -87,6 +87,7 @@ function doGet(e) {
   template.username  = session.username;
   template.resetMode  = mode;
   template.resetToken = rtoken;
+  if (page === 'taxinvoice') template.invoiceMathSource = calcTaxInvoiceTotals_.toString();
 
   return template
     .evaluate()
@@ -1168,13 +1169,23 @@ function productCatalogSpec_(options){
     if(values.length)normalized[key]=Array.from(new Set(values)).sort();
   });
   if(options.includeImages!=null&&typeof options.includeImages!=='boolean')throw new Error('ตัวเลือกรูปสินค้าไม่ถูกต้อง');
-  return {search:search.trim().toLowerCase(),filters:normalized,sortCol:sort,sortAsc:options.sortAsc!==false,includeImages:options.includeImages!==false};
+  var searchMode=options.searchMode==null?'':options.searchMode;
+  if(!['','sku','barcode'].includes(searchMode))throw new Error('โหมดค้นหาสินค้าไม่ถูกต้อง');
+  search=search.trim();
+  if(searchMode==='sku'&&search&&!validDocumentId_(search))throw new Error('รหัสสินค้าไม่ถูกต้อง');
+  var spec={search:searchMode?search:search.toLowerCase(),filters:normalized,sortCol:sort,sortAsc:options.sortAsc!==false,includeImages:options.includeImages!==false};
+  if(searchMode&&search)spec.searchMode=searchMode;
+  return spec;
 }
 function filterProductCatalog_(rows,spec,except){
   var sets=Object.create(null);Object.keys(spec.filters).forEach(function(k){if(k!==except)sets[k]=new Set(spec.filters[k]);});
   var searchable=['productName','productCode','partNumber','barcode','brandName','categoryName','carModel'];
   var result=rows.filter(function(row){
-    if(spec.search&&!searchable.some(function(key){return String(row[key]||'').toLowerCase().indexOf(spec.search)>=0;}))return false;
+    if(spec.search){
+      var match=spec.searchMode ? row[spec.searchMode==='sku'?'productCode':'barcode']===spec.search :
+        searchable.some(function(key){return String(row[key]||'').toLowerCase().indexOf(spec.search)>=0;});
+      if(!match)return false;
+    }
     return Object.keys(sets).every(function(key){var v=row[key];return sets[key].has(v==null||v===''?'(ว่าง)':String(v));});
   });
   if(spec.sortCol){
@@ -1190,7 +1201,7 @@ function getProductCatalogPage_(options){
   if(!Number.isInteger(size)||size<1||size>200||!Number.isInteger(page)||page<1||page>100000)throw new Error('ขนาดหน้าสินค้าไม่ถูกต้อง');
   // Opt-in wire format for new clients. Complex substring/XLFilter queries keep
   // their complete-dataset semantics; ordinary browsing never scans the catalog.
-  if(options.cursorMode===true&&!spec.search&&!Object.keys(spec.filters).length&&(!spec.sortCol||spec.sortCol==='productCode'))return getProductBrowsePage_(options,spec,size,page);
+  if(options.cursorMode===true&&(!spec.search||spec.searchMode)&&!Object.keys(spec.filters).length&&(!spec.sortCol||spec.sortCol==='productCode'))return getProductBrowsePage_(options,spec,size,page);
   var version=productListScopes_(spec).map(collectionGeneration_).join('|'),offset=(page-1)*size,query=readCacheKey_(JSON.stringify(spec)),issuedAt=Date.now();
   if(options.cursor){try{
     if(typeof options.cursor!=='string'||options.cursor.length>4096)throw Error('invalid');
@@ -1246,6 +1257,17 @@ function getProductBrowsePage_(options,spec,size,page){
   var response=cachedReadResult_(key,productListScopes_(spec),30000,function(){
     var fields=['Product_Name','Part_Type','Part_Number','Barcode','Barcode_Generated','Brand_ID','Category_ID','Default_Vendor_ID','Zone_ID','Car_IDs','Car_ID','Cost_Price','Selling_Price','Current_Stock','Min_Stock','Status','Has_Image'];
     var q={from:[{collectionId:'Master_Products'}],select:{fields:fields.map(function(f){return {fieldPath:f};})},orderBy:[{field:{fieldPath:'__name__'},direction:spec.sortAsc?'ASCENDING':'DESCENDING'}],limit:size+1};
+    if(spec.searchMode==='sku'){
+      q.where={fieldFilter:{field:{fieldPath:'__name__'},op:'EQUAL',value:{referenceValue:fsDocPath_('Master_Products',spec.search)}}};
+    }else if(spec.searchMode==='barcode'){
+      var barcode=spec.search, value={stringValue:barcode}, op='EQUAL';
+      // Historical numeric barcodes match the same literal digits. A leading
+      // zero is part of the code, so only the string can match in that case.
+      if(/^(0|[1-9]\d*)$/.test(barcode)&&Number.isSafeInteger(Number(barcode))){
+        op='IN';value={arrayValue:{values:[value,{integerValue:barcode}]}};
+      }
+      q.where={fieldFilter:{field:{fieldPath:'Barcode'},op:op,value:value}};
+    }
     if(cursor)q.startAt={values:[{referenceValue:fsDocPath_('Master_Products',cursor.last)}],before:false};
     var body={structuredQuery:q};if(snapshotTime)body.readTime=snapshotTime;
     var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:runQuery',{method:'post',headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});
@@ -1685,13 +1707,7 @@ function deleteProduct_(docId) {
 // 14. Master — Brands
 // ==========================================
 function saveBrand_(d) {
-  var dataObject = {
-    _expectedUpdateTime:d.expectedUpdateTime||"",
-    Brand_Name  : String(d.brandName   || ""),
-    Description : String(d.description || ""),
-    Status      : String(d.status      || "Active")
-  };
-  return saveMasterData_("Master_Brands", "B", d.docId || null, dataObject, d.brandName);
+  return saveCatalogLabel_(d,"Master_Brands","B","brandName","Brand_Name");
 }
 function getBrands_()        { return getFirestoreRawList_("Master_Brands"); }
 function deleteBrand_(docId) { return deleteFirestoreDocument_("Master_Brands", docId); }
@@ -1700,13 +1716,40 @@ function deleteBrand_(docId) { return deleteFirestoreDocument_("Master_Brands", 
 // 15. Master — Categories
 // ==========================================
 function saveCategory_(d) {
-  var dataObject = {
-    _expectedUpdateTime:d.expectedUpdateTime||"",
-    Category_Name: String(d.categoryName || ""),
-    Description  : String(d.description  || ""),
-    Status       : String(d.status       || "Active")
-  };
-  return saveMasterData_("Master_Categories", "C", d.docId || null, dataObject, d.categoryName);
+  return saveCatalogLabel_(d,"Master_Categories","C","categoryName","Category_Name");
+}
+
+function saveCatalogLabel_(d, collection, prefix, nameKey, field) {
+  var allowed = [nameKey,'description','status','docId','expectedUpdateTime'];
+  if (!d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).some(function(key){return !allowed.includes(key);}) ||
+      typeof d[nameKey] !== 'string' || !d[nameKey].trim() || d[nameKey].trim().length > 500 ||
+      (d.docId != null && d.docId !== '' && !validDocumentId_(d.docId)) ||
+      (d.expectedUpdateTime != null && (typeof d.expectedUpdateTime !== 'string' || d.expectedUpdateTime.length > 100)) ||
+      (d.description != null && (typeof d.description !== 'string' || d.description.length > 5000)) ||
+      (d.status != null && !['Active','Inactive'].includes(d.status))) {
+    return {success:false,message:'ชื่อ สถานะ หรือข้อมูลที่ส่งมาไม่ถูกต้อง'};
+  }
+  var name = d[nameKey].trim(), fields = {_expectedUpdateTime:d.expectedUpdateTime || ''};
+  fields[field] = name;
+  if (d.description != null) fields.Description = d.description.trim();
+  if (d.status != null || !d.docId) fields.Status = d.status || 'Active';
+  return withReferenceMutationLock_(function(){return saveMasterData_(collection,prefix,d.docId || null,fields,name);});
+}
+
+// Older templates use the generic RPC. Translate only the fields their forms support.
+function saveLegacyCatalogLabel_(collection,prefix,docId,fields) {
+  var brand = collection === 'Master_Brands';
+  if ((!brand && collection !== 'Master_Categories') || prefix !== (brand?'B':'C') ||
+      !fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    return {success:false,message:'ไม่อนุญาตให้บันทึกข้อมูลลงชุดข้อมูลนี้'};
+  }
+  var nameField=brand?'Brand_Name':'Category_Name';
+  if (Object.keys(fields).some(function(key){return ![nameField,'Description','Status','_expectedUpdateTime'].includes(key);})) {
+    return {success:false,message:'พบฟิลด์ที่ไม่อนุญาตให้บันทึก'};
+  }
+  var data={docId:docId,expectedUpdateTime:fields._expectedUpdateTime,description:fields.Description,status:fields.Status};
+  data[brand?'brandName':'categoryName']=fields[nameField];
+  return brand ? saveBrand_(data) : saveCategory_(data);
 }
 function getCategories_()        { return getFirestoreRawList_("Master_Categories"); }
 // ★ FIX: แก้ typo "eleteCategory" → "deleteCategory" (เดิมขาดตัว d ทำให้ apiGateway/ปุ่มลบเรียกไม่เจอ)
@@ -1941,15 +1984,29 @@ var TAX_INVOICE_SELLER = {
 };
 
 function calcTaxInvoiceTotals_(items) {
-  var subtotal = 0;
-  (items || []).forEach(function(it) {
-    var qty   = parseFloat(it.qty)       || 0;
-    var price = parseFloat(it.unitPrice) || 0;
-    subtotal += qty * price;
-  });
-  var vat   = Math.round(subtotal * 0.07 * 100) / 100;
-  var total = Math.round((subtotal + vat) * 100) / 100;
-  return { subtotal: Math.round(subtotal * 100) / 100, vat: vat, total: total };
+  // The invoice template also uses this function. Round each displayed line to
+  // satang, sum those lines, then round VAT once on that subtotal.
+  function decimal(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+    var parts = String(value).match(/^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/);
+    var fraction = parts[2] || '';
+    return {digits:BigInt(parts[1]+fraction),exponent:Number(parts[3] || 0)-fraction.length};
+  }
+  function roundRatio(value, divisor) {return (value + divisor / 2n) / divisor;}
+  var subtotal = 0n, lineTotals = [], maxCents = 4503599627370495n;
+  for (var i=0;i<items.length;i++) {
+    var qty = decimal(items[i].qty), price = decimal(items[i].unitPrice);
+    if (!qty || !price) return null;
+    var cents = qty.digits * price.digits, exponent = qty.exponent + price.exponent + 2;
+    if (exponent >= 0) cents *= 10n ** BigInt(exponent);
+    else cents = roundRatio(cents, 10n ** BigInt(-exponent));
+    subtotal += cents;
+    if (subtotal > maxCents) return null;
+    lineTotals.push(Number(cents) / 100);
+  }
+  var vat = roundRatio(subtotal * 7n,100n), total = subtotal + vat;
+  if (total > maxCents) return null;
+  return {subtotal:Number(subtotal)/100,vat:Number(vat)/100,total:Number(total)/100,lineTotals:lineTotals};
 }
 
 function isValidBusinessDate_(value) {
@@ -2003,23 +2060,17 @@ function saveTaxInvoice_(d) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณาเพิ่มรายการสินค้า/บริการอย่างน้อย 1 รายการ" };
   }
   if (items.some(function(it) {
-    return !it || !String(it.name || "").trim() || !isFinite(Number(it.qty)) || Number(it.qty) <= 0 ||
-      it.unitPrice === "" || it.unitPrice === null || it.unitPrice === undefined ||
-      !isFinite(Number(it.unitPrice)) || Number(it.unitPrice) < 0;
+    return !it || !String(it.name || "").trim() ||
+      !validBusinessNumber_(it.qty,0,true) || !validBusinessNumber_(it.unitPrice,0,false);
   })) return {success:false, message:"รายการสินค้าต้องมีชื่อ จำนวนมากกว่า 0 และราคาตั้งแต่ 0 ขึ้นไป"};
-  var cleanItems = items.filter(function(it) {
-    return String(it.name || "").trim() && parseFloat(it.qty) > 0 && parseFloat(it.unitPrice) >= 0;
-  }).map(function(it) {
+  var cleanItems = items.map(function(it) {
     return {
       name      : String(it.name).trim(),
-      qty       : parseFloat(it.qty) || 0,
+      qty       : Number(it.qty),
       unit      : String(it.unit || "").trim(),
-      unitPrice : parseFloat(it.unitPrice) || 0
+      unitPrice : Number(it.unitPrice)
     };
   });
-  if (!cleanItems.length) {
-    return { success: false, title: "ข้อมูลไม่ครบ", message: "รายการสินค้าต้องมีชื่อและจำนวนมากกว่า 0 อย่างน้อย 1 รายการ" };
-  }
 
   if (!String(d.buyerName || "").trim()) {
     return { success: false, title: "ข้อมูลไม่ครบ", message: "กรุณากรอกชื่อผู้ซื้อ" };
@@ -2031,6 +2082,8 @@ function saveTaxInvoice_(d) {
   }
 
   var totals = calcTaxInvoiceTotals_(cleanItems);
+  if (!totals) return {success:false,message:'ยอดใบกำกับภาษีเกินขอบเขตที่รองรับ'};
+  cleanItems.forEach(function(item,index){item.lineTotal=totals.lineTotals[index];});
 
   var invoiceDate = String(d.invoiceDate || "").trim() || businessDate_();
   if (!isValidBusinessDate_(invoiceDate)) {
@@ -3994,9 +4047,7 @@ var API_REGISTRY = {
   moveProductImage         : "staff",
   commitProductImageDraft  : "staff",
   generateProductBarcode   : "staff",
-  // ★ FIX: saveMasterData ไม่เคยอยู่ใน registry นี้เลย — apiGateway ปฏิเสธทุกครั้งที่เรียก
-  //   (Master_Brands.html และ Master_Categories.html เรียกฟังก์ชันนี้ตรงๆ ไม่ผ่าน saveBrand/saveCategory)
-  //   ทำให้กดบันทึกแบรนด์/หมวดหมู่ไม่ได้เลยถ้าไม่แก้ตรงนี้ — SAVE_MASTER_ALLOWED ด้านล่างเป็นด่านกันอยู่แล้วว่าเขียนได้แค่ 2 collection นี้
+  // Existing master templates use this name. Dispatch through the typed adapter.
   saveMasterData           : "staff",
   savePurchaseOrder        : "staff",
   receiveGoods             : "staff",
@@ -4091,11 +4142,11 @@ var API_FUNCTIONS = {
   moveProductImage          : moveProductImage_,
   commitProductImageDraft   : commitProductImageDraft_,
   generateProductBarcode    : generateProductBarcode_,
-  saveMasterData            : saveMasterData_,
+  saveMasterData            : saveLegacyCatalogLabel_,
   savePurchaseOrder         : savePurchaseOrder_,
   receiveGoods              : receiveGoods_,
   updatePurchaseOrderStatus : updatePurchaseOrderStatus_,
-  issueStock                : issueStock_,
+  issueStock                : issueStockFromClient_,
   getStockMovements         : getStockMovements_,
   getStockMovementPage      : getStockMovementPage_,
   getStockMovementDetail    : getStockMovementDetail_,
@@ -5075,13 +5126,17 @@ function getProductStockMap_(codes) {
 
 /**
  * ★ ตัดสต๊อก — ใช้จากหน้า StockIssue.html
- * d = { reason, refNo, note, allowNegative, items:[{productCode, productName, qty, unitPrice}] }
+ * d = { reason, refNo, note, allowNegative, items:[{productCode, productName, qty, expectedUnitPrice}] }
  * callerUsername = username จริงจาก session (apiGateway inject ให้อัตโนมัติ)
  *
  * ทำใน commit เดียว: ลดสต๊อก (fieldTransform increment ค่าลบ) + เขียน Stock_Movements ทุกบรรทัด
  * ถ้าคอมมิตไม่ผ่าน จะไม่มีอะไรถูกเขียนเลย (atomic) — สต๊อกกับ log จึงไม่หลุดจากกัน
  */
-function issueStock_(d, callerUsername) {
+function issueStockFromClient_(d, callerUsername) {
+  return issueStock_(d, callerUsername, true);
+}
+
+function issueStock_(d, callerUsername, requireReviewedPrice) {
   function fail(msg, extra) {
     var o = { success: false, title: "ไม่สำเร็จ", message: msg };
     if (extra) for (var k in extra) o[k] = extra[k];
@@ -5096,17 +5151,30 @@ function issueStock_(d, callerUsername) {
     var user = callerUsername || getCurrentUsername_();
     var request = stockRequest_("SI",d,user), replay = replayStockRequest_(request);
     if (replay) return replay;
+    if (requireReviewedPrice && items.some(function(it){return !validBusinessNumber_(it.expectedUnitPrice,0,false);})) {
+      return fail('กรุณารีเฟรชหน้าและตรวจราคาก่อนยืนยันตัดสต๊อก', {code:'PRICE_REVIEW_REQUIRED'});
+    }
+    if (items.some(function(it){return it.expectedUnitPrice !== undefined && !validBusinessNumber_(it.expectedUnitPrice,0,false);})) {
+      return fail('ราคาที่ตรวจสอบไม่ถูกต้อง');
+    }
 
     var reason = String(d.reason || "").trim();
     if (ISSUE_REASONS.indexOf(reason) === -1) return fail("กรุณาเลือกเหตุผลที่ตัดสต๊อกให้ถูกต้อง");
 
     // รวมรายการซ้ำรหัสเดียวกันเข้าด้วยกัน กันตัดสองรอบ
-    // ★ ไม่รับ unitPrice จาก client เลย — ราคาตัดสต๊อกต้องอ้างอิง Master_Products.Selling_Price เท่านั้น
-    //   (ล็อกที่ฝั่ง server ไม่ใช่แค่ซ่อนช่องกรอกที่ UI เพราะ apiGateway ยังเรียกได้ตรงถ้ารู้ token)
+    // Client prices are preconditions only. The amount written is from the server.
     var merged = Object.create(null);
     items.forEach(function (it) {
       var code = String(it.productCode);
       if (!merged[code]) merged[code] = { productCode: code, productName: it.productName || "", qty: 0 };
+      var reviewedPrice = it.expectedUnitPrice;
+      if (reviewedPrice !== undefined) {
+        reviewedPrice = Number(reviewedPrice);
+        if (merged[code].expectedUnitPrice !== undefined && merged[code].expectedUnitPrice !== reviewedPrice) {
+          throw new Error('พบราคาที่ตรวจสอบไม่ตรงกันในสินค้ารหัส '+code);
+        }
+        merged[code].expectedUnitPrice = reviewedPrice;
+      }
       merged[code].qty += Number(it.qty);
     });
     var lines0 = Object.keys(merged).map(function (k) { return merged[k]; });
@@ -5116,14 +5184,6 @@ function issueStock_(d, callerUsername) {
     // ★ ถ้าตัดสต๊อกจากใบเสนอราคาที่ "ปิดงาน-ขายสำเร็จ" แล้ว ใช้ราคาที่เสนอไปจริง (ผ่านการอนุมัติแล้ว)
     //   เฉพาะสินค้าที่อยู่ในใบเสนอราคานั้น แทนราคา Master Product — ตรวจสอบจากเอกสารจริงบน server
     //   เองเท่านั้น (ไม่เชื่อราคาที่ client ส่งมาตรงๆ) กันตั้งราคาปลอมโดยอ้างว่ามาจากใบเสนอราคา
-    var quotedPriceMap = Object.create(null), quoteDoc = null;
-    if (d.quoteId) {
-      quoteDoc = readExistingDocument_(QUOTATION_COLLECTION,d.quoteId);
-      var qf = quoteDoc.fields || {};
-      if (!quoteDoc.updateTime || parseFirestoreValue_(qf.Status) !== "ปิดงาน-ขายสำเร็จ") return fail("ใบเสนอราคาต้องปิดงานขายสำเร็จก่อนตัดสต๊อก");
-      JSON.parse(parseFirestoreValue_(qf.Items_JSON) || "[]").forEach(function(it) {quotedPriceMap[it.productCode]=Number(it.unitPrice);});
-      if (lines0.some(function(l) {return !Object.prototype.hasOwnProperty.call(quotedPriceMap,l.productCode) || !isFinite(quotedPriceMap[l.productCode]) || quotedPriceMap[l.productCode] < 0;})) return fail("สินค้าหรือราคาไม่ตรงกับใบเสนอราคา");
-    }
     var nowIso = new Date().toISOString(), docNo = request.docNo;
 
     // ★ FIX: เดิมอ่านสต๊อกมาตรวจ "พอไหม" ครั้งเดียวแล้วค่อยเขียน increment แยกจังหวะกัน — ถ้า 2 คำขอ
@@ -5134,12 +5194,20 @@ function issueStock_(d, callerUsername) {
     var MAX_ATTEMPTS = 3;
     var lines, commit;
     for (var attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      var quotedPriceMap = Object.create(null), quoteDoc = null;
+      if (d.quoteId) {
+        quoteDoc = readExistingDocument_(QUOTATION_COLLECTION,d.quoteId);
+        var qf = quoteDoc.fields || {};
+        if (!quoteDoc.updateTime || parseFirestoreValue_(qf.Status) !== "ปิดงาน-ขายสำเร็จ") return fail("ใบเสนอราคาต้องปิดงานขายสำเร็จก่อนตัดสต๊อก");
+        JSON.parse(parseFirestoreValue_(qf.Items_JSON) || "[]").forEach(function(it) {quotedPriceMap[it.productCode]=Number(it.unitPrice);});
+        if (lines0.some(function(l) {return !validBusinessNumber_(quotedPriceMap[l.productCode],0,false);})) return fail("สินค้าหรือราคาไม่ตรงกับใบเสนอราคา");
+      }
       var stockMap = getProductStockMap_(lines0.map(function (l) { return l.productCode; }));
 
       var notFound     = [];
       var insufficient = [];
       lines = lines0.map(function (l0) {
-        return { productCode: l0.productCode, productName: l0.productName, qty: l0.qty };
+        return { productCode: l0.productCode, productName: l0.productName, qty: l0.qty, expectedUnitPrice:l0.expectedUnitPrice };
       });
       lines.forEach(function (l) {
         var info = stockMap[l.productCode];
@@ -5160,6 +5228,10 @@ function issueStock_(d, callerUsername) {
           return x.productName + " (คงเหลือ " + x.stock + " ต้องการ " + x.need + ")";
         }).join(", "), { insufficient: insufficient });
       }
+      if (lines.some(function(l){return !validBusinessNumber_(l.unitPrice,0,false);})) return fail('ราคาสินค้าไม่ถูกต้อง');
+      var priceChanges = lines.filter(function(l){return l.expectedUnitPrice !== undefined && l.expectedUnitPrice !== l.unitPrice;})
+        .map(function(l){return {productCode:l.productCode,productName:l.productName,previousUnitPrice:l.expectedUnitPrice,unitPrice:l.unitPrice};});
+      if (priceChanges.length) return fail('ราคาสินค้าเปลี่ยน กรุณาตรวจยอดใหม่ก่อนยืนยัน', {code:'PRICE_CHANGED',priceChanges:priceChanges});
 
       var bill = prepareSalesBillNumber_(nowIso,docNo);
       var writes = bill.writes.slice();
@@ -5201,7 +5273,7 @@ function issueStock_(d, callerUsername) {
       });
 
       var result = {success:true,title:"สำเร็จ",message:"ตัดสต๊อกเรียบร้อย",docNo:docNo,billNo:bill.billNo,
-        results:lines.map(function(l) {return {productCode:l.productCode,productName:l.productName,qty:l.qty,before:l.before,after:l.after,belowMin:l.after <= l.minStock};})};
+        results:lines.map(function(l) {return {productCode:l.productCode,productName:l.productName,qty:l.qty,unitPrice:l.unitPrice,before:l.before,after:l.after,belowMin:l.after <= l.minStock};})};
       if (quoteDoc) writes.push({update:{name:fsDocPath_(QUOTATION_COLLECTION,d.quoteId),fields:mapToFirestoreFields_({Stock_Issued:"true",Stock_Issue_Doc:docNo,Stock_Issue_Bill_No:bill.billNo,Stock_Issued_By:user,Stock_Issued_At:nowIso})},
         updateMask:{fieldPaths:["Stock_Issued","Stock_Issue_Doc","Stock_Issue_Bill_No","Stock_Issued_By","Stock_Issued_At"]},currentDocument:{updateTime:quoteDoc.updateTime}});
       sealStockRequest_(writes,request,result);
@@ -5913,6 +5985,19 @@ function replayStockRequest_(request) {
   result.billNo = result.billNo || parseFirestoreValue_(f.Bill_No) || "";
   result.issueStatus=parseFirestoreValue_(f.Issue_Status)||'active';if(result.issueStatus!=='active')result.refreshWarning='รายการเดิมถูกยกเลิกหรือแทนที่แล้ว ไม่มีการตัดสต๊อกซ้ำ';
   result.replayed = true;
+  // A pending sale submitted before reviewed prices were introduced can still
+  // reopen a draft from the recorded movement amounts.
+  if (result.issueStatus==='active' && Array.isArray(result.results) && result.results.some(function(line){return !Number.isFinite(line.unitPrice);})) {
+    try {
+      var recorded=result.results.length===1?[f]:queryByEqualityField_(STOCK_MOVEMENT_COLLECTION,'Doc_No',request.docNo,201).map(function(doc){return doc.fields;});
+      var byCode=Object.create(null);
+      recorded.forEach(function(fields){
+        var code=parseFirestoreValue_(fields.Product_Code), price=parseFirestoreValue_(fields.Unit_Price);
+        if (validBusinessNumber_(price,0,false)) byCode[code]=Number(price);
+      });
+      result.results.forEach(function(line){if(!Number.isFinite(line.unitPrice)&&Number.isFinite(byCode[line.productCode]))line.unitPrice=byCode[line.productCode];});
+    } catch (ignored) {}
+  }
   clearCollectionCache_("Master_Products");clearCollectionCache_("Purchase_Orders");clearCollectionCache_(STOCK_MOVEMENT_COLLECTION);
   try{
     if(result.poId){var po=readExistingDocument_("Purchase_Orders",result.poId),pf=po.fields||{};

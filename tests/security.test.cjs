@@ -88,9 +88,10 @@ test('all V1 operations retain names, private dispatch, response and existing ro
     'deleteCar','deleteProduct','deletePurchaseOrder','backupNow','listBackupFiles','getBackupOverview','setupBackupSchedule','getActivityLog','getAllUsers',
     'createUserAccount','updateUserAccount','resetUserPassword','toggleUserStatus','authStartTotpSetup','authConfirmTotpSetup','authDisableTotp']};
   const expectedRegistry=Object.fromEntries(Object.entries(expected).flatMap(([role,names])=>names.map(name=>[name,role])));
+  const adapters={saveMasterData:'saveLegacyCatalogLabel_',issueStock:'issueStockFromClient_'};
   assert.deepEqual(plain(s.c.API_REGISTRY),expectedRegistry);
   for(const [name,minRole] of Object.entries(expectedRegistry)) {
-    assert.equal(s.c.API_FUNCTIONS[name],s.c[name+'_'],name);
+    assert.equal(s.c.API_FUNCTIONS[name],s.c[adapters[name]||name+'_'],name);
     for(const role of Object.keys(roles)) {
       let reached=false;
       s.c.getSession_=()=>s.session(role);

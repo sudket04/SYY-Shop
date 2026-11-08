@@ -207,6 +207,35 @@ async function main() {
     assert(key);assert.equal(store.value(key,'Barcode'),'00000131001');assert.equal(store.value(key,'Selling_Price'),129.5);
     assert.equal(store.value(key,'Has_Image'),true);
     const id=key.split('/')[1];
+    await page.route('https://lh3.googleusercontent.com/d/**',route=>route.fulfill({contentType:'image/png',body:png}));
+    await open('products','viewer');
+    const badge=page.locator('#productBody tr').filter({hasText:'กรองน้ำมัน UAT'}).locator('.product-image-badge');
+    await badge.waitFor();
+    const reads=rpc.filter(call=>call.op==='getProductImageBatch').length;
+    let releaseImage;
+    const holdImage=new Promise(resolve=>{releaseImage=resolve;});
+    const holdFirstImage=async route=>{
+      const request=route.request().postDataJSON();
+      if(request.args?.[1]==='getProductImageBatch')await holdImage;
+      await route.continue();
+    };
+    await page.route('**/rpc',holdFirstImage);
+    await badge.press('Enter');
+    await page.getByText('กำลังโหลดรูปสินค้า…',{exact:true}).waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('#productImageViewer.active').waitFor({state:'detached'});
+    releaseImage();
+    await page.waitForFunction(()=>productImageCache.size>0);
+    assert.equal(await page.locator('#productImageViewer.active').count(),0);
+    await page.unroute('**/rpc',holdFirstImage);
+    await badge.press('Enter');
+    await page.waitForFunction(()=>document.getElementById('productImageViewerImg')?.naturalWidth===128);
+    assert.equal(rpc.filter(call=>call.op==='getProductImageBatch').length,reads+1);
+    await page.keyboard.press('Escape');
+    await page.locator('#productImageViewer.active').waitFor({state:'detached'});
+    await badge.click();
+    await page.locator('#productImageViewerImg').waitFor();
+    assert.equal(rpc.filter(call=>call.op==='getProductImageBatch').length,reads+1);
     await open('products');await fill({tableSearchInput:id});
     await page.locator('#productBody .product-image-badge').waitFor();
     assert.equal(await page.locator('#productBody img').count(),0);
@@ -269,18 +298,22 @@ async function main() {
     assert.equal(store.value(key,'Grand_Total'),213.47);
   });
 
-  await check('Audit probe: invoice rounding with fractional quantity',async()=>{
+  await check('Invoice rounding reconciles on form and saved document with fractional quantity',async()=>{
     await open('taxinvoice','viewer');
     await click('button[onclick="openAddModal()"]');
     await fill({modalBuyerName:'ผู้ซื้อทดสอบเศษสตางค์'});
     await page.locator('.item-name').fill('อะไหล่แบ่งหน่วย UAT');
     await page.locator('.item-qty').fill('1.005');
     await page.locator('.item-price').fill('1');
+    assert.equal(await page.locator('#calcSubtotal').innerText(),'1.01');
+    assert.equal(await page.locator('#calcVat').innerText(),'0.07');
+    assert.equal(await page.locator('#calcTotal').innerText(),'1.08');
     await click('#modalBtnSave');
     const key=await waitForDoc('Master_Tax_Invoice','Buyer_Name','ผู้ซื้อทดสอบเศษสตางค์');
     const subtotal=store.value(key,'Subtotal'), vat=store.value(key,'Vat_Amount'), total=store.value(key,'Grand_Total');
-    observations.push({id:'INVOICE-ROUNDING',quantity:1.005,unitPrice:1,subtotal,vat,total,
-      reconciles:Math.round(subtotal*100)+Math.round(vat*100)===Math.round(total*100)});
+    assert.deepEqual([subtotal,vat,total],[1.01,0.07,1.08]);
+    assert.equal(JSON.parse(store.value(key,'Items_JSON'))[0].lineTotal,subtotal);
+    observations.push({id:'INVOICE-ROUNDING',quantity:1.005,unitPrice:1,subtotal,vat,total});
   });
 
   await check('PO: enter order quantity and note, receive partially and finish receipt',async()=>{
@@ -333,23 +366,27 @@ async function main() {
     assert.equal(response.success,false);assert.equal(store.commits.length,before);
   });
 
-  await check('Audit probe: real catalog pages carrying image status reach the IndexedDB eligibility check',async()=>{
+  await check('IndexedDB stores real catalog rows with true, false and null image status',async()=>{
+    store.docs.get('Master_Products/P001').fields.Has_Image={booleanValue:true};
+    store.put('Master_Products/P002',{Product_Name:'สินค้าเดิม UAT',Current_Stock:0});
+    api.clearCollectionCache_('Master_Products');
     await open('products','viewer');
-    await page.waitForFunction(()=>!productLoading&&productsCache.length>0);
+    await page.waitForFunction(()=>!productLoading&&productsCache.length>=3);
+    await page.waitForFunction(async()=>{
+      const key=Array.from(syyReadCache.keys()).find(key=>key.startsWith('getAllProducts[')&&key.includes('"paged":true'));
+      return key && (await syyDiskCache.lookup(key))?.record;
+    });
     const cache=await page.evaluate(()=>{
       const entry=Array.from(syyReadCache.entries()).find(([key])=>key.startsWith('getAllProducts[')&&key.includes('"paged":true'));
       if(!entry) return null;
       const [key,record]=entry, payload=JSON.parse(record.raw);
-      const withoutStatus=JSON.stringify({...payload,products:payload.products.map(({hasImage,...row})=>row)});
-      return {rows:payload.products.length, fieldPresent:payload.products.every(row=>Object.hasOwn(row,'hasImage')),
-        eligibleAsSent:syyDiskCache.eligible(key,record.raw),
-        eligibleWithoutStatus:syyDiskCache.eligible(key,withoutStatus)};
+      return {statuses:payload.products.map(row=>row.hasImage),eligibleAsSent:syyDiskCache.eligible(key,record.raw)};
     });
-    assert(cache);
+    assert(cache.eligibleAsSent);assert(cache.statuses.includes(true)&&cache.statuses.includes(false)&&cache.statuses.includes(null));
     observations.push({id:'CATALOG-DISK-SCHEMA',...cache});
   });
 
-  await check('Audit probe: POS price changes after the operator reviews the basket',async()=>{
+  await check('POS requires a second confirmation after a price change and opens the draft at the committed price',async()=>{
     await open('stockissue');
     await page.waitForFunction(()=>products.some(p=>p.productCode==='P001'));
     await fill({searchInput:'100001',inpRefNo:'UAT-PRICE-RACE'});
@@ -368,24 +405,41 @@ async function main() {
     source.updateTime='uat-price-change';
     api.clearCollectionCache_('Master_Products');
     const stockBefore=store.value('Master_Products/P001','Current_Stock');
+    const commits=store.commits.length;
     await confirm();
-    await page.locator('.syy-dialog-actions .swy-confirm-btn').waitFor();
+    await page.getByText('ราคาสินค้าเปลี่ยน',{exact:true}).waitFor();
+    assert.equal(store.value('Master_Products/P001','Current_Stock'),stockBefore);
+    assert.equal(store.commits.length,commits);
+    assert.equal(await page.evaluate(()=>window.uatInvoiceDraft),undefined);
+    assert.match(await page.locator('#basketLines .price-locked').innerText(),/135\.25/);
+    await confirm();
+    await page.getByRole('button',{name:'ตัดสต๊อก + เปิดร่างใบกำกับ',exact:true}).click();
+    await confirm();
+    await page.waitForFunction(()=>Array.isArray(window.uatInvoiceDraft));
     const movement=findDoc('Stock_Movements','Ref_No','UAT-PRICE-RACE');
     const invoiceDraftPrice=await page.evaluate(()=>window.uatInvoiceDraft?.[0]?.unitPrice ?? null);
+    assert(movement);
+    assert.equal(invoiceDraftPrice,135.25);
+    assert.equal(store.value(movement,'Unit_Price'),invoiceDraftPrice);
+    assert.equal(store.value('Master_Products/P001','Current_Stock'),stockBefore-1);
+    assert.equal(store.commits.length,commits+1);
     observations.push({id:'POS-PRICE-DRIFT',displayed,invoiceDraftPrice,
-      recorded:movement?store.value(movement,'Unit_Price'):null,
-      stockBefore,stockAfter:store.value('Master_Products/P001','Current_Stock'),
-      reproduced:!!movement&&/119\.75/.test(displayed)&&store.value(movement,'Unit_Price')===135.25});
+      recorded:store.value(movement,'Unit_Price'),stockBefore,stockAfter:store.value('Master_Products/P001','Current_Stock')});
     await confirm();
   });
 
-  await check('Audit probe: staff submits malformed and duplicate master data through gateway',async()=>{
+  await check('Gateway rejects staff submissions with malformed, duplicate or blank master data',async()=>{
     await open('brands');
+    const masters=()=>JSON.stringify([...store.docs.entries()].filter(([key])=>/^Master_(Brands|Categories)\//.test(key)));
+    const before=masters();
     const response=await page.evaluate(async token=>{
       const results=[];
       for(const [collection,prefix,fields] of [
-        ['Master_Brands','UAT',{Brand_Name:'แบรนด์ตั้งต้น',Status:'INVALID-UAT',Unexpected_Field:'UAT-probe'}],
-        ['Master_Categories','UAT',{Category_Name:'   '}]
+        ['Master_Brands','B',{Brand_Name:'แบรนด์ทดสอบ',Unexpected_Field:'UAT-probe'}],
+        ['Master_Brands','B',{Brand_Name:'แบรนด์ทดสอบ',Status:'INVALID-UAT'}],
+        ['Master_Brands','B',{Brand_Name:'  แบรนด์ตั้งต้น  '}],
+        ['Master_Brands','UAT',{Brand_Name:'รหัสผิด UAT'}],
+        ['Master_Categories','C',{Category_Name:'   '}]
       ]){
         const request=await fetch('/rpc',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({fn:'apiGateway',args:[token,'saveMasterData',[collection,prefix,'',fields,'']]})});
@@ -393,11 +447,9 @@ async function main() {
       }
       return results;
     },tokens.staff);
-    const [brand,category]=response;
-    observations.push({id:'MASTER-VALIDATION',duplicateAndUnexpectedFieldAccepted:brand.success===true,
-      blankCategoryAccepted:category.success===true,
-      brandFieldPersisted:store.value('Master_Brands/'+brand.id,'Unexpected_Field')==='UAT-probe',
-      blankCategoryPersisted:store.value('Master_Categories/'+category.id,'Category_Name')==='   '});
+    assert(response.every(result=>result.success===false));
+    assert.equal(masters(),before);
+    observations.push({id:'MASTER-VALIDATION',rejected:response.length});
   });
 
   await check('Stock history: Admin edits a posted POS bill, previews totals, then cancels it',async()=>{

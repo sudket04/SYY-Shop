@@ -1098,21 +1098,20 @@ function collectItems() {
   return items;
 }
 
+var taxInvoiceMath = <?!= typeof invoiceMathSource === 'string' ? invoiceMathSource : 'null' ?>;
 function recalcTotals() {
-  var rows = document.querySelectorAll('#itemBasket .item-basket-row');
-  var subtotal = 0;
-  rows.forEach(function(row) {
-    var qty = parseFloat(row.querySelector('.item-qty').value) || 0;
-    var price = parseFloat(row.querySelector('.item-price').value) || 0;
-    var lineTotal = qty * price;
-    subtotal += lineTotal;
-    var totalEl = document.getElementById(row.id + '_total');
-    if (totalEl) totalEl.innerText = fmtMoneyPlain(lineTotal);
+  var rows = Array.from(document.querySelectorAll('#itemBasket .item-basket-row'));
+  var items = rows.map(function(row) {
+    return {qty:Number(row.querySelector('.item-qty').value),unitPrice:Number(row.querySelector('.item-price').value)};
   });
-  var vat = subtotal * 0.07, total = subtotal + vat;
-  document.getElementById('calcSubtotal').innerText = fmtMoneyPlain(subtotal);
-  document.getElementById('calcVat').innerText      = fmtMoneyPlain(vat);
-  document.getElementById('calcTotal').innerText    = fmtMoneyPlain(total);
+  var totals = taxInvoiceMath && taxInvoiceMath(items);
+  rows.forEach(function(row,index) {
+    var totalEl = document.getElementById(row.id + '_total');
+    if (totalEl) totalEl.innerText = totals ? fmtMoneyPlain(totals.lineTotals[index]) : '—';
+  });
+  document.getElementById('calcSubtotal').innerText = totals ? fmtMoneyPlain(totals.subtotal) : '—';
+  document.getElementById('calcVat').innerText      = totals ? fmtMoneyPlain(totals.vat) : '—';
+  document.getElementById('calcTotal').innerText    = totals ? fmtMoneyPlain(totals.total) : '—';
 }
 
 /* ═══ Validation ฝั่ง client — ดักก่อนส่งไป server เพื่อให้ผู้ใช้เห็น error ทันที ═══ */
@@ -1161,6 +1160,9 @@ function validateForm() {
   if (!items.length) {
     document.getElementById('err_items').classList.add('show');
     syyInvalid(document.querySelector('#itemBasket .item-name'),'กรุณาเพิ่มรายการสินค้า/บริการอย่างน้อย 1 รายการ',false);
+    ok = false;
+  } else if (ok && (!taxInvoiceMath || !taxInvoiceMath(items))) {
+    syyInvalid(document.querySelector('#itemBasket .item-price'),'คำนวณยอดไม่ได้ กรุณาตรวจจำนวนและราคาต่อหน่วย',false);
     ok = false;
   }
 
@@ -1326,7 +1328,7 @@ function buildA4Page(item, pageItems, pageNo, totalPages, isLastPage,offset) {
       '<td class="col-qty">' + esc(it.qty) + '</td>' +
       '<td class="col-unit">' + esc(it.unit || '-') + '</td>' +
       '<td class="col-price">' + fmtMoneyPlain(it.unitPrice) + '</td>' +
-      '<td class="col-amount">' + fmtMoneyPlain(it.qty * it.unitPrice) + '</td>' +
+      '<td class="col-amount">' + fmtMoneyPlain(Number.isFinite(it.lineTotal)?it.lineTotal:it.qty * it.unitPrice) + '</td>' +
     '</tr>';
   }).join('');
 
@@ -1623,7 +1625,7 @@ function renderTopItems(yearItems) {
   yearItems.forEach(function(it) {
     (it.items || []).forEach(function(line) {
       var name = (line.name || 'ไม่ระบุ').trim();
-      byItem[name] = (byItem[name] || 0) + (line.qty * line.unitPrice || 0);
+      byItem[name] = (byItem[name] || 0) + (Number.isFinite(line.lineTotal)?line.lineTotal:(line.qty * line.unitPrice || 0));
     });
   });
   var sorted = Object.keys(byItem).map(function(name) { return { name: name, amount: byItem[name] }; })

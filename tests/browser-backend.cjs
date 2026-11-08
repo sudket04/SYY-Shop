@@ -103,6 +103,23 @@ async function main(){
   assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');assert.equal(reads.Master_Products,count);assert.equal(reads.Product_Images,imageCount);
   await page.screenshot({path:path.join(output,'backend-viewer-page-two.png')});
  });
+ await check('exact SKU and barcode find the final product without reading the full 10,000-item catalog',async()=>{
+  const page=pages[1], before=reads.Master_Products, images=reads.Product_Images||0;
+  for(const [mode,input] of [['sku','P09999'],['barcode','BC9999']]){
+   const response=page.waitForResponse(result=>{
+    const request=result.request();
+    if(!result.url().endsWith('/rpc')||request.method()!=='POST')return false;
+    const options=request.postDataJSON().args?.[0];
+    return options?.searchMode===mode&&options.search===input;
+   });
+   await page.locator('#productSearchMode').selectOption(mode);
+   await page.locator('#tableSearchInput').fill(input);
+   await response;
+   await page.waitForFunction(()=>!productLoading&&productsCache.length===1&&productsCache[0].productCode==='P09999');
+  }
+  assert.equal(reads.Master_Products-before,2);
+  assert.equal(reads.Product_Images||0,images);
+ });
  await check('unchanged search finds the final product and full-catalog facets stay global while table images remain absent',async()=>{
   const page=pages[0];await page.locator('#tableSearchInput').fill('BC9999');await page.evaluate(()=>onSearchInput());
   await page.waitForFunction(()=>!productLoading&&productsCache.length===1&&productsCache[0].productCode==='P09999');

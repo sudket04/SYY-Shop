@@ -888,21 +888,29 @@
       note    : document.getElementById('inpNote').value.trim(),
       quoteId : pendingQuoteId || null, // server ใช้ตรวจสอบใบเสนอราคาจริงเพื่ออนุญาตราคาที่เสนอไปแทนราคา Master Product
       items   : basket.map(function (b) {
-        return { productCode: b.productCode, productName: b.productName, qty: b.qty };
+        return { productCode: b.productCode, productName: b.productName, qty: b.qty, expectedUnitPrice:b.unitPrice };
       })
     };
 
     var signature = JSON.stringify(payload);
     if (!issueUncertain() && (!issueRetry || issueRetry.signature !== signature)) issueRetry = {signature:signature,id:crypto.randomUUID()};
-    if(issueUncertain()) payload=JSON.parse(JSON.stringify(issueRetry.payload));
+    if(issueUncertain()) {
+      payload=JSON.parse(JSON.stringify(issueRetry.payload));
+      if (typeof issueRetry.alsoInvoice === 'boolean') alsoInvoice=issueRetry.alsoInvoice;
+    } else issueRetry.alsoInvoice=!!alsoInvoice;
     payload.requestId = issueRetry.id;
     issueRetry.payload=JSON.parse(JSON.stringify(payload));
     issueBusy = true;
-    var listHtml = basket.map(function (b) { return esc(b.productName) + ' × ' + b.qty; }).join('<br>');
+    var total = 0;
+    var listHtml = basket.map(function (b) {
+      var lineTotal = b.qty * b.unitPrice;
+      total += lineTotal;
+      return esc(b.productName) + ' × ' + b.qty + ' @ ' + esc(money(b.unitPrice)) + ' = ' + esc(money(lineTotal));
+    }).join('<br>');
     swyConfirm({
       icon: 'question',
       title: 'ยืนยันตัดสต๊อก?',
-      html: listHtml + '<br><br>เหตุผล: <b>' + esc(payload.reason) + '</b>' + (payload.refNo ? '<br>อ้างอิง: ' + esc(payload.refNo) : ''),
+      html: listHtml + '<br><b>ยอดรวม ' + esc(money(total)) + '</b><br><br>เหตุผล: <b>' + esc(payload.reason) + '</b>' + (payload.refNo ? '<br>อ้างอิง: ' + esc(payload.refNo) : ''),
       confirmText: 'ตัดสต๊อก'
     }).then(function (ok) {
       if (!ok) { issueBusy = false; focusScanInput(); return; }
@@ -918,18 +926,18 @@
         btn.innerHTML = '💾 ยืนยันตัดสต๊อก (F4)';
         if (res && res.success) {
           issueRetry = null;clearRememberedIssue();lockIssueInputs(false);
-          var summary = (res.results || []).map(function (r) { return esc(r.productCode) + ': ' + r.before + ' → ' + r.after; }).join('<br>');
+          var savedLines=res.results || [];
+          var summary = savedLines.map(function (r) { return esc(r.productCode) + ': ' + r.before + ' → ' + r.after; }).join('<br>');
+          var canOpenInvoice=alsoInvoice && (!res.issueStatus || res.issueStatus==='active') && savedLines.length>0 &&
+            savedLines.every(function(r){return r.productName && Number.isFinite(r.unitPrice) && r.unitPrice>=0 && Number.isFinite(r.qty) && r.qty>0;});
           if(res.refreshWarning)toast(res.refreshWarning,'warn');
-          swySuccess(alsoInvoice?'ขั้นตอน 1/2 ตัดสต๊อกสำเร็จ':'ตัดสต๊อกสำเร็จ', 'เลขที่รายการ <b>' + esc(res.billNo || res.docNo || '-') + '</b><br>' + summary+(alsoInvoice?'<br>ขั้นตอน 2/2: เปิดร่างใบกำกับ ตรวจข้อมูลแล้วกดบันทึกที่หน้าใบกำกับ':''));
-          if (alsoInvoice) {
-            // ★ payload.items ไม่มีราคา (ราคาที่ issueStock ใช้จริงคำนวณฝั่ง server ทั้งหมด) —
-            //   ใบกำกับภาษีเป็นเอกสารอิสระไม่ผูกกับสต๊อก จึงส่งราคาจาก basket (ที่พนักงานเห็นอยู่แล้ว
-            //   ตอนตัดสต๊อก) ไปช่วยพิมพ์ให้แทน ไม่ใช่ค่าที่ server ยึดเป็นความจริง
-            var invoiceItems = basket.map(function (b) {
-              return { name: b.productName, qty: b.qty, unit: 'ชิ้น', unitPrice: b.unitPrice };
+          swySuccess(canOpenInvoice?'ขั้นตอน 1/2 ตัดสต๊อกสำเร็จ':'ตรวจสอบรายการตัดสต๊อกสำเร็จ', 'เลขที่รายการ <b>' + esc(res.billNo || res.docNo || '-') + '</b><br>' + summary+(canOpenInvoice?'<br>ขั้นตอน 2/2: เปิดร่างใบกำกับ ตรวจข้อมูลแล้วกดบันทึกที่หน้าใบกำกับ':''));
+          if (canOpenInvoice) {
+            var invoiceItems = savedLines.map(function (line) {
+              return { name:line.productName, qty:line.qty, unit:'ชิ้น', unitPrice:line.unitPrice };
             });
             try { syyPostParent({ action: 'OPEN_TAX_INVOICE', items: invoiceItems, note: payload.refNo }); } catch (e) {}
-          }
+          } else if (alsoInvoice) toast('กรุณาเปิดประวัติบิลเพื่อตรวจข้อมูลก่อนออกใบกำกับ','warn');
           pendingQuoteId = null;
           basket = [];
           document.getElementById('inpRefNo').value = '';
@@ -953,7 +961,21 @@
           focusScanInput(); // ★ พร้อมยิงบิลถัดไปได้ทันที
         } else {
           if(res && !res.uncertain){issueRetry=null;clearRememberedIssue();lockIssueInputs(false);}else rememberIssue();
-          swyError('ตัดสต๊อกไม่สำเร็จ', esc((res && res.message) || 'ไม่ทราบสาเหตุ'));
+          if(res && res.code==='PRICE_CHANGED' && Array.isArray(res.priceChanges)) {
+            res.priceChanges.forEach(function(change){
+              var line=basket.find(function(b){return b.productCode===change.productCode;});
+              if(line) line.unitPrice=change.unitPrice;
+              if(!payload.quoteId) {
+                var product=products.find(function(p){return p.productCode===change.productCode;});
+                if(product) product.sellingPrice=change.unitPrice;
+              }
+            });
+            renderBasket();
+            var changes=res.priceChanges.map(function(change){
+              return esc(change.productName)+' · '+esc(money(change.previousUnitPrice))+' → '+esc(money(change.unitPrice));
+            }).join('<br>');
+            swyWarning('ราคาสินค้าเปลี่ยน',changes+'<br>กรุณาตรวจยอดใหม่แล้วกดยืนยันอีกครั้ง');
+          } else swyError('ตัดสต๊อกไม่สำเร็จ', esc((res && res.message) || 'ไม่ทราบสาเหตุ'));
           focusScanInput();
         }
       }, function (err) {

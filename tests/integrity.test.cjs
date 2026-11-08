@@ -221,17 +221,48 @@ test('a forced password token cannot revive a session after durable revocation',
   assert.equal(s.c.authChangePasswordForced(login.tempToken,'new-password').success,false);assert.equal(s.calls.filter(x=>x.options.method==='patch').length,writes);
 });
 
-test('accounting golden vectors freeze current aggregate VAT and quotation discount rounding without writes',()=>{
+test('invoice line cents and rounded VAT reconcile, and quote discount rounding is preserved',()=>{
   const s=setup();
   for(const [items,expected] of [
-    [[{qty:1,unitPrice:100}],{subtotal:100,vat:7,total:107}],
-    [[{qty:1,unitPrice:0.05},{qty:1,unitPrice:0.05}],{subtotal:0.1,vat:0.01,total:0.11}],
-    [[{qty:3,unitPrice:0.335}],{subtotal:1.01,vat:0.07,total:1.08}],
-    [[{qty:1,unitPrice:0}],{subtotal:0,vat:0,total:0}]
+    [[{qty:1,unitPrice:100}],{subtotal:100,vat:7,total:107,lineTotals:[100]}],
+    [[{qty:1,unitPrice:0.05},{qty:1,unitPrice:0.05}],{subtotal:0.1,vat:0.01,total:0.11,lineTotals:[0.05,0.05]}],
+    [[{qty:3,unitPrice:0.335}],{subtotal:1.01,vat:0.07,total:1.08,lineTotals:[1.01]}],
+    [[{qty:0.005,unitPrice:1},{qty:1.005,unitPrice:1}],{subtotal:1.02,vat:0.07,total:1.09,lineTotals:[0.01,1.01]}],
+    [[{qty:1,unitPrice:0}],{subtotal:0,vat:0,total:0,lineTotals:[0]}]
   ])assert.deepEqual(plain(s.c.calcTaxInvoiceTotals_(items)),expected);
   const quote=plain(s.c.calcQuoteTotals_([{qty:1,unitPrice:100,costPrice:60}],10));
   assert.deepEqual(quote,{subtotal:100,discPct:10,discAmount:10,afterDisc:90,vat:6.3,grandTotal:96.3,costTotal:60,profit:30,marginPct:33.3});
   assert.equal(s.c.calcQuoteTotals_([{qty:1,unitPrice:100}],110).grandTotal,0);
   assert.equal(s.c.calcQuoteTotals_([{qty:1,unitPrice:100}],-1).grandTotal,107);
   assert.equal(s.calls.length,0);assert.equal(s.commits.length,0);
+});
+
+test('POS rechecks the reviewed price after a Firestore conflict and replays the committed price after a lost response',()=>{
+  const s=setup();s.seed();
+  const sale={...issue,items:[{productCode:'P1',qty:2,expectedUnitPrice:200}]};
+  const reprice=value=>s.put('Master_Products/P1',{Product_Name:'Part',Current_Stock:s.value('Master_Products/P1','Current_Stock'),Selling_Price:value,Cost_Price:100,Min_Stock:2});
+  s.c.beforeCommit=()=>reprice(250);
+  const changed=s.c.issueStockFromClient_(sale,'staff');
+  assert.equal(changed.code,'PRICE_CHANGED');assert.equal(changed.priceChanges[0].unitPrice,250);
+  assert.equal(s.commits.length,0);assert.equal(s.value('Master_Products/P1','Current_Stock'),10);
+  assert.equal(s.c.issueStockFromClient_(issue,'staff').code,'PRICE_REVIEW_REQUIRED');
+  const reviewed={...sale,items:[{productCode:'P1',qty:2,expectedUnitPrice:250}]};
+  s.c.loseCommitResponse=true;
+  assert.equal(s.c.issueStockFromClient_(reviewed,'staff').uncertain,true);
+  reprice(300);
+  const replay=s.c.issueStockFromClient_(reviewed,'staff');
+  assert.equal(replay.replayed,true);assert.equal(replay.results[0].unitPrice,250);
+  assert.equal(s.commits.length,1);assert.equal(s.value('Master_Products/P1','Current_Stock'),8);
+});
+
+test('a pending sale from an older browser reopens from its saved movement price without writing again',()=>{
+  const s=setup();s.seed();
+  const posted=s.c.issueStock_(issue,'staff');
+  const movement=s.docs.get('Stock_Movements/'+posted.docNo+'-1');
+  const oldResponse=JSON.parse(movement.fields.Request_Result_JSON.stringValue);
+  delete oldResponse.results[0].unitPrice;
+  movement.fields.Request_Result_JSON.stringValue=JSON.stringify(oldResponse);
+  const replay=s.c.issueStockFromClient_(issue,'staff');
+  assert.equal(replay.replayed,true);assert.equal(replay.results[0].unitPrice,200);
+  assert.equal(s.commits.length,1);
 });
