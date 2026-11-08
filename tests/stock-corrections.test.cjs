@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {setup,plain}=require('./support/services.cjs');
 function fixture(){const s=setup();s.seed();s.c.validatedGatewaySession_={session:{role:'admin',username:'admin'},token:'test'};const sale=s.c.issueStock_({requestId:'original-sale-0001',reason:'ขายหน้าร้าน',items:[{productCode:'P1',qty:5}]},'admin');assert.equal(sale.success,true,sale.message);return {...s,sale};}
-function draft(s,patch={}){return {requestId:'correction-request-0001',docNo:s.sale.docNo,revision:0,action:'replace',correctionReason:'แก้ไขจำนวนที่บันทึกผิด',reason:'ขายหน้าร้าน',refNo:'REF',note:'corrected',items:[{productCode:'P1',qty:3,unitPrice:200}],...patch};}
+function draft(s,patch={}){return {requestId:'correction-request-0001',docNo:s.sale.docNo,revision:0,action:'replace',correctionReason:'แก้ไขจำนวนที่บันทึกผิด',reason:'ขายหน้าร้าน',refNo:patch.action==='amend'?'REF':'',note:patch.action==='amend'?'corrected':'',items:[{productCode:'P1',qty:3,unitPrice:200}],...patch};}
 function preview(s,d){const p=s.c.getStockIssueCorrectionPreview_(d,'admin');return {...d,previewToken:p.previewToken};}
 test('5 to 3 correction uses current stock, atomically preserves original values and creates replacement + negative OUT',()=>{
  const s=fixture();s.put('Master_Products/P1',{Product_Name:'Part',Current_Stock:12,Cost_Price:999,Selling_Price:999,Min_Stock:2});const d=preview(s,draft(s)),before=plain(s.docs.get('Stock_Movements/'+s.sale.docNo+'-1').fields);
@@ -29,8 +29,17 @@ test('lost correction response reconciles from receipt without a second inventor
 test('same correction key cannot be reused for different payload or actor, and staff cannot preview/write',()=>{
  const s=fixture(),d=preview(s,draft(s));assert.equal(s.c.correctStockIssue_(d,'admin').success,true);assert.equal(s.c.correctStockIssue_({...d,note:'other'},'admin').success,false);s.c.validatedGatewaySession_={session:{username:'staff',role:'staff'}};assert.throws(()=>s.c.getStockIssueCorrectionPreview_(draft(s),'staff'));assert.equal(s.c.correctStockIssue_(d,'staff').success,false);
 });
-test('SKU replacement nets both stocks and records zero/decimal prices without changing master price',()=>{
- const s=fixture();s.put('Master_Products/P2',{Product_Name:'Other',Current_Stock:10,Cost_Price:50,Selling_Price:200});const r=s.c.correctStockIssue_(preview(s,draft(s,{items:[{productCode:'P2',qty:1.5,unitPrice:0}]})),'admin');assert.equal(r.success,true,r.message);assert.equal(s.value('Master_Products/P1','Current_Stock'),10);assert.equal(s.value('Master_Products/P2','Current_Stock'),8.5);assert.equal(s.value('Stock_Movements/'+r.replacementDocNo+'-1','Unit_Price'),0);assert.equal(s.value('Master_Products/P2','Selling_Price'),200);
+test('quantity edits and removing existing lines preserve zero and original costs with exact fractional stock deltas',()=>{
+ const s=fixture();
+ s.put('Master_Products/P2',{Product_Name:'Free',Current_Stock:0.1,Cost_Price:999,Selling_Price:999});
+ s.put('Stock_Movements/'+s.sale.docNo+'-2',{Doc_No:s.sale.docNo,Product_Code:'P2',Product_Name:'Recorded free item',Qty:0.3,Unit_Price:0,Cost_Price:50,Type:'OUT',Reason:'ขายหน้าร้าน'});
+ const d=draft(s,{items:[{productCode:'P2',qty:0.1,unitPrice:0}]}),p=s.c.getStockIssueCorrectionPreview_(d,'admin');
+ assert.equal(p.oldAmount,1000);assert.equal(p.newAmount,0);assert.equal(p.changes.find(x=>x.productCode==='P2').after,0.3);
+ const r=s.c.correctStockIssue_({...d,previewToken:p.previewToken},'admin');assert.equal(r.success,true,r.message);
+ assert.equal(s.value('Master_Products/P1','Current_Stock'),10);assert.equal(s.value('Master_Products/P2','Current_Stock'),0.3);
+ const replacement='Stock_Movements/'+r.replacementDocNo+'-1';
+ assert.equal(s.value(replacement,'Unit_Price'),0);assert.equal(s.value(replacement,'Cost_Price'),50);
+ assert.equal(s.value(replacement,'Product_Name'),'Recorded free item');assert.equal(s.value('Master_Products/P2','Selling_Price'),999);
 });
 test('legacy missing prices cannot be silently replaced by current prices',()=>{
  const s=fixture();delete s.docs.get('Stock_Movements/'+s.sale.docNo+'-1').fields.Unit_Price;assert.throws(()=>preview(s,draft(s)));assert.equal(s.commits.length,1);
@@ -77,10 +86,24 @@ test('correction at Bangkok midnight keeps the original day and starts the repla
  const r=s.c.correctStockIssue_(d,'admin');assert.equal(r.success,true,r.message);assert.equal(r.replacementBillNo,'SI-20261019-0001');assert.equal(s.value('Stock_Movements/'+s.sale.docNo+'-1','Timestamp'),'2026-10-18T16:59:59.000Z');assert.equal(s.value('Stock_Movements/'+r.replacementDocNo+'-1','Timestamp'),'2026-10-18T17:00:00.000Z');
  const next=s.c.issueStock_({requestId:'midnight-new-sale-0002',reason:'ขายหน้าร้าน',items:[{productCode:'P1',qty:1}]},'admin');assert.equal(next.billNo,'SI-20261019-0002');assert.equal(s.value('Master_Products/P1','Current_Stock'),6);
 });
-test('price-only replacement writes no product stock, and a reason change reverses sales without inventing receipts',()=>{
- for(const internal of [false,true]){const s=fixture(),d=preview(s,draft(s,{reason:internal?'เบิกใช้ภายใน':'ขายหน้าร้าน',items:[{productCode:'P1',qty:5,unitPrice:125}]})),r=s.c.correctStockIssue_(d,'admin');assert.equal(r.success,true,r.message);assert.equal(s.value('Master_Products/P1','Current_Stock'),5);assert.equal(s.value('Master_Products/P1','Selling_Price'),200);
-  assert(!s.commits[1].some(w=>(w.update?.name||w.transform?.document||'').includes('/Master_Products/')));const rows=[...s.docs.entries()].filter(([k])=>k.startsWith('Stock_Movements/')).map(([,doc])=>s.c.stockMovementDto_(doc));assert.equal(rows.reduce((n,m)=>n+(m.reason==='ขายหน้าร้าน'?m.qty*m.unitPrice:0),0),internal?0:625);assert.equal(rows.filter(m=>m.type==='IN').length,0);assert.equal(rows.reduce((n,m)=>n+m.qty*m.costPrice,0),500);
+test('price, SKU, bill metadata, empty and unchanged replacement are rejected before any write',()=>{
+ const s=fixture(),d=preview(s,draft(s));
+ for(const patch of [
+  {items:[{productCode:'P1',qty:3,unitPrice:125}]},{items:[{productCode:'P2',qty:3,unitPrice:200}]},
+  {reason:'เบิกใช้ภายใน'},{refNo:'REF'},{note:'new note'},{items:[]},{items:[{productCode:'P1',qty:5,unitPrice:200}]}
+ ]){
+  assert.throws(()=>s.c.getStockIssueCorrectionPreview_({...d,...patch},'admin'));
+  const result=s.c.correctStockIssue_({...d,...patch},'admin');
+  assert.equal(result.success,false);assert.equal(result.uncertain,false);
  }
+ assert.equal(s.commits.length,1);assert.equal(s.value('Master_Products/P1','Current_Stock'),5);
+});
+test('committed legacy correction receipts still replay without applying their prices again',()=>{
+ const s=fixture(),legacy=draft(s,{items:[{productCode:'P1',qty:5,unitPrice:125}]});
+ const receipt=s.c.stockCorrectionReceipt_(s.c.stockCorrectionDraft_(legacy,'admin'),'admin');
+ s.put('Doc_No_Reservations/'+receipt.id,{Request_Fingerprint:receipt.fingerprint,Request_Result_JSON:JSON.stringify({success:true,docNo:s.sale.docNo,productStocks:[]})});
+ const result=s.c.correctStockIssue_(legacy,'admin');
+ assert.equal(result.replayed,true);assert.equal(s.commits.length,1);
 });
 test('Full backup and empty-target restore retain correction audit, counters and replay protection without changing the source data',()=>{
  const s=fixture(),d=preview(s,draft(s)),corrected=s.c.correctStockIssue_(d,'admin');assert(corrected.success);s.c.readTime=new Date().toISOString();const before=plain([...s.docs]),backup=s.c.backupAllDataToBackup_('full');assert.equal(backup.success,true,JSON.stringify(backup.errors));assert.deepEqual(plain([...s.docs]),before);

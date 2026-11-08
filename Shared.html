@@ -159,28 +159,55 @@ function syyGroupBillRows(rows,completeness){
   });
   return Array.from(map.values()).map(function(group){if(!Number.isFinite(group.amtSell)||Math.abs(group.amtSell)>Number.MAX_SAFE_INTEGER)group.knownSell=false;if(!Number.isFinite(group.amtCost)||Math.abs(group.amtCost)>Number.MAX_SAFE_INTEGER)group.knownCost=false;return group;});
 }
-/* Local estimates use the same old-SKU cost rule as the authoritative correction. */
-function syyCorrectionTotals(original,items,catalog,action){
-  var old=syyGroupBillRows(original),oldSell=old.reduce(function(n,g){return n+g.amtSell;},0),oldKnown=(original||[]).length>0&&old.every(function(g){return g.knownSell;}),source=new Map(),stocks=new Map();
-  (original||[]).forEach(function(row){var code=row.productCode,entry=source.get(code)||{qty:0,cost:syyRecordedNumber(row,'costPrice','hasCostPrice')};entry.qty+=Number(row.qty)||0;if(entry.cost!==syyRecordedNumber(row,'costPrice','hasCostPrice'))entry.cost=null;source.set(code,entry);});
-  (catalog||[]).forEach(function(row){stocks.set(row.productCode,row);});
-  if(action==='amend')items=original;if(action==='cancel')items=[];
-  var result={qty:0,sell:0,cost:0,oldSell:oldKnown?oldSell:null,knownSell:true,knownCost:true,knownQty:true,valid:action!=='replace'||(items||[]).length>0,lineTotals:[],changes:[],items:(items||[]).length},next=new Map();
-  (items||[]).forEach(function(item){
-    var qty=syyRecordedNumber(item,'qty','hasQty'),price=syyRecordedNumber(item,'unitPrice','hasUnitPrice'),code=String(item.productCode||'').trim(),product=stocks.get(code),saved=source.get(code),cost=saved?saved.cost:syyRecordedNumber(product,'costPrice');
-    var valid=!!code&&qty!==null&&Number.isFinite(qty)&&qty>0&&price!==null&&Number.isFinite(price)&&price>=0&&!next.has(code);if(!valid)result.valid=false;
-    if(qty===null||qty<=0)result.knownQty=false;else result.qty+=qty;
-    if(qty===null||qty<=0||price===null||price<0){result.knownSell=false;result.lineTotals.push(null);}else{var amount=qty*price;result.sell+=amount;result.lineTotals.push(amount);}
-    if(cost===null||cost<0||qty===null||qty<=0)result.knownCost=false;else result.cost+=qty*cost;
-    if(code)next.set(code,qty===null?null:qty);
+/* Estimates use recorded bill prices and the server's decimal arithmetic. */
+function syyCorrectionTotals(original,items,catalog,action,add,multiply){
+  var source=new Map(),next=new Map(),stocks=new Map();
+  var result={qty:0,sell:0,cost:0,oldSell:original.length?0:null,valid:action!=='replace'||items.length>0,lineTotals:[],changes:[],items:0};
+  function recorded(row,key,flag){
+    var value=syyRecordedNumber(row,key,flag);
+    return value!==null&&value>=0&&value<=Number.MAX_SAFE_INTEGER?value:null;
+  }
+  function sum(a,b){
+    if(a===null||b===null)return null;
+    var total=add(a,b);
+    return Number.isFinite(total)&&Math.abs(total)<=Number.MAX_SAFE_INTEGER?total:null;
+  }
+  original.forEach(function(row){
+    var code=row.productCode,qty=recorded(row,'qty','hasQty'),price=recorded(row,'unitPrice','hasUnitPrice'),cost=recorded(row,'costPrice','hasCostPrice');
+    var entry=source.get(code)||{qty:0,price:price,cost:cost};
+    entry.qty=sum(entry.qty,qty);
+    if(entry.price!==price)entry.price=null;
+    if(entry.cost!==cost)entry.cost=null;
+    source.set(code,entry);
+    result.oldSell=sum(result.oldSell,qty===null||price===null?null:multiply(qty,price));
   });
-  if(action!=='amend')Array.from(new Set(Array.from(source.keys()).concat(Array.from(next.keys())))).forEach(function(code){
-    var product=stocks.get(code),before=syyRecordedNumber(product,'currentStock'),nextQty=next.has(code)?next.get(code):0,delta=nextQty===null?null:(source.get(code)?.qty||0)-nextQty;
-    result.changes.push({productCode:code,before:before,delta:delta,after:before===null||delta===null?null:before+delta});
+  items=action==='amend'?original:action==='cancel'?[]:items;
+  result.items=items.length;
+  items.forEach(function(row){
+    var code=row.productCode,qty=recorded(row,'qty','hasQty'),saved=source.get(code);
+    var price=recorded(row,'unitPrice','hasUnitPrice');
+    if(action==='replace'&&(!saved||saved.price!==price))price=null;
+    var cost=action==='amend'?recorded(row,'costPrice','hasCostPrice'):saved?saved.cost:null;
+    var validQty=qty!==null&&qty>0;
+    if(!validQty||price===null||action==='replace'&&next.has(code))result.valid=false;
+    var amount=validQty&&price!==null?multiply(qty,price):null;
+    result.lineTotals.push(sum(0,amount));
+    result.qty=sum(result.qty,validQty?qty:null);
+    result.sell=sum(result.sell,amount);
+    result.cost=sum(result.cost,validQty&&cost!==null?multiply(qty,cost):null);
+    next.set(code,validQty?qty:null);
   });
-  if(!Number.isFinite(result.sell)||!Number.isFinite(result.cost)||Math.abs(result.sell)>Number.MAX_SAFE_INTEGER||Math.abs(result.cost)>Number.MAX_SAFE_INTEGER){result.valid=false;result.knownSell=false;result.knownCost=false;}
-  if(!result.knownQty)result.qty=null;
-  result.sell=result.knownSell?result.sell:null;result.cost=result.knownCost?result.cost:null;result.profit=result.sell===null||result.cost===null?null:result.sell-result.cost;result.difference=result.sell===null||result.oldSell===null?null:result.sell-result.oldSell;
+  if(action!=='amend'){
+    catalog.forEach(function(row){if(source.has(row.productCode))stocks.set(row.productCode,row);});
+    source.forEach(function(entry,code){
+      var before=syyRecordedNumber(stocks.get(code),'currentStock'),nextQty=next.has(code)?next.get(code):0;
+      var delta=nextQty===null?null:sum(entry.qty,-nextQty);
+      if(delta!==0)result.changes.push({productCode:code,before:before,delta:delta,after:sum(before,delta)});
+    });
+  }
+  if(result.sell===null||result.qty===null)result.valid=false;
+  result.profit=result.cost===null?null:sum(result.sell,-result.cost);
+  result.difference=result.oldSell===null?null:sum(result.sell,-result.oldSell);
   return result;
 }
 

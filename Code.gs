@@ -89,6 +89,7 @@ function doGet(e) {
   template.resetToken = rtoken;
   if (page === 'taxinvoice') template.invoiceMathSource = calcTaxInvoiceTotals_.toString();
   if (page === 'stockissue' || page === 'orders') template.stockQuantitySource = addStockQuantity_.toString();
+  if (page === 'stockissue') template.stockCorrectionAmountSource = stockCorrectionLineAmount_.toString();
 
   return template
     .evaluate()
@@ -5972,21 +5973,39 @@ function buildStockCorrection_(draft,user) {
   if(original.some(function(m){return m.type!=='OUT'||m.reversal||m.issueStatus!=='active'||m.issueRevision!==revision||!validBusinessNumber_(m.qty,0,true)||!validDocumentId_(m.productCode)||m.reason!==original[0].reason||ISSUE_REASONS.indexOf(m.reason)<0;})||docs.some(function(d){return !d.updateTime;}))throw Error('รายการนี้ถูกยกเลิก/แทนที่ หรือข้อมูลเดิมไม่ครบ');
   if(original.some(function(m,i){var raw=parseFirestoreValue_(docs[i].fields.Qty);return !validBusinessNumber_(raw,0,true)||Number(raw)!==m.qty;}))throw Error('จำนวนสินค้าเดิมไม่ถูกต้อง ต้องตรวจข้อมูลก่อนแก้ไข');
   if(draft.action!=='amend'&&original.some(function(m,i){var f=docs[i].fields,price=parseFirestoreValue_(f.Unit_Price),cost=parseFirestoreValue_(f.Cost_Price);return !m.hasUnitPrice||!validBusinessNumber_(price,0,false)||Number(price)!==m.unitPrice||!validBusinessNumber_(cost,0,false)||Number(cost)!==m.costPrice;}))throw Error('ข้อมูลราคาหรือทุนเดิมไม่ครบ ต้องตรวจข้อมูลก่อนย้อนรายการ');
-  var codes=original.map(function(m){return m.productCode;}).concat(draft.items.map(function(m){return m.productCode;}));
-  codes=Array.from(new Set(codes));var stocks=draft.action==='amend'?{}:getProductStockMap_(codes),changes=[];
+  var byCode=new Map();
+  original.forEach(function(row){
+    if(!byCode.has(row.productCode))byCode.set(row.productCode,[]);
+    byCode.get(row.productCode).push(row);
+  });
+  var codes=Array.from(byCode.keys()),requested=new Map(draft.items.map(function(item){return [item.productCode,item];}));
+  var deltas=new Map();
+  if(draft.action==='replace'){
+    var first=original[0];
+    if(draft.reason!==first.reason||draft.refNo!==String(first.refNo||'')||draft.note!==String(first.note||''))throw Error('แก้ไขรายการสินค้าได้เฉพาะจำนวนหรือนำสินค้าออก กรุณาเปิดบิลใหม่');
+    draft.items.forEach(function(item){
+      var rows=byCode.get(item.productCode);
+      if(!rows)throw Error('เพิ่มหรือเปลี่ยนรหัสสินค้าในบิลเดิมไม่ได้');
+      if(rows.some(function(row){return row.unitPrice!==item.unitPrice;}))throw Error('ต้องใช้ราคาต่อหน่วยที่บันทึกไว้ในบิลเดิม');
+    });
+  }
+  if(draft.action!=='amend')codes.forEach(function(code){
+    var rows=byCode.get(code),next=requested.get(code);
+    var returned=rows.reduce(function(total,row){return addStockQuantity_(total,row.qty);},0);
+    deltas.set(code,addStockQuantity_(returned,-(next?next.qty:0)));
+    if(rows.some(function(row){return row.costPrice!==rows[0].costPrice;}))throw Error('สินค้าเดียวกันมีทุนเดิมหลายราคา ต้องตรวจข้อมูลก่อนแก้ไข');
+  });
+  if(draft.action==='replace'&&!Array.from(deltas.values()).some(function(delta){return delta!==0;}))throw Error('ยังไม่มีการเปลี่ยนจำนวนหรือนำสินค้าออกจากบิล');
+  var stocks=draft.action==='amend'?{}:getProductStockMap_(codes),changes=[];
   if(draft.action!=='amend')codes.forEach(function(code){
     var p=stocks[code];if(!p||!p.updateTime)throw Error('ไม่พบสินค้า '+code);
-    var returned=original.filter(function(m){return m.productCode===code;}).reduce(function(n,m){return addStockQuantity_(n,m.qty);},0);
-    var next=draft.items.find(function(m){return m.productCode===code;});
-    var delta=addStockQuantity_(returned,-(next?next.qty:0)),after=addStockQuantity_(p.stock,delta);
+    var delta=deltas.get(code),after=addStockQuantity_(p.stock,delta);
     if(!validBusinessNumber_(p.stock,-Number.MAX_SAFE_INTEGER,false)||!Number.isFinite(delta)||Math.abs(after)>Number.MAX_SAFE_INTEGER)throw Error('ยอดสต๊อกไม่ถูกต้องสำหรับสินค้า '+code);
     if(delta<0&&after<0)throw Error('สต๊อกไม่พอสำหรับสินค้า '+code);
     changes.push({productCode:code,productName:p.name,before:p.stock,delta:delta,after:after,updateTime:p.updateTime});
   });
-  if(draft.action!=='amend'){
-    [original,draft.items].forEach(function(items){var total=0;items.forEach(function(m){total+=m.qty*m.unitPrice;if(!Number.isFinite(total)||total>Number.MAX_SAFE_INTEGER)throw Error('มูลค่าบิลเกินขอบเขตที่รองรับ');});});
-    codes.forEach(function(code){var costs=original.filter(function(m){return m.productCode===code;}).map(function(m){return m.costPrice;});if(costs.some(function(cost){return cost!==costs[0];}))throw Error('สินค้าเดียวกันมีทุนเดิมหลายราคา ต้องตรวจข้อมูลก่อนแก้ไข');});
-  }
+  var oldAmount=stockCorrectionAmount_(original),newAmount=draft.action==='amend'?oldAmount:stockCorrectionAmount_(draft.items);
+  if(draft.action!=='amend'&&(oldAmount===null||newAmount===null))throw Error('มูลค่าบิลเกินขอบเขตที่รองรับ');
   // Full reversal/replacement is intentionally bounded to one atomic commit.
   var writeCount=docs.length+1+(draft.action==='amend'?0:original.length+changes.filter(function(x){return x.delta!==0;}).length+draft.items.length+(draft.action==='replace'?2:0));
   if(writeCount+1>450)throw Error('บิลนี้ใหญ่เกินขอบเขตแก้ไขแบบ atomic กรุณาติดต่อผู้ดูแล');
@@ -5995,12 +6014,32 @@ function buildStockCorrection_(draft,user) {
   var quote=null;
   if(quoteIds.length){var id=quoteIds[0],raw=readExistingDocument_(QUOTATION_COLLECTION,id);if(!raw.updateTime)throw Error('ไม่พบใบเสนอราคาอ้างอิง');quote={id:id,doc:raw};}
   var token=movementCursorSignature_('correction-preview:'+user+':'+JSON.stringify([draft,docs.map(function(d){return [d.id,d.updateTime];}),changes,quote&&quote.doc.updateTime]));
-  return {docs:docs,original:original,revision:revision,stocks:stocks,changes:changes,quote:quote,previewToken:token};
+  return {docs:docs,original:original,byCode:byCode,revision:revision,changes:changes,quote:quote,oldAmount:oldAmount,newAmount:newAmount,previewToken:token};
+}
+function stockCorrectionAmount_(rows) {
+  var total=0;
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i];
+    if(row.hasUnitPrice===false||!validBusinessNumber_(row.unitPrice,0,false))return null;
+    total=addStockQuantity_(total,stockCorrectionLineAmount_(row.qty,row.unitPrice));
+    if(!Number.isFinite(total)||total>Number.MAX_SAFE_INTEGER)return null;
+  }
+  return total;
+}
+// Multiply decimal quantities and recorded prices before formatting the total.
+function stockCorrectionLineAmount_(quantity,price) {
+  if(!Number.isFinite(quantity)||!Number.isFinite(price))return NaN;
+  function parts(value){
+    var scientific=String(value).split('e'),decimal=scientific[0].split('.');
+    return {units:BigInt(decimal.join('')),exponent:Number(scientific[1]||0)-(decimal[1]||'').length};
+  }
+  var left=parts(quantity),right=parts(price);
+  return Number(String(left.units*right.units)+'e'+String(left.exponent+right.exponent));
 }
 function getStockIssueCorrectionPreview_(input,user) {
   var draft=stockCorrectionDraft_(input,user),plan=buildStockCorrection_(draft,user);
   return {success:true,previewToken:plan.previewToken,billNo:plan.original[0].billNo||draft.docNo,revision:plan.revision,changes:plan.changes,
-    oldAmount:plan.original.reduce(function(n,m){return n+m.qty*m.unitPrice;},0),newAmount:draft.items.reduce(function(n,m){return n+m.qty*m.unitPrice;},0),
+    oldAmount:plan.oldAmount,newAmount:plan.newAmount,
     warning:'ใบกำกับภาษีเป็นเอกสารอิสระ ต้องตรวจเอกสารที่เกี่ยวข้องแยกต่างหาก; ยอดปรับปรุงบันทึกในวันที่แก้จริง'};
 }
 // Explicit audit drilldown: at most five linked receipt reads per page. The
@@ -6033,18 +6072,20 @@ function correctStockIssue_(input,user) {
       if(draft.action==='amend'){fields.Ref_No=draft.refNo;fields.Note=draft.note;}
       writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,doc.id),fields:mapToFirestoreFields_(fields)},updateMask:{fieldPaths:Object.keys(fields)},updateTransforms:[],currentDocument:{updateTime:doc.updateTime}});
     });
+    var stockChanges=plan.changes.filter(function(x){return x.delta!==0;});
     if(draft.action!=='amend'){
-      plan.changes.filter(function(x){return x.delta!==0;}).forEach(function(x){writes.push(stockQuantityWrite_(x.productCode,x.before,x.delta,x.after,x.updateTime));});
+      var changesByCode=new Map(plan.changes.map(function(change){return [change.productCode,change];}));
+      stockChanges.forEach(function(x){writes.push(stockQuantityWrite_(x.productCode,x.before,x.delta,x.after,x.updateTime));});
       // Negative OUT is an accounting reversal, never a PO receipt. A distinct
       // Doc_No preserves drilldown identity; Bill_Count_Delta nets the count.
-      plan.original.forEach(function(m,i){var x=plan.changes.find(function(c){return c.productCode===m.productCode;});
+      plan.original.forEach(function(m,i){var x=changesByCode.get(m.productCode);
         writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,receipt.id+'-'+(i+1)),fields:mapToFirestoreFields_({Doc_No:'SC-'+draft.requestId,Bill_No:m.billNo,Type:'OUT',Is_Reversal:'true',Reverses_Doc:draft.docNo,
           Product_Code:m.productCode,Product_Name:m.productName,Qty:-m.qty,Unit_Price:m.unitPrice,Cost_Price:m.costPrice,Stock_Before:x.before,Stock_After:x.after,
           Reason:m.reason,Ref_No:m.refNo,Note:draft.correctionReason,User:user,Timestamp:now,Correction_Id:receipt.id,Bill_Count_Delta:i===0?-1:0})},currentDocument:{exists:false}});
       });
-      draft.items.forEach(function(item,i){var p=plan.stocks[item.productCode],old=plan.original.find(function(m){return m.productCode===item.productCode;}),x=plan.changes.find(function(c){return c.productCode===item.productCode;});
-        writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,newNo+'-'+(i+1)),fields:mapToFirestoreFields_({Doc_No:newNo,Bill_No:bill.billNo,Type:'OUT',Product_Code:item.productCode,Product_Name:p.name,Qty:item.qty,
-          Unit_Price:item.unitPrice,Cost_Price:old?old.costPrice:p.costPrice,Stock_Before:x.before,Stock_After:x.after,Reason:draft.reason,Ref_No:draft.refNo,Note:draft.note,Quote_Id:plan.quote?plan.quote.id:'',User:user,Timestamp:now,Replaces_Doc:draft.docNo,Correction_Id:receipt.id})},currentDocument:{exists:false}});
+      draft.items.forEach(function(item,i){var old=plan.byCode.get(item.productCode)[0],x=changesByCode.get(item.productCode);
+        writes.push({update:{name:fsDocPath_(STOCK_MOVEMENT_COLLECTION,newNo+'-'+(i+1)),fields:mapToFirestoreFields_({Doc_No:newNo,Bill_No:bill.billNo,Type:'OUT',Product_Code:old.productCode,Product_Name:old.productName||old.productCode,Qty:item.qty,
+          Unit_Price:old.unitPrice,Cost_Price:old.costPrice,Stock_Before:x.before,Stock_After:x.after,Reason:old.reason,Ref_No:old.refNo||'',Note:old.note||'',Quote_Id:plan.quote?plan.quote.id:'',User:user,Timestamp:now,Replaces_Doc:draft.docNo,Correction_Id:receipt.id})},currentDocument:{exists:false}});
       });
     }
     if(plan.quote&&draft.action!=='amend'){
@@ -6062,7 +6103,7 @@ function correctStockIssue_(input,user) {
     if(writes.length>450||Utilities.newBlob(JSON.stringify(writes)).getBytes().length>8*1024*1024||writes.some(function(w){return w.update&&Utilities.newBlob(JSON.stringify(w.update)).getBytes().length>900000;}))throw Error('รายการใหญ่เกินขอบเขต atomic');
     attempted=true;var commit=fsCommit_(writes);
     if(!commit.ok){if(commit.status>=400&&commit.status<500)attempted=false;var replay=stockCorrectionReceipt_(draft,user);if(replay.result)return replay.result;throw Error('ข้อมูลเปลี่ยนระหว่างบันทึก กรุณาตรวจผลและตัวอย่างใหม่');}
-    if(plan.changes.length)refreshChangedProductsCache_(plan.changes.map(function(x){return x.productCode;}));
+    if(stockChanges.length)refreshChangedProductsCache_(stockChanges.map(function(x){return x.productCode;}));
     return result;
   }catch(e){return {success:false,uncertain:attempted,message:e.message};}
 }
