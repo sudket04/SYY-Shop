@@ -134,6 +134,45 @@ test('PO historic costs reuse reads, preserve zero and recorded costs, and follo
  for(let i=0;i<3;i++){const r=rows();s.c.buildPoVendorMapForMovements_(r);assert.equal(r[0].costPrice,0);assert.equal(r[1].costPrice,55);}assert.equal(s.reads.Purchase_Orders,1);
  s.put('Purchase_Orders/PO1',{Vendor_ID:'V1',Items_JSON:'[{"productCode":"P1","costPrice":25}]'});s.c.clearCollectionCache_('Purchase_Orders');const r=rows();s.c.buildPoVendorMapForMovements_(r);assert.equal(r[0].costPrice,25);assert.equal(s.reads.Purchase_Orders,2);
 });
+test('Dashboard reads only legacy purchase orders and transfers only the fields it displays',()=>{
+ const timestamp=new Date(Date.now()-2000).toISOString(),since=new Date(Date.now()-5000).toISOString();
+ const run=includePoVendorMap=>{
+  const s=fresh();s.seed();
+  for(let i=0;i<101;i++){
+   s.put('Purchase_Orders/PO'+i,{Vendor_ID:'V1',Items_JSON:'[{"productCode":"P1","costPrice":27}]',Receipts_JSON:'unused'});
+   const path='Stock_Movements/IN'+i;
+   s.put(path,{Timestamp:timestamp,Type:'IN',Doc_No:'IN'+i,Product_Code:'P1',Ref_No:'PO'+i,Qty:2,User:'staff',Extra:'unused metadata'.repeat(100),...(i>0?{Cost_Price:0}:{})});
+   s.docs.get(path).fields.Committed_At={timestampValue:timestamp};
+  }
+  // Model Firestore's projection after it has selected the matching documents.
+  let fullChars=0,projectedChars=0;const fetch=s.c.UrlFetchApp.fetch;
+  s.c.UrlFetchApp.fetch=(url,options)=>{
+   const res=fetch(url,options);
+   if(!url.endsWith(':runQuery')||res.getResponseCode()!==200)return res;
+   const q=JSON.parse(options.payload).structuredQuery;
+   if(q.from[0].collectionId!=='Stock_Movements'||!q.select)return res;
+   const body=res.getContentText(),rows=JSON.parse(body),fields=q.select.fields.map(f=>f.fieldPath);
+   for(const {document} of rows)if(document)document.fields=Object.fromEntries(Object.entries(document.fields).filter(([k])=>fields.includes(k)));
+   const projected=reply(200,rows);fullChars+=body.length;projectedChars+=projected.getContentText().length;
+   return projected;
+  };
+  const result=s.c.getDashboardBootstrap_({compactCatalog:true,compactMovements:true,includePoVendorMap});
+  const counts={...s.reads};assert.equal(counts.Stock_Movements,101);assert.equal(s.commits.length,0);
+  assert(projectedChars<fullChars/2);
+  const cost=result.movements.fields.indexOf('costPrice'),id=result.movements.fields.indexOf('id');
+  assert.equal(result.movements.rows.find(row=>row[id]==='IN0')[cost],27);
+  assert.equal(result.movements.rows.find(row=>row[id]==='IN1')[cost],0);
+  s.c.getDashboardBootstrap_({compactCatalog:true,compactMovements:true,includePoVendorMap});assert.deepEqual(s.reads,counts);
+  const delta=s.c.getDashboardDelta_(since,{includePoVendorMap:false});
+  const legacyDelta=s.c.getDashboardDelta_(since); // Cache entries keep the two response shapes separate.
+  assert.equal(delta.movements.find(m=>m.id==='IN0').costPrice,27);
+  assert.deepEqual(Object.keys(delta.poVendorMap),[]);assert.equal(Object.keys(legacyDelta.poVendorMap).length,101);
+  return {counts,result};
+ };
+ const before=run(true),after=run(false);
+ assert.equal(before.counts.Purchase_Orders,101);assert.equal(after.counts.Purchase_Orders,1);
+ assert.deepEqual(plain(before.result.movements),plain(after.result.movements));assert.deepEqual(Object.keys(after.result.poVendorMap),[]);
+});
 test('duplicate validation shares one scan during cache outage without weakening exact/normalized checks',()=>{
  const s=fresh();products(s);s.c.CacheService.getScriptCache=()=>({get:()=>null,getAll:()=>({}),put(){},putAll(){},remove(){},removeAll(){}});
  const memo={};for(const field of ['Product_Name','Part_Number','Barcode'])assert.equal(s.c.hasNormalizedDuplicate_('Master_Products',field,'new','',memo),false);assert.equal(s.reads.Master_Products,769);assert.equal(queries(s).length,3);

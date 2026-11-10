@@ -654,10 +654,15 @@
     var d = e.data || {};
     var readyFrame=Array.from(document.querySelectorAll('iframe[data-channel]')).find(function(f){return f.dataset.channel===d.channel;});
     if(readyFrame&&['PAGE_READY','PAGE_UNAVAILABLE','SESSION_EXPIRED'].indexOf(d.action)>=0)syyPostFrame(readyFrame,{action:'PAGE_ACK'});
-    if(d.action==='PAGE_DATA_READY'){if(readyFrame)syyFrameTrace(readyFrame,'data-ready');return;}
     if(d.action==='PAGE_DATA_ERROR'){if(readyFrame)syyFrameTrace(readyFrame,'data-error',d.code);return;}
     if(d.action==='PAGE_UNAVAILABLE'){if(readyFrame&&readyFrame.syyDelayed)readyFrame.syyDelayed('AUTH_UNAVAILABLE');return;}
-    if(/_READY$/.test(d.action)&&readyFrame){var newlyReady=readyFrame.dataset.ready!=='true';syyFrameOpened(readyFrame);if(newlyReady&&readyFrame.parentElement?.classList.contains('active'))syyPostFrame(readyFrame,{action:'PAGE_ACTIVATED'});}
+    if(/_READY$/.test(d.action)&&readyFrame&&readyFrame.dataset.ready!=='true'){
+      syyFrameOpened(readyFrame);
+      // Successful rendering also proves readiness if the initial signal was lost.
+      if(d.action==='PAGE_DATA_READY')syyPostFrame(readyFrame,{action:'PAGE_ACK'});
+      if(readyFrame.parentElement?.classList.contains('active'))syyPostFrame(readyFrame,{action:'PAGE_ACTIVATED'});
+    }
+    if(d.action==='PAGE_DATA_READY'){if(readyFrame)syyFrameTrace(readyFrame,'data-ready');return;}
     if(d.action==='CACHE_INVALIDATED'){syyInvalidateReadScopes(d.scopes,false);broadcastDataDelta(d,d.channel);}
     else if(d.action==='PRODUCT_DELTA'){syyInvalidateReadScopes(['Master_Products','Product_Images'],false);applyDashboardProductDelta(d.product,d.deleted);broadcastDataDelta(d,d.channel); }
     else if(d.action==='STOCK_DELTA'){syyInvalidateReadScopes(['Master_Products','Stock_Movements'],false);forwardStockDeltaToProducts(d.productStocks,d.channel); }
@@ -783,7 +788,7 @@
       status.syyRetry.addEventListener('click',function(){syyOpenFrame(frame,true);});status.append(status.syyTitle,status.syyMessage,status.syySkeleton,status.syyRetry);frame.parentElement.appendChild(status);
     }
     status.hidden=false;status.syyRetry.hidden=true;status.syySkeleton.hidden=false;status.syyTitle.textContent='กำลังเปิดหน้า '+(LABEL_OF[frame.id.replace('iframe-','')]||'');status.syyMessage.textContent='กรุณารอสักครู่…';
-    function delayed(code){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);var unavailable=code==='AUTH_UNAVAILABLE';syyFrameTrace(frame,'open-error',unavailable?code:'FRAME_TIMEOUT');status.syyTitle.textContent=unavailable?'ยังตรวจสอบการเชื่อมต่อไม่ได้':'ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent=unavailable?'ระบบตรวจบัญชีไม่พร้อมชั่วคราว กรุณาลองเปิดหน้าอีกครั้ง':'ใช้เวลานานกว่าปกติหรือการเชื่อมต่อขัดข้อง สามารถลองเปิดหน้านี้อีกครั้งได้';status.syyRetry.hidden=false;status.syySkeleton.hidden=true;}
+    function delayed(code){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);var unavailable=code==='AUTH_UNAVAILABLE';syyFrameTrace(frame,'open-error',code);status.syyTitle.textContent=unavailable?'ยังตรวจสอบการเชื่อมต่อไม่ได้':'ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent=unavailable?'ระบบตรวจบัญชีไม่พร้อมชั่วคราว กรุณาลองเปิดหน้าอีกครั้ง':'ใช้เวลานานกว่าปกติหรือการเชื่อมต่อขัดข้อง สามารถลองเปิดหน้านี้อีกครั้งได้';status.syyRetry.hidden=false;status.syySkeleton.hidden=true;}
     frame.syyDelayed=delayed;frame.onerror=function(){delayed('FRAME_ERROR');};frame.syyOpenTimer=setTimeout(function(){delayed('FRAME_TIMEOUT');},30000);
     frame.src=frame.dataset.src;
   }
@@ -880,7 +885,7 @@
 
   /* ═══════════════ Dashboard สต๊อก (real data, client-side aggregation) ═══════════════ */
   var DASH = {
-    loaded:false, loading:false, pendingDelta:false, lastLoad:0, lastFullLoad:0, nextReconcile:0, lastSync:'', products:[], movements:[], poVendorMap:{},
+    loaded:false, loading:false, pendingDelta:false, lastLoad:0, lastFullLoad:0, nextReconcile:0, lastSync:'', products:[], movements:[],
     byDay:{}, byMonth:{}, byYear:{}, byProductMonth:{}, lastOut:{}, lastSale:{}, qty6mo:{}, health:null,
     gran:'m', year:Number(businessDate().slice(0,4)), month:Number(businessDate().slice(5,7))-1, day:Number(businessDate().slice(8,10)),
     tab:'low', deadRule:90, search:'', fCat:'', fBrand:'', fPart:'', healthPage:1, healthCriteria:'',
@@ -918,7 +923,7 @@
     dashLoadingState(true);
     var started=performance.now(),hadData=DASH.loaded;
     var requestedYear=DASH.year;
-    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true,compactMovements:true,catalogSection:DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection}], function(data, readInfo){
+    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true,compactMovements:true,includePoVendorMap:false,catalogSection:DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection}], function(data, readInfo){
       try{
       var held=DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection;
       if(!data||!Array.isArray(data.movements)||(!Array.isArray(data.products)&&!(Array.isArray(DASH.products)&&held&&data.catalogSection&&held.version===data.catalogSection.version&&held.loadedAt===data.catalogSection.loadedAt))){syyInvalidateReadScopes(['Master_Products','Stock_Movements','Purchase_Orders'],false);throw Error('รูปแบบข้อมูล Dashboard ไม่ถูกต้อง กรุณาลองอีกครั้ง');}
@@ -932,7 +937,6 @@
       DASH.catalogVersion=data.catalogVersion;
       DASH.catalogExpiresAt=data.catalogExpiresAt;
       DASH.movements = (data.movements||[]).map(function(m){ m.ts=new Date(m.timestamp); return m; });
-      DASH.poVendorMap = data.poVendorMap||{};
       DASH.lastSync = data.serverTime || (DASH.movements.length ? DASH.movements[0].timestamp : new Date().toISOString());
       allProducts = DASH.products; // ใช้ร่วมกับ openView/openEdit/editModal เดิม
       DASH.loaded = true; DASH.lastLoad = Date.now(); DASH.lastFullLoad = Number(data.snapshotLoadedAt)||syyLastReadAt||Date.now();DASH.nextReconcile=DASH.lastFullLoad+DASH_RECONCILE_MS;
@@ -976,16 +980,15 @@
     if(DASH.loading){DASH.pendingDelta=true;return;}
     if(!DASH.loaded||!DASH.lastSync||DASH.year!==DASH.loadedYear||(Date.now()-DASH.lastFullLoad>=DASH_RECONCILE_MS&&Date.now()>=DASH.nextReconcile)){dashLoad();return;}
     DASH.loading=true;DASH.pendingDelta=false;
-    var since=DASH.lastSync,year=DASH.year,rows=[],stocks={},vendors={};
+    var since=DASH.lastSync,year=DASH.year,rows=[],stocks={};
     request('');
     function request(cursor){
-      callApi('getDashboardDelta',[since,{cursor:cursor,catalogVersion:DASH.catalogVersion,catalogExpiresAt:DASH.catalogExpiresAt,compactCatalog:true}],function(data){
+      callApi('getDashboardDelta',[since,{cursor:cursor,catalogVersion:DASH.catalogVersion,catalogExpiresAt:DASH.catalogExpiresAt,compactCatalog:true,includePoVendorMap:false}],function(data){
         data=data||{};
         if(data.fullRefresh){DASH.loading=false;dashLoad(true);return;}
         if(data.success===false){failed();return;}
         rows=rows.concat(data.movements||[]);
         (data.productStocks||[]).forEach(function(x){stocks[x.productCode]=x;});
-        Object.keys(data.poVendorMap||{}).forEach(function(k){vendors[k]=data.poVendorMap[k];});
         if(data.hasMore){if(!data.nextCursor||data.nextCursor===cursor){failed();return;}request(data.nextCursor);return;}
         DASH.loading=false;
         if(year!==DASH.year){DASH.reloadRequested=false;dashLoad();return;}
@@ -994,7 +997,6 @@
         DASH.movements.sort(function(a,b){return b.ts-a.ts;});
         if(Array.isArray(data.products)){DASH.products=data.products;DASH.catalogVersion=data.catalogVersion;DASH.catalogExpiresAt=data.catalogExpiresAt;}
         DASH.products.forEach(function(p){var x=stocks[p.productCode];if(x){p.currentStock=num(x.currentStock);p.minStock=num(x.minStock);p.costPrice=num(x.costPrice);p.sellingPrice=num(x.sellingPrice);}});
-        Object.keys(vendors).forEach(function(k){DASH.poVendorMap[k]=vendors[k];});
         // Advance only after every page succeeds. A failed drain retries the same watermark.
         DASH.lastSync=data.serverTime||since;DASH.lastLoad=Date.now();allProducts=DASH.products;
         document.getElementById('lastUpdated').innerText='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});

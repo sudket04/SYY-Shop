@@ -156,6 +156,18 @@ async function main(){
     assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);await p.waitForFunction(()=>syyPageDiagnostics.at(-1).dataMs!==null);
     assert.equal(await p.evaluate(()=>syyPageDiagnostics.at(-1).route),'brands');assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Loading resilience: a rendered child reveals its frame when every initial readiness signal is lost',async()=>{
+    const p=await pageFor('index.html');
+    await p.evaluate(()=>{
+      window.addEventListener('message',event=>{if(event.data?.action==='PAGE_READY')event.stopImmediatePropagation();},{capture:true});
+    });
+    await p.locator('#menu-brands').click();
+    await p.waitForFunction(()=>document.getElementById('iframe-brands').dataset.ready==='true'&&syyPageDiagnostics.at(-1).state==='data-ready');
+    const child=p.frames().find(f=>new URL(f.url()).searchParams.get('page')==='brands');assert(child);
+    assert.equal(await child.evaluate(()=>apiCalls.filter(x=>x.fn==='getBrands').length),1);
+    assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
   await check('Loading resilience: local confirmations work immediately when the dialog CDN is unavailable',async()=>{
     const p=await pageFor('StockIssue.html');await p.evaluate(()=>{delete window.Swal;window.localDecision=null;swyConfirm({title:'ทดสอบการยืนยัน',html:'ยังไม่มีการบันทึกข้อมูล'}).then(value=>localDecision=value);});
     const box=p.getByRole('alertdialog');await box.waitFor({state:'visible'});assert.equal(await p.evaluate(()=>localDecision),null);assert.equal(await box.getByRole('combobox').count(),0);

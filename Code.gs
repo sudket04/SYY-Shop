@@ -5690,7 +5690,8 @@ function queryDashboardMovementsRange_(fromIso, toIso, committedCursor, snapshot
     filters.push({fieldFilter:{field:{fieldPath:field},op:"GREATER_THAN_OR_EQUAL",value:value}});
   }
   if (toIso && !committedCursor) filters.push({fieldFilter:{field:{fieldPath:field},op:"LESS_THAN_OR_EQUAL",value:{stringValue:toIso}}});
-  var q = {from:[{collectionId:STOCK_MOVEMENT_COLLECTION}],orderBy:[{field:{fieldPath:field},direction:"DESCENDING"}]};
+  var fields = ['Timestamp','Doc_No','Bill_No','Issue_Status','Is_Reversal','Bill_Count_Delta','Type','Product_Code','Product_Name','Qty','Stock_After','Unit_Price','Cost_Price','Committed_At','Reason','Ref_No','Note','User'];
+  var q = {from:[{collectionId:STOCK_MOVEMENT_COLLECTION}],orderBy:[{field:{fieldPath:field},direction:"DESCENDING"}],select:{fields:fields.map(function(name){return {fieldPath:name};})}};
   if (filters.length === 1) q.where=filters[0];
   else if (filters.length) q.where={compositeFilter:{op:"AND",filters:filters}};
   var url="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents:runQuery";
@@ -5707,12 +5708,12 @@ function queryDashboardMovementsRange_(fromIso, toIso, committedCursor, snapshot
   return out;
 }
 
-function buildPoVendorMapForMovements_(movements) {
-  var refs=[],seen=Object.create(null);(movements||[]).forEach(function(m){if(m.type==='IN'&&m.refNo&&!seen[m.refNo]){seen[m.refNo]=true;refs.push(String(m.refNo));}});
+function buildPoVendorMapForMovements_(movements, includeVendorMap) {
+  var refs=[],seen=Object.create(null);(movements||[]).forEach(function(m){if(m.type==='IN'&&m.refNo&&!seen[m.refNo]&&(includeVendorMap!==false||m.costPrice===null)){seen[m.refNo]=true;refs.push(String(m.refNo));}});
   if(!refs.length)return {};
   refs.sort();var records=cachedReadResult_('po-costs:'+JSON.stringify(refs),['Purchase_Orders'],120000,function(){
     var out=Object.create(null);for(var i=0;i<refs.length;i+=100){
-      var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:batchGet',{method:'post',headers:getAuthHeader_(),muteHttpExceptions:true,payload:JSON.stringify({documents:refs.slice(i,i+100).map(function(id){return fsDocPath_('Purchase_Orders',id);})})});
+      var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:batchGet',{method:'post',headers:getAuthHeader_(),muteHttpExceptions:true,payload:JSON.stringify({documents:refs.slice(i,i+100).map(function(id){return fsDocPath_('Purchase_Orders',id);}),mask:{fieldPaths:['Vendor_ID','Items_JSON']}})});
       if(res.getResponseCode()!==200)throw new Error('โหลดข้อมูลใบสั่งซื้อไม่สำเร็จ');
       JSON.parse(res.getContentText()).forEach(function(row){if(!row.found)return;var f=row.found.fields||{},costs=Object.create(null);
         JSON.parse(parseFirestoreValue_(f.Items_JSON)||'[]').forEach(function(it){if(it.costPrice!=null&&isFinite(Number(it.costPrice))&&Number(it.costPrice)>=0)costs[it.productCode]=Number(it.costPrice);});
@@ -5720,8 +5721,9 @@ function buildPoVendorMapForMovements_(movements) {
       });
     }return out;
   });
-  var vendors=buildVendorMap_(),out=Object.create(null);Object.keys(records).forEach(function(id){var record=records[id];out[id]=(vendors[record.vendorId]||{}).Vendor_name||record.vendorId;});
   movements.forEach(function(m){var record=Object.prototype.hasOwnProperty.call(records,m.refNo)?records[m.refNo]:null;if(m.type==='IN'&&record&&m.costPrice===null&&Object.prototype.hasOwnProperty.call(record.costs,m.productCode))m.costPrice=record.costs[m.productCode];});
+  if(includeVendorMap===false)return {};
+  var vendors=buildVendorMap_(),out=Object.create(null);Object.keys(records).forEach(function(id){var record=records[id];out[id]=(vendors[record.vendorId]||{}).Vendor_name||record.vendorId;});
   return out;
 }
 
@@ -5750,14 +5752,15 @@ function getDashboardBootstrap_(options){
   if(catalogVersion!==null&&catalogVersion!==dashboardCatalogVersion_())throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
   if(dataVersion!==null&&dataVersion!==readCacheVersion_(PRODUCT_CATALOG_SCOPES))throw new Error('ข้อมูลสินค้าเปลี่ยนระหว่างโหลด กรุณาลองใหม่');
   var catalogExpiry=clientReadExpiry_(PRODUCT_CATALOG_SCOPES,300000),section=reuse?options.catalogSection:dataVersion===null?undefined:{version:dataVersion,loadedAt:Math.min(Date.now(),catalogExpiry-300000)};
-  return {products:products,catalogSection:section,catalogVersion:catalogVersion,catalogExpiresAt:catalogExpiry,movements:options.compactMovements?packDashboardMovements_(snapshot.movements):snapshot.movements,poVendorMap:buildPoVendorMapForMovements_(snapshot.movements),bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
+  var poVendorMap=buildPoVendorMapForMovements_(snapshot.movements,options.includePoVendorMap);
+  return {products:products,catalogSection:section,catalogVersion:catalogVersion,catalogExpiresAt:catalogExpiry,movements:options.compactMovements?packDashboardMovements_(snapshot.movements):snapshot.movements,poVendorMap:poVendorMap,bounded:true,year:year,rangeStart:start,healthRangeStart:healthStart,serverTime:snapshot.serverTime,snapshotLoadedAt:snapshot.snapshotLoadedAt};
 }
 
 function getDashboardDelta_(sinceIso,options) {
   var since=String(sinceIso||'').trim(),time=Date.parse(since);
   if(!since||since.length>64||isNaN(time)||time>Date.now()+60000||Date.now()-time>900000)return {success:false,fullRefresh:true,message:'กรุณาโหลดข้อมูลล่าสุดเพื่อเริ่มซิงก์ใหม่'};
   options=options||{};
-  return cachedReadResult_('dashboard-delta-correction-v2:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
+  return cachedReadResult_('dashboard-delta-correction-v2:'+JSON.stringify([since,options.cursor||'',options.catalogVersion,options.catalogExpiresAt,!!options.compactCatalog,options.includePoVendorMap!==false]),PRODUCT_CATALOG_SCOPES.concat([STOCK_MOVEMENT_COLLECTION,'Purchase_Orders']),5000,function(){return getDashboardDeltaUncached_(since,time,options);});
 }
 function getDashboardDeltaUncached_(since,time,options){
   options=options||{};var page=queryMovementPage_('Committed_At',new Date(time-60000).toISOString(),{pageSize:200,cursor:options.cursor},null);
@@ -5766,7 +5769,7 @@ function getDashboardDeltaUncached_(since,time,options){
   if(movements.some(function(m){return m.reversal;}))return {success:true,fullRefresh:true,message:'มีการแก้บิล ต้องตรวจยอดและสถานะทั้งช่วงใหม่'};
   var stocks=getProductStockMap_(codes),productStocks=[];
   Object.keys(stocks).forEach(function(code){var x=stocks[code];productStocks.push({productCode:code,currentStock:x.stock,minStock:x.minStock,costPrice:x.costPrice,sellingPrice:x.sellingPrice});});
-  var result={success:true,movements:movements,productStocks:productStocks,poVendorMap:buildPoVendorMapForMovements_(movements),serverTime:page.pageInfo.readTime,nextCursor:page.pageInfo.nextCursor,hasMore:page.pageInfo.hasMore};
+  var result={success:true,movements:movements,productStocks:productStocks,poVendorMap:buildPoVendorMapForMovements_(movements,options.includePoVendorMap),serverTime:page.pageInfo.readTime,nextCursor:page.pageInfo.nextCursor,hasMore:page.pageInfo.hasMore};
   var catalogVersion=dashboardCatalogVersion_();
   if(!page.pageInfo.hasMore&&catalogVersion!==null&&Object.prototype.hasOwnProperty.call(options,'catalogVersion')&&(options.catalogVersion!==catalogVersion||Number.isFinite(options.catalogExpiresAt)&&options.catalogExpiresAt<=Date.now())){
     result.products=options.compactCatalog?packProductCatalog_(getProductCatalogRows_()):getAllProducts_();
