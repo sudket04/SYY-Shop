@@ -155,6 +155,10 @@ async function main(){
   assert.equal(await dashboard.evaluate(()=>DASH.movements.reduce((n,m)=>n+m.qty*m.unitPrice,0)),240000);
   assert.equal(reads.Master_Products,before.Master_Products);
   assert.equal(reads.Stock_Movements-(before.Stock_Movements||0),1200);
+  const timing=await dashboard.evaluate(()=>({preview:syyCacheStats.views['dashboard-first-usable']?.last,full:syyCacheStats.views.dashboard?.last,rpc:syyCacheStats.byApi.getDashboardBootstrap?.samples.at(-1)}));
+  assert.equal(timing.preview.rows,10000);assert.equal(timing.full.rows,10000);
+  assert.equal(timing.rpc.movementHttpRequests,1);assert.equal(timing.rpc.poHttpRequests,0);
+  for(const field of ['queueMs','transportMs','authMs','operationMs','movementHttpMs','decodeMs'])assert(Number.isFinite(timing.rpc[field])&&timing.rpc[field]>=0,field);
   assert.equal(await dashboard.locator('#dashKpiRow .sk').count(),0);
   const warm={...reads};await dashboard.evaluate(()=>dashLoad());await dashboard.waitForFunction(()=>!DASH.loading);assert.deepEqual(reads,warm);
  });

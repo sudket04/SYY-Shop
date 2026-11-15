@@ -1,6 +1,13 @@
 // Stock dashboard reporting and movement aggregation reads.
 var DASHBOARD_YEARS_BACK = 4;
 
+function recordDashboardHttp_(kind, started, requests) {
+  if(!executionReadContext_)return;
+  var stats=executionReadContext_.dashboardHttp||(executionReadContext_.dashboardHttp={movementHttpMs:0,movementHttpRequests:0,poHttpMs:0,poHttpRequests:0});
+  stats[kind+'HttpMs']+=Math.max(0,Date.now()-started);
+  stats[kind+'HttpRequests']+=requests;
+}
+
 function dashboardRangeStart_(year){year=Number(year)||Number(businessDate_().slice(0,4));return new Date(Date.UTC(year-1,0,1)-7*3600000).toISOString();}
 
 function mapDashboardMovementRow_(row) {
@@ -47,7 +54,10 @@ function queryDashboardMovementsRange_(fromIso, toIso, committedCursor, snapshot
   else if (filters.length) q.where={compositeFilter:{op:"AND",filters:filters}};
   var url="https://firestore.googleapis.com/v1/projects/"+PROJECT_ID+"/databases/(default)/documents:runQuery";
   var body={structuredQuery:q};if(snapshotTime)body.readTime=snapshotTime;
-  var res=UrlFetchApp.fetch(url,{method:"post",headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true});
+  var request={method:"post",headers:getAuthHeader_(),payload:JSON.stringify(body),muteHttpExceptions:true};
+  var started=Date.now(),res;
+  try{res=UrlFetchApp.fetch(url,request);}
+  finally{recordDashboardHttp_('movement',started,1);}
   if(res.getResponseCode()!==200) throw new Error("โหลดการเคลื่อนไหวไม่สำเร็จ กรุณาลองใหม่");
   var readTime=snapshotTime||"";
   JSON.parse(res.getContentText()).forEach(function(row) {
@@ -63,14 +73,38 @@ function buildPoVendorMapForMovements_(movements, includeVendorMap) {
   var refs=[],seen=Object.create(null);(movements||[]).forEach(function(m){if(m.type==='IN'&&m.refNo&&!seen[m.refNo]&&(includeVendorMap!==false||m.costPrice===null)){seen[m.refNo]=true;refs.push(String(m.refNo));}});
   if(!refs.length)return {};
   refs.sort();var records=cachedReadResult_('po-costs:'+JSON.stringify(refs),['Purchase_Orders'],120000,function(){
-    var out=Object.create(null);for(var i=0;i<refs.length;i+=100){
-      var res=UrlFetchApp.fetch('https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:batchGet',{method:'post',headers:getAuthHeader_(),muteHttpExceptions:true,payload:JSON.stringify({documents:refs.slice(i,i+100).map(function(id){return fsDocPath_('Purchase_Orders',id);}),mask:{fieldPaths:['Vendor_ID','Items_JSON']}})});
-      if(res.getResponseCode()!==200)throw new Error('โหลดข้อมูลใบสั่งซื้อไม่สำเร็จ');
-      JSON.parse(res.getContentText()).forEach(function(row){if(!row.found)return;var f=row.found.fields||{},costs=Object.create(null);
-        JSON.parse(parseFirestoreValue_(f.Items_JSON)||'[]').forEach(function(it){if(it.costPrice!=null&&isFinite(Number(it.costPrice))&&Number(it.costPrice)>=0)costs[it.productCode]=Number(it.costPrice);});
-        out[row.found.name.split('/').pop()]={vendorId:parseFirestoreValue_(f.Vendor_ID)||'',costs:costs};
+    var out=Object.create(null),url='https://firestore.googleapis.com/v1/projects/'+PROJECT_ID+'/databases/(default)/documents:batchGet';
+    var headers=getAuthHeader_();
+    // Limit each wave to three independent requests, 100 references each.
+    for(var offset=0;offset<refs.length;offset+=300){
+      var batches=[];
+      for(var i=offset;i<Math.min(offset+300,refs.length);i+=100){
+        var documents=refs.slice(i,i+100).map(function(id){return fsDocPath_('Purchase_Orders',id);});
+        batches.push({documents:documents,request:{url:url,method:'post',headers:headers,muteHttpExceptions:true,
+          payload:JSON.stringify({documents:documents,mask:{fieldPaths:['Vendor_ID','Items_JSON']}})}});
+      }
+      var started=Date.now(),responses;
+      try{
+        responses=batches.length===1?[UrlFetchApp.fetch(url,batches[0].request)]:UrlFetchApp.fetchAll(batches.map(function(batch){return batch.request;}));
+      }finally{recordDashboardHttp_('po',started,batches.length);}
+      if(responses.length!==batches.length)throw new Error('โหลดข้อมูลใบสั่งซื้อไม่ครบ');
+      responses.forEach(function(res,index){
+        if(res.getResponseCode()!==200)throw new Error('โหลดข้อมูลใบสั่งซื้อไม่สำเร็จ');
+        var pending=new Set(batches[index].documents);
+        JSON.parse(res.getContentText()).forEach(function(row){
+          var name=row.found?row.found.name:row.missing;
+          if(!pending.delete(name))throw new Error('โหลดข้อมูลใบสั่งซื้อไม่ครบ');
+          if(!row.found)return;
+          var fields=row.found.fields||{},costs=Object.create(null);
+          JSON.parse(parseFirestoreValue_(fields.Items_JSON)||'[]').forEach(function(item){
+            if(item.costPrice!=null&&isFinite(Number(item.costPrice))&&Number(item.costPrice)>=0)costs[item.productCode]=Number(item.costPrice);
+          });
+          out[name.split('/').pop()]={vendorId:parseFirestoreValue_(fields.Vendor_ID)||'',costs:costs};
+        });
+        if(pending.size)throw new Error('โหลดข้อมูลใบสั่งซื้อไม่ครบ');
       });
-    }return out;
+    }
+    return out;
   });
   movements.forEach(function(m){var record=Object.prototype.hasOwnProperty.call(records,m.refNo)?records[m.refNo]:null;if(m.type==='IN'&&record&&m.costPrice===null&&Object.prototype.hasOwnProperty.call(record.costs,m.productCode))m.costPrice=record.costs[m.productCode];});
   if(includeVendorMap===false)return {};

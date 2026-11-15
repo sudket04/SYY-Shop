@@ -3888,7 +3888,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     logActivity_(session.username, fnName, a, result);
 
     if(cacheVersion!==null&&!(result&&result.success===false))try{
-      if(clientReadVersion_(cacheScopes)===cacheVersion){var responseExpiry=clientReadExpiry_(cacheScopes,maxClientAge);if(result&&result.cursorMode===true&&Number.isFinite(result.cacheExpiresAt))responseExpiry=Math.min(responseExpiry,result.cacheExpiresAt);return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:responseExpiry,timings:{authMs:authMs,operationMs:operationMs,serverMs:Date.now()-timingStarted}};}
+      if(clientReadVersion_(cacheScopes)===cacheVersion){var responseExpiry=clientReadExpiry_(cacheScopes,maxClientAge);if(result&&result.cursorMode===true&&Number.isFinite(result.cacheExpiresAt))responseExpiry=Math.min(responseExpiry,result.cacheExpiresAt);return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:responseExpiry,timings:Object.assign({authMs:authMs,operationMs:operationMs,serverMs:Date.now()-timingStarted},executionReadContext_.dashboardHttp||{})};}
     }catch(ignored){}
     return result;
 

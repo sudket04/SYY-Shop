@@ -90,6 +90,37 @@ test('dashboard adjacent year has no overlap; repeat snapshot is shared and forc
  s.c.clearCollectionCache_('Stock_Movements');s.c.getDashboardBootstrap_({year:year-1});assert.equal(s.reads.Stock_Movements,9000);
  const old=s.c.getDashboardBootstrap_({year:year-4});assert.equal(old.movements.length,3000);const q=queries(s).slice(-2);assert.equal(q[1].readTime,q[0].readTime||s.c.readTime);
 });
+
+test('legacy Dashboard costs read unique purchase orders in bounded parallel waves without changing costing',()=>{
+ const s=fresh(),movements=[];
+ for(let i=0;i<320;i++){
+  const id='PO'+i;
+  s.put('Purchase_Orders/'+id,{Vendor_ID:'V1',Items_JSON:JSON.stringify([{productCode:'P1',costPrice:i}])});
+  movements.push({type:'IN',refNo:id,productCode:'P1',costPrice:null});
+ }
+ movements.push({type:'IN',refNo:'PO1',productCode:'P1',costPrice:null},{type:'IN',refNo:'MISSING',productCode:'P1',costPrice:null},{type:'IN',refNo:'CURRENT',productCode:'P1',costPrice:999});
+ const execution={collections:Object.create(null),refreshScopes:[]};s.c.executionReadContext_=execution;
+ const waves=[],batch=s.c.UrlFetchApp.fetchAll;
+ s.c.UrlFetchApp.fetchAll=requests=>{waves.push(requests.length);return batch(requests);};
+ s.c.buildPoVendorMapForMovements_(movements,false);
+ assert.deepEqual(waves,[3]);assert.equal(s.reads.Purchase_Orders,320);
+ assert.deepEqual(s.calls.filter(call=>call.url.endsWith(':batchGet')).map(call=>JSON.parse(call.options.payload).documents.length),[100,100,100,21]);
+ assert.deepEqual(movements.slice(0,320).map(row=>row.costPrice),Array.from({length:320},(_,i)=>i));
+ assert.deepEqual(movements.slice(320).map(row=>row.costPrice),[1,null,999]);
+ assert.equal(execution.dashboardHttp.poHttpRequests,4);assert.equal(s.commits.length,0);
+});
+
+test('a partial purchase-order wave never publishes inferred historical costs or enters the result cache',()=>{
+ const s=fresh(),movements=Array.from({length:102},(_,i)=>({type:'IN',refNo:'PO'+i,productCode:'P1',costPrice:null}));
+ for(const row of movements)s.put('Purchase_Orders/'+row.refNo,{Items_JSON:'[{"productCode":"P1","costPrice":25}]'});
+ const batch=s.c.UrlFetchApp.fetchAll;
+ s.c.UrlFetchApp.fetchAll=requests=>batch(requests).map((response,index)=>index===1?reply(200,JSON.parse(response.getContentText()).slice(1)):response);
+ assert.throws(()=>s.c.buildPoVendorMapForMovements_(movements,false),/ใบสั่งซื้อไม่ครบ/);
+ assert(movements.every(row=>row.costPrice===null));
+ const before=s.reads.Purchase_Orders;s.c.UrlFetchApp.fetchAll=batch;
+ s.c.buildPoVendorMapForMovements_(movements,false);
+ assert.equal(s.reads.Purchase_Orders-before,102);assert(movements.every(row=>row.costPrice===25));assert.equal(s.commits.length,0);
+});
 test('stale/future delta cursors are rejected before Firestore; valid delta drains 550 rows with same-time ties',()=>{
  const s=fresh();s.seed();for(const value of ['2000-01-01','bad',new Date(Date.now()+120000).toISOString()])assert.equal(s.c.getDashboardDelta_(value).fullRefresh,true);assert.equal(s.calls.length,0);
  const since=new Date(Date.now()-20000).toISOString(),committed=new Date(Date.now()-10000).toISOString();

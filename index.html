@@ -957,11 +957,14 @@
   function dashCatalogEpoch(){return syyCacheEpoch(syyReadPolicy('getAllProducts',[{compact:true}]).scopes);}
   function dashRequestBootstrap(options,success,failure){
     if(DASH.loaded||DASH.restoredCatalogSection&&DASH.catalogEpoch===dashCatalogEpoch()){callApi('getDashboardBootstrap',[options],success,failure);return;}
+    var started=performance.now();
     DASH.restoredCatalogSection=null;
     callApi('getAllProducts',[{compact:true}],function(products,info){
       if(!Array.isArray(products)){failure({message:'รูปแบบข้อมูลสินค้าไม่ถูกต้อง'});return;}
+      var renderStarted=performance.now();
       dashCatalogPreview(products);
       dashLoadingState(true);
+      syyRecordViewTiming('dashboard-first-usable',started,renderStarted,products.length);
       DASH.catalogEpoch=dashCatalogEpoch();
       DASH.restoredCatalogSection=info&&info.section;
       options.catalogSection=DASH.restoredCatalogSection;
