@@ -3802,6 +3802,12 @@ function clientConditionalCursorAllowed_(name,args){
   productBrowseContext_(o,spec,o.pageSize==null?50:Number(o.pageSize),o.page==null?1:Number(o.page));return true;
 }
 function apiGateway(token, fnName, args, userAgent, clientCache) {
+  var suppliedTrace=clientCache&&clientCache.traceId;
+  var traceId=typeof suppliedTrace==='string'&&/^[a-z0-9-]{8,64}$/i.test(suppliedTrace)?suppliedTrace:'';
+  function readTimings(operationMs){
+    return Object.assign({authMs:authMs,operationMs:operationMs,serverMs:Date.now()-timingStarted},
+      executionReadContext_.dashboardHttp||{},traceId?{traceId:traceId}:{});
+  }
   try {
     var timingStarted=Date.now(),session = getSession_(token, userAgent, true),authMs=Date.now()-timingStarted;
     if (!session) {
@@ -3879,7 +3885,7 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     var maxClientAge=cacheScopes&&cacheScopes.every(function(x){return ['Master_Brands','Master_Categories','Master_Vendors','Master_Zones','Master_Cars','Master_Customers'].indexOf(x)>=0;})?300000:120000;
     var dataExpiry=cacheScopes?clientReadExpiry_(cacheScopes,maxClientAge):0;
     if(cacheVersion!==null&&!force&&dataExpiry>Date.now()&&(!manual||Number.isFinite(clientCache.expiresAt)&&clientCache.expiresAt>Date.now())&&clientCache.version===cacheVersion&&Number.isFinite(clientCache.loadedAt)&&clientCache.loadedAt<=Date.now()&&Date.now()-clientCache.loadedAt<maxClientAge){
-      return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes,expiresAt:dataExpiry,timings:{authMs:authMs,operationMs:0,serverMs:Date.now()-timingStarted}};
+      return {__syyCache:1,notModified:true,version:cacheVersion,scopes:cacheScopes,expiresAt:dataExpiry,timings:readTimings(0)};
     }
     var referenceOperations=['saveProduct','saveBrand','saveCategory','saveVendor','saveCustomer','saveZone','saveCar','saveMasterData','savePurchaseOrder','saveQuotation',
       'deleteProduct','deleteBrand','deleteCategory','deleteVendor','deleteCustomer','deleteZone','deleteCar','deletePurchaseOrder'];
@@ -3888,13 +3894,13 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
     logActivity_(session.username, fnName, a, result);
 
     if(cacheVersion!==null&&!(result&&result.success===false))try{
-      if(clientReadVersion_(cacheScopes)===cacheVersion){var responseExpiry=clientReadExpiry_(cacheScopes,maxClientAge);if(result&&result.cursorMode===true&&Number.isFinite(result.cacheExpiresAt))responseExpiry=Math.min(responseExpiry,result.cacheExpiresAt);return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:responseExpiry,timings:Object.assign({authMs:authMs,operationMs:operationMs,serverMs:Date.now()-timingStarted},executionReadContext_.dashboardHttp||{})};}
+      if(clientReadVersion_(cacheScopes)===cacheVersion){var responseExpiry=clientReadExpiry_(cacheScopes,maxClientAge);if(result&&result.cursorMode===true&&Number.isFinite(result.cacheExpiresAt))responseExpiry=Math.min(responseExpiry,result.cacheExpiresAt);return {__syyCache:1,data:result,version:cacheVersion,scopes:cacheScopes,expiresAt:responseExpiry,timings:readTimings(operationMs)};}
     }catch(ignored){}
     return result;
 
   } catch (e) {
     // Logs contain only an allowlisted operation and technical timing/code.
-    console.error('apiGateway failed',JSON.stringify({operation:Object.prototype.hasOwnProperty.call(API_REGISTRY,fnName)?fnName:'invalid',code:e.code||'REQUEST_FAILED',authMs:Number.isFinite(authMs)?authMs:Date.now()-timingStarted,serverMs:Date.now()-timingStarted}));
+    console.error('apiGateway failed',JSON.stringify({operation:Object.prototype.hasOwnProperty.call(API_REGISTRY,fnName)?fnName:'invalid',code:e.code||'REQUEST_FAILED',authMs:Number.isFinite(authMs)?authMs:Date.now()-timingStarted,serverMs:Date.now()-timingStarted,traceId:traceId||undefined}));
     return readFailureResponse_(e);
   } finally { validatedGatewaySession_ = null; executionReadContext_ = null; }
 }

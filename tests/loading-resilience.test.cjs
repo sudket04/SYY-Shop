@@ -87,6 +87,18 @@ test('queued expired work never dispatches and abandoned transports eventually r
  const f=transportFixture();['getA','getB','getC','getD'].forEach(fn=>f.read(fn));f.tick(45001);assert.equal(f.calls.length,3);assert.equal(f.failures.length,4);f.tick(370000);assert.equal(f.calls.length,3);assert.equal(f.c.syyReadCoordinator().active,0);assert.equal(f.c.syyReadCoordinator().pending.size,0);
 });
 
+test('a transient retry still in the queue reports queue time and counts actual transports only',()=>{
+ const f=transportFixture();f.read('getDashboardBootstrap');f.read('getDashboardBootstrap');
+ f.tick(40);f.calls[0].ok({success:false,code:'READ_BUSY',retryable:true,retryAfterMs:1000});
+ for(const method of ['getA','getB','getC'])f.read(method);
+ f.tick(1400);f.tick(43561);
+ const retries=f.failures.filter(error=>error.code==='READ_QUEUE_TIMEOUT');assert.equal(retries.length,2);
+ assert(retries.every(error=>error.timing.transportMs===40&&error.timing.queueMs>40000));
+ const stats=f.c.syyReadCoordinator().transports.get('getDashboardBootstrap');
+ assert.deepEqual({...stats},{started:1,settled:1,errors:1,joined:2}); // one join for each logical attempt
+ assert.equal(retries[0].timing.traceId,f.calls[0].metadata.traceId);assert.equal(f.calls.length,4);
+});
+
 test('three stalled requests admit one distinct bounded foreground read while keeping all physical slots',()=>{
  const f=transportFixture();['getA','getB','getC'].forEach(fn=>f.read(fn));
  f.read('getDashboardBootstrap');f.read('getBrands');f.read('getBrands');f.read('getCategories',[],{background:true});

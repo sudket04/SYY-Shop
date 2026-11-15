@@ -8,6 +8,7 @@ const {setup}=require('./support/services.cjs');
 const {evaluateTemplate}=require('./support/templates.cjs');
 const output=path.resolve(__dirname,'../test-results');fs.mkdirSync(output,{recursive:true});
 const cacheComparison=[];
+const cacheSamples=Math.max(1,Math.min(10,Math.floor(Number(process.env.SYY_CACHE_SAMPLES)||1)));
 const store=setup(),sessions=new Map(),requests=[],reads={},errors=[];
 store.c.readTime=new Date().toISOString();
 for(let i=0;i<10000;i++){
@@ -55,7 +56,7 @@ const server=http.createServer(async(req,res)=>{
    const request=JSON.parse(input);if(!allowed.has(request.fn))throw Error('Write or unexpected RPC blocked: '+request.fn);
    const started=performance.now(),result=store.c.apiGateway(request.token,request.fn,request.args,request.ua,request.metadata);
    const payload=JSON.stringify(result);
-   requests.push({user:request.token,fn:request.fn,options:request.args,elapsedMs:performance.now()-started,bytes:Buffer.byteLength(payload),notModified:!!result.notModified,success:result.success!==false,message:result.message,rows:result.data?.rows?.length||result.rows?.length});
+   requests.push({user:request.token,fn:request.fn,options:request.args,traceId:request.metadata?.traceId,serverTraceId:result.timings?.traceId,elapsedMs:performance.now()-started,bytes:Buffer.byteLength(payload),notModified:!!result.notModified,success:result.success!==false,message:result.message,rows:result.data?.rows?.length||result.rows?.length});
    res.writeHead(200,{'Content-Type':'application/json'}).end(payload);return;
   }
   // The last case delivers an already-known page template after revocation;
@@ -159,6 +160,9 @@ async function main(){
   assert.equal(timing.preview.rows,10000);assert.equal(timing.full.rows,10000);
   assert.equal(timing.rpc.movementHttpRequests,1);assert.equal(timing.rpc.poHttpRequests,0);
   for(const field of ['queueMs','transportMs','authMs','operationMs','movementHttpMs','decodeMs'])assert(Number.isFinite(timing.rpc[field])&&timing.rpc[field]>=0,field);
+  const transport=requests.findLast(item=>item.fn==='getDashboardBootstrap');
+  assert.match(transport.traceId,/^[a-z0-9-]{8,64}$/i);
+  assert.equal(transport.serverTraceId,transport.traceId);assert.equal(timing.rpc.traceId,transport.traceId);
   assert.equal(await dashboard.locator('#dashKpiRow .sk').count(),0);
   const warm={...reads};await dashboard.evaluate(()=>dashLoad());await dashboard.waitForFunction(()=>!DASH.loading);assert.deepEqual(reads,warm);
  });
@@ -208,7 +212,7 @@ async function main(){
  for(const page of pages){assert.deepEqual(page.errors,[]);await page.close();}
  await check('IndexedDB on/off comparison preserves Dashboard, browse and XLFilter results with bounded document reads',async()=>{
   sessions.set('staff',{username:'fixture-staff',role:'staff'});
-  for(const enabled of [true,false]){
+  for(let sample=0;sample<cacheSamples;sample++)for(const enabled of (sample%2?[false,true]:[true,false])){
    store.cache.clear();
    const startReads={...reads},startRequests=requests.length;
    const arm=await browser.newContext();
@@ -219,9 +223,10 @@ async function main(){
     const start=performance.now();await page.goto(origin+'/?file=index.html&user=staff');
     await page.waitForFunction(()=>DASH.catalogPreview||DASH.loaded);const usableMs=Math.round(performance.now()-start);
     await page.waitForFunction(()=>DASH.loaded&&!DASH.loading&&DASH.products.length===10000&&DASH.movements.length===1200);
+    const completeMs=Math.round(performance.now()-start);
     if(enabled)await page.waitForFunction(async()=>Boolean((await syyDiskCache.lookup('getAllProducts[{"compact":true}]'))?.record));
     assert.equal(await page.evaluate(()=>syyDiskCache.enabled),enabled);
-    return {usableMs,completeMs:Math.round(performance.now()-start)};
+    return {usableMs,completeMs};
    }
    const cold=await dashboard(),warm=await dashboard();
    store.c.clearCollectionCache_('Master_Products');
@@ -233,12 +238,25 @@ async function main(){
    const facets=await page.evaluate(()=>new Promise((resolve,reject)=>callApi('getProductCatalogFacets',[{},'partType'],resolve,reject)));
    assert.deepEqual(facets.values.sort(),['เทียบ','แท้'].sort());assert.deepEqual(errors,[]);
    const calls=requests.slice(startRequests),counts=Object.fromEntries(Object.keys(reads).map(key=>[key,reads[key]-(startReads[key]||0)]));
-   cacheComparison.push({indexedDB:enabled,cold,warm,invalidated,requests:calls.length,bytes:calls.reduce((n,call)=>n+call.bytes,0),reads:counts});
+   cacheComparison.push({sample,indexedDB:enabled,cold,warm,invalidated,requests:calls.length,bytes:calls.reduce((n,call)=>n+call.bytes,0),reads:counts});
    await arm.close();
   }
-  const totals=cacheComparison.map(arm=>Object.values(arm.reads).reduce((a,b)=>a+b,0));
-  assert(totals[1]<=10*totals[0]);
-  console.log('Cache A/B (synthetic): '+JSON.stringify(cacheComparison));
+  const total=arm=>Object.values(arm.reads).reduce((a,b)=>a+b,0);
+  for(let sample=0;sample<cacheSamples;sample++){
+   const enabled=cacheComparison.find(arm=>arm.sample===sample&&arm.indexedDB);
+   const disabled=cacheComparison.find(arm=>arm.sample===sample&&!arm.indexedDB);
+   assert(total(disabled)<=10*total(enabled));
+  }
+  function percentile(numbers,p){const ordered=numbers.slice().sort((a,b)=>a-b);return ordered[Math.ceil(p*ordered.length)-1];}
+  const summary=[true,false].map(indexedDB=>{
+   const runs=cacheComparison.filter(arm=>arm.indexedDB===indexedDB);
+   const phases=Object.fromEntries(['cold','warm','invalidated'].map(phase=>[phase,Object.fromEntries(['usableMs','completeMs'].map(metric=>{
+    const values=runs.map(run=>run[phase][metric]);return [metric,{p50:percentile(values,.5),p95:percentile(values,.95)}];
+   }))]));
+   return {indexedDB,samples:runs.length,succeeded:runs.length,phases,requests:runs.map(run=>run.requests),reads:runs.map(total),bytes:runs.map(run=>run.bytes)};
+  });
+  console.log('Cache A/B (synthetic): '+JSON.stringify(summary));
+  fs.writeFileSync(path.join(output,'cache-comparison.json'),JSON.stringify({fixtureOnly:true,productionClaim:false,summary,samples:cacheComparison},null,2));
  });
  assert.deepEqual(errors,[]);assert.equal(store.commits.length,0);
  assert(!store.calls.some(x=>['patch','delete'].includes(x.options.method)||x.url.endsWith(':commit')));

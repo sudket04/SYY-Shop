@@ -589,9 +589,18 @@ function syyDrainReads(pool){
 function syyFenceReadPool(){var pool=syyReadCoordinator();pool.generation=(pool.generation||0)+1;}
 // A browser timeout does not cancel GAS. Keep its physical slot and coalesce
 // retries until the actual reply, including reads from another same-origin page.
-function syyScheduleRead(key,dispatch,listener,background,recovery){
+function syyReadTransportStats(pool,operation){
+  var stats=pool.transports||(pool.transports=new Map());
+  if(!stats.has(operation)){
+    if(stats.size>=100)stats.delete(stats.keys().next().value);
+    stats.set(operation,{started:0,settled:0,errors:0,joined:0});
+  }
+  return stats.get(operation);
+}
+function syyScheduleRead(key,dispatch,listener,background,recovery,operation){
   var pool=syyReadCoordinator(),existing=pool.pending.get(key);
-  if(existing){existing.listeners.push(listener);if(existing.started)listener.started();if(!background)existing.task.background=false;syyDrainReads(pool);return;}
+  var stats=syyReadTransportStats(pool,operation);
+  if(existing){stats.joined++;existing.listeners.push(listener);if(existing.started)listener.started(existing.traceId);if(!background)existing.task.background=false;syyDrainReads(pool);return;}
   var entry={listeners:[listener]};pool.pending.set(key,entry);
   entry.task=function(){
     entry.listeners=entry.listeners.filter(function(item){return item.valid();});
@@ -600,14 +609,16 @@ function syyScheduleRead(key,dispatch,listener,background,recovery){
     // restart the operation here and never apply this watchdog to writes.
     // The shell owns the timer so replacing a child frame cannot orphan slots.
     var clock=pool.owner||window;
-    pool.active++;entry.started=true;entry.startedAt=clock.Date.now();
-    entry.listeners.forEach(function(item){item.started();});var finished=false;
-    var watchdog=clock.setTimeout(function(){finish(false,{timeout:true,message:'การเชื่อมต่อไม่ตอบกลับ กรุณาเปิดหน้าใหม่'});},370000);
+    pool.active++;stats.started++;entry.started=true;entry.startedAt=clock.Date.now();
+    entry.traceId=typeof crypto!=='undefined'&&typeof crypto.randomUUID==='function'?crypto.randomUUID():entry.startedAt.toString(36)+'-'+Math.random().toString(36).slice(2);
+    entry.listeners.forEach(function(item){item.started(entry.traceId);});var finished=false;
+    var watchdog=clock.setTimeout(function(){finish(false,{timeout:true,code:'READ_TIMEOUT',message:'การเชื่อมต่อไม่ตอบกลับ กรุณาเปิดหน้าใหม่'});},370000);
     function finish(ok,value){
       if(finished)return;finished=true;clock.clearTimeout(watchdog);pool.pending.delete(key);pool.active--;if(pool.active<3)pool.recoveryUsed=false;
+      stats.settled++;if(!ok||value&&value.success===false&&!value.fullRefresh)stats.errors++;
       try{entry.listeners.forEach(function(item,i){try{item.reply(ok,ok&&value!==undefined&&i<entry.listeners.length-1?JSON.parse(JSON.stringify(value)):value);}catch(error){setTimeout(function(){throw error;},0);}});}finally{syyDrainReads(pool);}
     }
-    try{dispatch(function(value){finish(true,value);},function(error){finish(false,error);});}catch(error){finish(false,error);}
+    try{dispatch(function(value){finish(true,value);},function(error){finish(false,error);},entry.traceId);}catch(error){finish(false,error);}
   };
   entry.task.background=!!background;entry.task.recovery=!!recovery;pool.queue.push(entry.task);syyDrainReads(pool);
 }
@@ -626,8 +637,13 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOption
   requestOptions=requestOptions||{};
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
   var done=false,timer=null,retryTimer=null,createdAt=Date.now(),rpcDispatched=false,queueAt=createdAt,queueMs=0,dispatchAt=createdAt,transportMs=0,attempt=0,isRead=/^(get|fetch)/.test(fnName);
+  var phase='queue',traceId='';
+  function timing(){
+    var now=Date.now();
+    return {queueMs:queueMs+(phase==='queue'?now-queueAt:0),transportMs:transportMs+(phase==='transport'?now-dispatchAt:0),traceId:traceId};
+  }
   function settled(failed){if(done)return false;done=true;clearTimeout(timer);clearTimeout(retryTimer);syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&isRead)syyUxLoaded=Date.now();syyUxStatus();return true;}
-  function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,code:error.code||'READ_FAILED',dispatched:rpcDispatched,retryable:error.retryable===true,retryAfterMs:Number(error.retryAfterMs)||0,restartPage:error.restartPage===true,timeout:error.timeout===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
+  function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,code:error.code||'READ_FAILED',dispatched:rpcDispatched,retryable:error.retryable===true,retryAfterMs:Number(error.retryAfterMs)||0,restartPage:error.restartPage===true,timeout:error.timeout===true,timing:isRead?timing():undefined});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
   function valid(){
     if(done)return false;
     if(typeof requestOptions.mayRun==='function'&&!requestOptions.mayRun()){fail({code:'READ_SUPERSEDED',message:'คำขอนี้ถูกแทนที่ด้วยข้อมูลล่าสุดแล้ว'});return false;}
@@ -636,7 +652,8 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOption
   function expired(){if(!settled(true))return;syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});}
   if(!token){expired();return;}
   if(isRead)timer=setTimeout(function(){
-    fail({timeout:true,code:rpcDispatched?'READ_TIMEOUT':'READ_QUEUE_TIMEOUT',message:rpcDispatched?'เซิร์ฟเวอร์ยังไม่ส่งข้อมูล กรุณาลองอีกครั้ง':'คำขอยังรอคิว กรุณาลองอีกครั้ง'});
+    var waiting=phase==='queue';
+    fail({timeout:true,code:waiting?'READ_QUEUE_TIMEOUT':'READ_TIMEOUT',message:waiting?'คำขอยังรอคิว กรุณาลองอีกครั้ง':'เซิร์ฟเวอร์ยังไม่ส่งข้อมูล กรุณาลองอีกครั้ง'});
   },45000);
   function reply(ok,res){
     if(done)return;
@@ -650,14 +667,14 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOption
       if(!attempt&&res.retryable===true&&['CACHE_BUILDING','READ_BUSY','AUTH_UNAVAILABLE'].indexOf(res.code)>=0&&!(clientCache&&clientCache.refresh)&&Date.now()-createdAt+delay<40000){attempt++;retryTimer=setTimeout(execute,delay);return;}
       fail(res);return;
     }
-    settled(res&&res.success===false);if(onSuccess)onSuccess(res,isRead?{queueMs:queueMs,transportMs:transportMs}:undefined);
+    settled(res&&res.success===false);if(onSuccess)onSuccess(res,isRead?timing():undefined);
   }
   function execute(){
     if(!valid())return;
-    queueAt=Date.now();
-    function started(){rpcDispatched=true;dispatchAt=Date.now();queueMs+=dispatchAt-queueAt;}
-    function dispatch(ok,failed){rpcDispatched=true;google.script.run.withSuccessHandler(ok).withFailureHandler(failed).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);}
-    if(isRead){var key=JSON.stringify([token,fnName,args||[],clientCache||null,syyReadCoordinator().generation||0]);syyScheduleRead(key,dispatch,{valid:valid,reply:function(ok,result){transportMs+=Date.now()-dispatchAt;reply(ok,result);},started:started},requestOptions.background,syyCanRecoverRead(fnName,args)&&!(clientCache&&clientCache.refresh));}
+    queueAt=Date.now();phase='queue';
+    function started(id){traceId=id;rpcDispatched=true;dispatchAt=Date.now();queueMs+=dispatchAt-queueAt;phase='transport';}
+    function dispatch(ok,failed,id){rpcDispatched=true;var metadata=id?Object.assign({},clientCache,{traceId:id}):clientCache;google.script.run.withSuccessHandler(ok).withFailureHandler(failed).apiGateway(token,fnName,args||[],navigator.userAgent,metadata);}
+    if(isRead){var key=JSON.stringify([token,fnName,args||[],clientCache||null,syyReadCoordinator().generation||0]);syyScheduleRead(key,dispatch,{valid:valid,reply:function(ok,result){transportMs+=Date.now()-dispatchAt;phase='response';reply(ok,result);},started:started},requestOptions.background,syyCanRecoverRead(fnName,args)&&!(clientCache&&clientCache.refresh),fnName);}
     else try{dispatch(function(res){reply(true,res);},function(error){reply(false,error);});}catch(error){if(done)throw error;fail(error);}
   }
   execute();
@@ -917,7 +934,7 @@ function callApi(fnName,args,onSuccess,onFailure,options){
  listeners=[{ok:onSuccess,fail:onFailure}];syyPendingReads.set(pendingKey,listeners);var rpcStarted=Date.now(),measured=false,fenceKey=key+':'+identity,requestSequence=++syyReadSequence;
  syyReadLatest.delete(fenceKey);syyReadLatest.set(fenceKey,requestSequence);while(syyReadLatest.size>200)syyReadLatest.delete(syyReadLatest.keys().next().value);
  var rpcTiming={};function measure(failed){if(measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0,slowCount:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.slowCount=(m.slowCount||0)+(m.lastMs>=3000?1:0);m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);m.samples=(m.samples||[]).concat([Object.assign({totalMs:m.lastMs,failed:!!failed},rpcTiming)]).slice(-20);var sorted=m.samples.map(function(x){return x.totalMs;}).sort(function(a,b){return a-b;});m.p50Ms=sorted[Math.ceil(sorted.length*.5)-1];m.p95Ms=sorted[Math.ceil(sorted.length*.95)-1];}
- function failed(error){if(error&&error.dispatched===false)syyCacheStats.cancelled=(syyCacheStats.cancelled||0)+1;else measure(true);syyPendingReads.delete(pendingKey);if(error&&error.code!=='READ_SUPERSEDED'&&typeof syyReportReadState==='function')syyReportReadState(false,error,options.background);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
+ function failed(error){if(error&&error.timing)Object.assign(rpcTiming,error.timing);if(error&&error.code)rpcTiming.code=error.code;if(error&&error.dispatched===false&&!error.timeout)syyCacheStats.cancelled=(syyCacheStats.cancelled||0)+1;else measure(true);syyPendingReads.delete(pendingKey);if(error&&error.code!=='READ_SUPERSEDED'&&typeof syyReportReadState==='function')syyReportReadState(false,error,options.background);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
  syyCallApiRaw(fnName,args,function(data,transport){
    if(transport)Object.assign(rpcTiming,transport);
    syyEnsureCacheIdentity();
