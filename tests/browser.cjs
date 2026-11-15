@@ -216,6 +216,29 @@ async function main(){
     assert.equal(await p.locator('#dashHealthPageLabel').innerText(),'3 / 3');assert.match(await p.locator('#dashHealthBody').innerText(),/AUDIT100/);
     assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Loading resilience: Dashboard preview updates local product changes without reloading history',async()=>{
+    const p=await pageFor('index.html');
+    await p.evaluate(()=>{syyClearReadCache();DASH.loaded=false;DASH.restoredCatalogSection=null;apiHold='getDashboardBootstrap';dashLoad();});
+    await p.waitForFunction(()=>DASH.catalogPreview&&apiPending.length===1);
+    const before=await p.evaluate(()=>apiCalls.length);
+    await p.evaluate(()=>{applyDashboardProductDelta({...fixtureProduct,productName:'Updated while loading'},false);applyDashboardProductDelta({...fixtureProduct,id:'P2',productCode:'P2',productName:'New while loading'},false);});
+    assert.match(await p.locator('#dashHealthBody').innerText(),/Updated while loading/);assert.match(await p.locator('#dashHealthBody').innerText(),/New while loading/);
+    await p.evaluate(()=>applyDashboardProductDelta({productCode:'P1'},true));
+    assert.doesNotMatch(await p.locator('#dashHealthBody').innerText(),/Updated while loading/);
+    assert.equal(await p.evaluate(()=>apiCalls.length),before);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: a queued Dashboard year change survives a failed bootstrap and retains explicit refresh',async()=>{
+    const p=await pageFor('index.html');
+    await p.evaluate(()=>{apiHold='getDashboardBootstrap';dashOnYearSel(DASH.loadedYear-1);dashOnYearSel(DASH.loadedYear-2);dashLoad(true);});
+    await p.waitForFunction(()=>apiPending.length===1);
+    const desired=await p.evaluate(()=>DASH.loadedYear-2);
+    await p.evaluate(()=>{apiFailure='getDashboardBootstrap';apiPending.shift()();apiFailure='';});
+    await p.waitForFunction(()=>apiPending.length===1,null,{timeout:10000});
+    assert.deepEqual(await p.evaluate(()=>{const options=apiCalls.filter(item=>item.fn==='getDashboardBootstrap').at(-1).args[0];return [options.year,options.force];}),[desired,true]);
+    await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForFunction(year=>DASH.loadedYear===year&&!DASH.loading,desired);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(item=>item.fn==='getDashboardBootstrap').length),3);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
   await check('Loading resilience: same-origin menu requests share the shell concurrency pool',async()=>{
     const p=await pageFor('index.html');await p.evaluate(()=>{
       window.poolReplies=[];google.script.run={withSuccessHandler(ok){return {withFailureHandler(){return {apiGateway(){poolReplies.push(ok);}};}};}};

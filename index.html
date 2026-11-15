@@ -600,6 +600,7 @@
     }
     allProducts=DASH.products;
     if(DASH.loaded){dashBuildAggregates();dashRenderAll();}
+    else if(DASH.catalogPreview){DASH.previewSource=null;dashRenderCatalogPreview();}
     dashUpdateSidebarBadges();
   }
 
@@ -822,7 +823,7 @@
     document.querySelectorAll('.form-wrapper').forEach(function(f){ f.classList.remove('active'); });
 
     if(isHome){
-      if(!DASH.loaded)dashLoad();
+      if(!DASH.loaded&&!DASH.loading)dashLoad();
       return;
     }
     var frame=document.getElementById('iframe-'+id);
@@ -988,7 +989,7 @@
       btnDone(btn);
       DASH.loading=false;
       data = data||{};
-      if(requestedYear!==DASH.year){DASH.reloadRequested=false;dashLoad();return;}
+      if(requestedYear!==DASH.year){runQueuedReload();return;}
       DASH.loadedYear=requestedYear;DASH.rangeStart=data.rangeStart;DASH.healthRangeStart=data.healthRangeStart;
       if(DASH.catalogPreview&&DASH.previewInteracted){
         // Search input can change just before the debounce runs.
@@ -1015,14 +1016,27 @@
       var renderStarted=performance.now();
       if(!hadData||!readInfo||!readInfo.notModified){dashBuildAggregates();dashUpdateSidebarBadges();dashRenderAll();}
       dashLoadingState(false);syyRecordViewTiming('dashboard',started,renderStarted,DASH.products.length);
-      if(DASH.reloadRequested){DASH.reloadRequested=false;var queuedForce=!!DASH.forceReload;DASH.forceReload=false;setTimeout(function(){dashLoad(queuedForce);},0);}else if(DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
+      if(!runQueuedReload()&&DASH.pendingDelta){DASH.pendingDelta=false;setTimeout(dashRefreshDelta,0);}
       }catch(error){failed(error);}
     },failed);
+    function runQueuedReload(){
+      if(!DASH.reloadRequested&&requestedYear===DASH.year)return false;
+      var queuedForce=!!DASH.forceReload;
+      DASH.reloadRequested=false;DASH.forceReload=false;
+      setTimeout(function(){dashLoad(queuedForce);},0);
+      return true;
+    }
     function failed(err){
       btnDone(btn);
-      DASH.loading=false;DASH.reloadRequested=false;DASH.forceReload=false;DASH.pendingDelta=false;dashLoadingState(false);
+      DASH.loading=false;DASH.pendingDelta=false;dashLoadingState(false);
+      var reloading=runQueuedReload();
       document.getElementById('lastUpdated').innerText=DASH.loaded?'โหลดไม่สำเร็จ · แสดงข้อมูลล่าสุดที่โหลดสำเร็จ':'โหลดข้อมูลไม่สำเร็จ';
-      if(DASH.loaded) {DASH.year=DASH.loadedYear||DASH.year;dashRenderAll();return;}
+      if(DASH.loaded) {
+        var nextYear=DASH.year;
+        DASH.year=DASH.loadedYear||DASH.year;dashRenderAll();
+        if(reloading)DASH.year=nextYear;
+        return;
+      }
       if(DASH.catalogPreview){
         dashInitialState(true);dashCatalogPreview(DASH.products,true);dashLoadingState(false);
         document.getElementById('lastUpdated').textContent='แสดงเฉพาะสินค้า · ประวัติและยอดสรุปยังโหลดไม่สำเร็จ กรุณากดรีเฟรช';
