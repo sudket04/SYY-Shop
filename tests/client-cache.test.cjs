@@ -49,7 +49,9 @@ function browser(){
   syyIdentity:()=>id,syyFreshState:null,syyTrustedParentMessage:e=>e.trusted===true,syyPostParent:()=>{},syyPostFrame:()=>{},syyUxStatus:()=>{},syyUxLoaded:0,
   swyError:()=>{},esc:x=>x,syyErrorMessage:e=>e.message,setTimeout:fn=>timers.push(fn),document:{addEventListener:()=>{},querySelectorAll:()=>[]},window:{addEventListener:(name,fn)=>{events[name]=fn;}},
   syyCallApiRaw:(fn,args,ok,fail,transport)=>calls.push({fn,args,ok,fail,transport})};
- vm.createContext(c);vm.runInContext(source.slice(source.indexOf('// Bounded business-data cache.'),source.indexOf('/* UI state is local')),c);
+ vm.createContext(c);
+ vm.runInContext(source.slice(source.indexOf('var syyReadPool='),source.indexOf('// A browser timeout')),c);
+ vm.runInContext(source.slice(source.indexOf('// Bounded business-data cache.'),source.indexOf('/* UI state is local')),c);
  return {c,calls,storage,events,tick(ms){now+=ms;},flush(){while(timers.length)timers.shift()();},identity(value){id=value;},read(fn,args=[],opts){let value,error;c.callApi(fn,args,x=>value=x,e=>error=e,opts);return {get value(){return value;},get error(){return error;}};},complete(data,version='v1'){const last=calls.at(-1);last.ok({__syyCache:1,data,version});}};
 }
 test('ten identical reads make one RPC; callbacks receive isolated snapshots',()=>{

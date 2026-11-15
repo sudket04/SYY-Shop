@@ -242,11 +242,19 @@
 
   function redirectToHome(token){
     var url=WEB_APP_URL+'?page=home&token='+encodeURIComponent(token)+'&ua='+encodeURIComponent(navigator.userAgent);
-    try{window.top.location.href=url;}catch(error){
-      // HtmlService can reject top navigation after an asynchronous login.
-      // Navigate this frame instead; doGet still validates the session and UA.
-      window.location.replace(url);
-    }
+    // GAS may require a fresh user gesture after the asynchronous login. Never
+    // navigate the inner frame: that nests another GAS shell and breaks menus.
+    var box=document.getElementById('loginContinue');
+    if(!box){box=document.createElement('div');box.id='loginContinue';box.setAttribute('role','status');document.querySelector('.login-box').appendChild(box);}
+    box.replaceChildren();
+    var message=document.createElement('p'),link=document.createElement('a');
+    message.textContent='เข้าสู่ระบบสำเร็จ หากระบบยังไม่เปลี่ยนหน้า กดเข้าสู่ระบบด้านล่าง';
+    link.className='btn-login';link.textContent='เข้าสู่ระบบร้านค้า';link.href=url;link.target='_top';link.rel='noreferrer';
+    box.append(message,link);
+    document.querySelectorAll('.view').forEach(function(view){view.classList.remove('active');});
+    document.querySelectorAll('input[type="password"]').forEach(function(input){input.value='';});
+    pendingPassword='';pendingTempToken='';
+    try{window.top.location.href=url;}catch(error){link.focus();}
   }
 
   // ตรวจสอบ token จากลิงก์อีเมลทันทีตอนโหลดหน้า (ถ้ามี)

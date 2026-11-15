@@ -43,8 +43,11 @@ var SYYFrameBridge=(function(){
   });
   syyOnReady(function(){
     announce();
-    if(channel&&window.parent!==window)[500,1500,4000].forEach(function(ms){timers.push(setTimeout(function(){if(!acknowledged)announce();},ms));});
+    // Retry the handshake (not data RPCs) through the shell's opening deadline.
+    // A delayed parent or suspended tab must not leave a rendered page hidden.
+    if(channel&&window.parent!==window)[500,1500,4000,8000,15000,25000].forEach(function(ms){timers.push(setTimeout(function(){if(!acknowledged)announce();},ms));});
   });
+  window.addEventListener('pageshow',function(){if(!acknowledged)announce();});
   function data(ok,code){
     if(dataDone)return;if(ok)dataDone=true;
     lastData={action:ok?'PAGE_DATA_READY':'PAGE_DATA_ERROR',elapsedMs:Math.min(3600000,Math.max(0,Date.now()-started)),code:ok?'':/^[A-Z_]{1,40}$/.test(code||'')?code:'READ_FAILED'};

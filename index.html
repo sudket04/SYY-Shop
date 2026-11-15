@@ -767,7 +767,7 @@
   }
   function syyFrameOpened(frame){
     syyFrameTrace(frame,'ui-ready');
-    clearTimeout(frame.syyOpenTimer);frame.dataset.ready='true';frame.classList.remove('syy-frame-pending');
+    clearTimeout(frame.syyOpenTimer);clearTimeout(frame.syySlowTimer);frame.dataset.ready='true';frame.classList.remove('syy-frame-pending');
     if(frame.syyStatus)frame.syyStatus.hidden=true;
   }
   function syyOpenFrame(frame,retry){
@@ -777,7 +777,7 @@
       delete frame.syyReceiver;delete frame.syyOrigin;
       if(frame.id==='iframe-stockissue')stockIssueReady=false;if(frame.id==='iframe-products')productsReady=false;if(frame.id==='iframe-taxinvoice')taxInvoiceReady=false;
     }
-    clearTimeout(frame.syyOpenTimer);frame.dataset.ready='false';frame.classList.add('syy-frame-pending');
+    clearTimeout(frame.syyOpenTimer);clearTimeout(frame.syySlowTimer);frame.dataset.ready='false';frame.classList.add('syy-frame-pending');
     frame.syyTrace={route:frame.id.replace('iframe-',''),started:performance.now(),state:'opening',uiMs:null,dataMs:null,code:''};
     syyPageDiagnostics.push(frame.syyTrace);if(syyPageDiagnostics.length>20)syyPageDiagnostics.shift();
     var status=frame.syyStatus;
@@ -786,10 +786,14 @@
       status.syyTitle=document.createElement('strong');status.syyMessage=document.createElement('span');status.syyRetry=document.createElement('button');status.syyRetry.type='button';status.syyRetry.className='btn btn-primary';status.syyRetry.textContent='ลองเปิดหน้านี้อีกครั้ง';
       status.syySkeleton=document.createElement('div');status.syySkeleton.style.cssText='width:min(960px,100%);max-height:65vh;overflow:hidden';status.syySkeleton.innerHTML=skeletonBlock('detail',6);
       status.syyRetry.addEventListener('click',function(){syyOpenFrame(frame,true);});status.append(status.syyTitle,status.syyMessage,status.syySkeleton,status.syyRetry);frame.parentElement.appendChild(status);
+      status.syyDirect=document.createElement('a');status.syyDirect.className='btn btn-ghost';status.syyDirect.textContent='เปิดหน้านี้โดยตรง';status.syyDirect.target='_blank';status.syyDirect.rel='noopener noreferrer';status.appendChild(status.syyDirect);
     }
+    var direct=new URL(frame.dataset.src,location.href);direct.searchParams.delete('channel');direct.searchParams.delete('parentOrigin');status.syyDirect.href=direct.href;status.syyDirect.hidden=true;
     status.hidden=false;status.syyRetry.hidden=true;status.syySkeleton.hidden=false;status.syyTitle.textContent='กำลังเปิดหน้า '+(LABEL_OF[frame.id.replace('iframe-','')]||'');status.syyMessage.textContent='กรุณารอสักครู่…';
-    function delayed(code){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);var unavailable=code==='AUTH_UNAVAILABLE';syyFrameTrace(frame,'open-error',code);status.syyTitle.textContent=unavailable?'ยังตรวจสอบการเชื่อมต่อไม่ได้':'ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent=unavailable?'ระบบตรวจบัญชีไม่พร้อมชั่วคราว กรุณาลองเปิดหน้าอีกครั้ง':'ใช้เวลานานกว่าปกติหรือการเชื่อมต่อขัดข้อง สามารถลองเปิดหน้านี้อีกครั้งได้';status.syyRetry.hidden=false;status.syySkeleton.hidden=true;}
+    function delayed(code){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);clearTimeout(frame.syySlowTimer);var unavailable=code==='AUTH_UNAVAILABLE';syyFrameTrace(frame,'open-error',code);status.syyTitle.textContent=unavailable?'ยังตรวจสอบการเชื่อมต่อไม่ได้':'ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent=unavailable?'ระบบตรวจบัญชีไม่พร้อมชั่วคราว กรุณาลองเปิดหน้าอีกครั้ง':'เปิดผ่านเมนูไม่สำเร็จ ลองเปิดหน้าโดยตรง หรือลองเมนูนี้อีกครั้ง';status.syyRetry.hidden=false;status.syyDirect.hidden=false;status.syySkeleton.hidden=true;}
     frame.syyDelayed=delayed;frame.onerror=function(){delayed('FRAME_ERROR');};frame.syyOpenTimer=setTimeout(function(){delayed('FRAME_TIMEOUT');},30000);
+    frame.onload=function(){if(frame.syyTrace)frame.syyTrace.frameLoadMs=Math.max(0,Math.round(performance.now()-frame.syyTrace.started));};
+    frame.syySlowTimer=setTimeout(function(){if(frame.dataset.ready!=='true'){status.syyMessage.textContent='กำลังรอเปิดหน้า สามารถเปิดหน้านี้โดยตรงได้';status.syyDirect.hidden=false;}},10000);
     frame.src=frame.dataset.src;
   }
   function switchPage(id,fromHistory){
@@ -913,17 +917,46 @@
     document.querySelectorAll('#headActions button:not(#btnRefresh),#headActions select,#dashHealthCard input,#dashHealthCard select,#dashHealthCard button:not(#dashHealthPrev):not(#dashHealthNext)').forEach(function(el){el.disabled=!DASH.loaded;});
   }
 
+  // Make stock rows usable before the historical analytics finish. These are
+  // authenticated current catalog rows, never inferred sales/aging totals.
+  function dashCatalogPreview(products,failed){
+    DASH.catalogPreview=true;DASH.products=products;allProducts=products;
+    var pending=failed?'โหลดประวัติไม่สำเร็จ':'กำลังโหลด';
+    var cells=function(value){return '<td style="padding:10px 14px">'+esc(value)+'</td>';};
+    document.getElementById('dashHealthBody').innerHTML=products.slice(0,50).map(function(p){
+      return '<tr>'+cells(p.productCode)+cells(p.productName)+cells(p.categoryName||'')+cells(num(p.currentStock))+cells(num(p.minStock))+
+        cells(pending)+cells('฿'+Math.round(num(p.currentStock)*num(p.costPrice)).toLocaleString())+cells(pending)+cells(failed?pending:'กำลังโหลดประวัติ')+
+        '<td><button class="btn btn-icon view" title="ดูข้อมูล" onclick="openView(\''+escJs(p.productCode)+'\')">🔍</button></td></tr>';
+    }).join('')||emptyStateHtml(DASH_COLS.length,{title:'ยังไม่มีข้อมูลสินค้า'});
+    document.getElementById('lastUpdated').textContent='สินค้า '+products.length.toLocaleString()+' รายการพร้อมแล้ว · กำลังโหลดประวัติและสรุปยอด';
+    document.getElementById('dashHealthTabs').textContent='แสดงสินค้าชุดแรก '+Math.min(50,products.length)+' จาก '+products.length.toLocaleString()+' รายการ · ยังไม่ใช้ตัวกรองประวัติ';
+    document.getElementById('dashHealthBody').setAttribute('aria-label','รายการสินค้าชุดแรก · ยังไม่ใช่ผลกรองหรือสรุปประวัติ');
+  }
+  function dashRequestBootstrap(options,success,failure){
+    if(DASH.loaded||DASH.restoredCatalogSection){callApi('getDashboardBootstrap',[options],success,failure);return;}
+    callApi('getAllProducts',[{compact:true}],function(products){
+      if(!Array.isArray(products)){failure({message:'รูปแบบข้อมูลสินค้าไม่ถูกต้อง'});return;}
+      dashCatalogPreview(products);
+      // Reuse the exact version/age just validated by the gateway. The history
+      // bootstrap rechecks it and returns replacements if it changed meanwhile.
+      syyRestoreCatalog(function(saved){
+        if(saved){DASH.restoredCatalogSection=saved.section;options.catalogSection=saved.section;}
+        callApi('getDashboardBootstrap',[options],success,failure);
+      });
+    },failure);
+  }
+
   function dashLoad(force){
     if(!DASH.loaded&&!DASH.catalogPrepared){DASH.catalogPrepareForce=DASH.catalogPrepareForce||force===true;if(DASH.catalogPreparing)return;DASH.catalogPreparing=true;syyRestoreCatalog(function(saved){DASH.catalogPreparing=false;DASH.catalogPrepared=true;if(saved){DASH.products=saved.products;DASH.restoredCatalogSection=saved.section;}dashLoad(!!DASH.catalogPrepareForce);});return;}
     if(DASH.loading){DASH.reloadRequested=true;DASH.forceReload=DASH.forceReload||force===true;return;}
     DASH.loading=true;DASH.nextReconcile=Date.now()+DASH_RECONCILE_MS;
     var btn=document.getElementById('btnRefresh');
     btnBusy(btn,'กำลังโหลด...');
-    if(!DASH.loaded)dashInitialState(false);
+    if(!DASH.loaded){dashInitialState(false);if(DASH.catalogPreview)dashCatalogPreview(DASH.products);}
     dashLoadingState(true);
     var started=performance.now(),hadData=DASH.loaded;
     var requestedYear=DASH.year;
-    callApi('getDashboardBootstrap', [{year:requestedYear,force:force===true,compactCatalog:true,compactMovements:true,includePoVendorMap:false,catalogSection:DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection}], function(data, readInfo){
+    dashRequestBootstrap({year:requestedYear,force:force===true,compactCatalog:true,compactMovements:true,includePoVendorMap:false,catalogSection:DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection}, function(data, readInfo){
       try{
       var held=DASH.loaded?DASH.catalogSection:DASH.restoredCatalogSection;
       if(!data||!Array.isArray(data.movements)||(!Array.isArray(data.products)&&!(Array.isArray(DASH.products)&&held&&data.catalogSection&&held.version===data.catalogSection.version&&held.loadedAt===data.catalogSection.loadedAt))){syyInvalidateReadScopes(['Master_Products','Stock_Movements','Purchase_Orders'],false);throw Error('รูปแบบข้อมูล Dashboard ไม่ถูกต้อง กรุณาลองอีกครั้ง');}
@@ -932,6 +965,7 @@
       data = data||{};
       if(requestedYear!==DASH.year){DASH.reloadRequested=false;dashLoad();return;}
       DASH.loadedYear=requestedYear;DASH.rangeStart=data.rangeStart;DASH.healthRangeStart=data.healthRangeStart;
+      DASH.catalogPreview=false;document.getElementById('dashHealthBody').removeAttribute('aria-label');
       if(data.products)DASH.products=data.products;
       if(data.catalogSection)DASH.catalogSection=data.catalogSection;
       DASH.catalogVersion=data.catalogVersion;
@@ -955,6 +989,11 @@
       DASH.loading=false;DASH.reloadRequested=false;DASH.forceReload=false;DASH.pendingDelta=false;dashLoadingState(false);
       document.getElementById('lastUpdated').innerText=DASH.loaded?'โหลดไม่สำเร็จ · แสดงข้อมูลล่าสุดที่โหลดสำเร็จ':'โหลดข้อมูลไม่สำเร็จ';
       if(DASH.loaded) {DASH.year=DASH.loadedYear||DASH.year;dashRenderAll();return;}
+      if(DASH.catalogPreview){
+        dashInitialState(true);dashCatalogPreview(DASH.products,true);dashLoadingState(false);
+        document.getElementById('lastUpdated').textContent='แสดงเฉพาะสินค้า · ประวัติและยอดสรุปยังโหลดไม่สำเร็จ กรุณากดรีเฟรช';
+        return;
+      }
       dashInitialState(true);
       document.getElementById('dashHealthBody').innerHTML=emptyStateHtml(DASH_COLS.length,{
         icon:'⚠️',title:'โหลดข้อมูลไม่สำเร็จ',sub:syyErrorMessage(err),

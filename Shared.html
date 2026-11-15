@@ -549,18 +549,50 @@ function syyShowSessionExpired(){
   box.addEventListener('keydown',function(event){event.stopPropagation();if(event.key==='Tab'){event.preventDefault();link.focus();}});
   document.addEventListener('focusin',function(event){if(box.isConnected&&!box.contains(event.target))link.focus();});link.focus();
 }
-/* A bounded local queue prioritizes the visible data over optional image work.
-   Writes bypass it and are never cancelled or automatically retried. */
-var syyReadQueue=[],syyActiveReads=0;
-function syyScheduleRead(run,background){
-  syyReadQueue.push({run:run,background:!!background});syyDrainReads();
-}
-function syyDrainReads(){
-  while(syyActiveReads<3&&syyReadQueue.length){
-    var index=syyReadQueue.findIndex(function(item){return !item.background;});
-    var item=syyReadQueue.splice(index<0?0:index,1)[0];syyActiveReads++;
-    (function(task){var released=false;task.run(function(){if(released)return;released=true;syyActiveReads=Math.max(0,syyActiveReads-1);syyDrainReads();});})(item);
+/* One pool per same-origin authenticated shell. Cross-origin wrappers are
+   traversed without relaxing postMessage validation; isolated pages stay local. */
+var syyReadPool={queue:[],active:0,pending:new Map(),owner:window};
+function syyReadCoordinator(){
+  var current=window,pool=null;
+  for(var depth=0;depth<8;depth++){
+    try{if(current!==window&&current.AUTH_TOKEN===AUTH_TOKEN&&current.syyReadPool)pool=current.syyReadPool;}catch(ignored){}
+    try{if(!current.parent||current.parent===current)break;current=current.parent;}catch(ignored){break;}
   }
+  if(pool)return pool;
+  if(!syyReadPool)syyReadPool={queue:[],active:0,pending:new Map(),owner:window};
+  return syyReadPool;
+}
+function syyDrainReads(pool){
+  while(pool.active<3&&pool.queue.length){
+    var index=pool.queue.findIndex(function(item){return !item.background;});
+    var task=pool.queue.splice(index<0?0:index,1)[0];task();
+  }
+}
+// A fresh read after a write/invalidation must never join an older transport.
+// Advancing the fence does not dispatch requests or release physical slots.
+function syyFenceReadPool(){var pool=syyReadCoordinator();pool.generation=(pool.generation||0)+1;}
+// A browser timeout does not cancel GAS. Keep its physical slot and coalesce
+// retries until the actual reply, including reads from another same-origin page.
+function syyScheduleRead(key,dispatch,listener,background){
+  var pool=syyReadCoordinator(),existing=pool.pending.get(key);
+  if(existing){existing.listeners.push(listener);if(existing.started)listener.started();if(!background)existing.task.background=false;return;}
+  var entry={listeners:[listener]};pool.pending.set(key,entry);
+  entry.task=function(){
+    entry.listeners=entry.listeners.filter(function(item){return item.valid();});
+    if(!entry.listeners.length){pool.pending.delete(key);return;}
+    pool.active++;entry.started=true;entry.listeners.forEach(function(item){item.started();});var finished=false;
+    // Release abandoned bookkeeping after the GAS execution ceiling. Never
+    // restart the operation here and never apply this watchdog to writes.
+    // The shell owns the timer so replacing a child frame cannot orphan slots.
+    var clock=pool.owner||window;
+    var watchdog=clock.setTimeout(function(){finish(false,{timeout:true,message:'การเชื่อมต่อไม่ตอบกลับ กรุณาเปิดหน้าใหม่'});},370000);
+    function finish(ok,value){
+      if(finished)return;finished=true;clock.clearTimeout(watchdog);pool.pending.delete(key);pool.active--;
+      try{entry.listeners.forEach(function(item,i){try{item.reply(ok,ok&&value!==undefined&&i<entry.listeners.length-1?JSON.parse(JSON.stringify(value)):value);}catch(error){setTimeout(function(){throw error;},0);}});}finally{syyDrainReads(pool);}
+    }
+    try{dispatch(function(value){finish(true,value);},function(error){finish(false,error);});}catch(error){finish(false,error);}
+  };
+  entry.task.background=!!background;pool.queue.push(entry.task);syyDrainReads(pool);
 }
 function syyReportReadState(ok,error,background){
   if(background||typeof SYYFrameBridge==='undefined')return;
@@ -569,27 +601,38 @@ function syyReportReadState(ok,error,background){
 function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOptions){
   requestOptions=requestOptions||{};
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
-  var done=false,timer=null,releaseRead=null,createdAt=Date.now(),rpcDispatched=false;
-  function settled(failed){if(done)return false;done=true;clearTimeout(timer);if(releaseRead)releaseRead();syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&/^(get|fetch)/.test(fnName))syyUxLoaded=Date.now();syyUxStatus();return true;}
+  var done=false,timer=null,retryTimer=null,createdAt=Date.now(),rpcDispatched=false,attempt=0,isRead=/^(get|fetch)/.test(fnName);
+  function settled(failed){if(done)return false;done=true;clearTimeout(timer);clearTimeout(retryTimer);syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&isRead)syyUxLoaded=Date.now();syyUxStatus();return true;}
   function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,code:error.code||'READ_FAILED',dispatched:rpcDispatched,retryable:error.retryable===true,retryAfterMs:Number(error.retryAfterMs)||0,restartPage:error.restartPage===true,timeout:error.timeout===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
+  function valid(){
+    if(done)return false;
+    if(typeof requestOptions.mayRun==='function'&&!requestOptions.mayRun()){fail({code:'READ_SUPERSEDED',message:'คำขอนี้ถูกแทนที่ด้วยข้อมูลล่าสุดแล้ว'});return false;}
+    return true;
+  }
   function expired(){if(!settled(true))return;syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});}
   if(!token){expired();return;}
-  // This only settles the browser read. GAS may finish later; late callbacks
-  // cannot overwrite a retry. Writes have no client deadline or automatic retry.
-  if(/^(get|fetch)/.test(fnName))timer=setTimeout(function(){fail({timeout:true,message:'รอข้อมูลเกิน 45 วินาที กรุณาลองอีกครั้ง'});},45000);
-  function execute(release){
-    releaseRead=release||null;
-    if(done){if(release)release();return;}
-    if(release&&typeof requestOptions.mayRun==='function'&&!requestOptions.mayRun()){fail({code:'READ_SUPERSEDED',message:'คำขอนี้ถูกแทนที่ด้วยข้อมูลล่าสุดแล้ว'});return;}
-    if(release&&Date.now()-createdAt>=45000){fail({timeout:true,message:'รอข้อมูลเกิน 45 วินาที กรุณาลองอีกครั้ง'});return;}
-    try{rpcDispatched=true;google.script.run.withSuccessHandler(function(res){
+  if(isRead)timer=setTimeout(function(){fail({timeout:true,message:'รอข้อมูลเกิน 45 วินาที กรุณาลองอีกครั้ง'});},45000);
+  function reply(ok,res){
     if(done)return;
+    if(!ok){fail(res);return;}
     if(res&&res.__authError){expired();return;}
-    if(res&&res.success===false&&/^(get|fetch)/.test(fnName)&&!(fnName==='getDashboardDelta'&&res.fullRefresh===true)){fail(res);return;}
+    if(isRead&&res&&res.success===false&&!(fnName==='getDashboardDelta'&&res.fullRefresh===true)){
+      // Retry one completed transient response only; nested cache waits may
+      // follow earlier reads, which reuse their caches. Never retry an unknown
+      // network outcome or restart a still-running producer/full scan.
+      var delay=Math.max(500,Math.min(3000,Number(res.retryAfterMs)||1000))+Math.floor(Math.random()*250);
+      if(!attempt&&res.retryable===true&&['CACHE_BUILDING','READ_BUSY','AUTH_UNAVAILABLE'].indexOf(res.code)>=0&&!(clientCache&&clientCache.refresh)&&Date.now()-createdAt+delay<40000){attempt++;retryTimer=setTimeout(execute,delay);return;}
+      fail(res);return;
+    }
     settled(res&&res.success===false);if(onSuccess)onSuccess(res);
-  }).withFailureHandler(fail).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);}catch(error){if(done)throw error;fail(error);}
   }
-  if(/^(get|fetch)/.test(fnName))syyScheduleRead(execute,requestOptions.background);else execute();
+  function execute(){
+    if(!valid())return;
+    function dispatch(ok,failed){rpcDispatched=true;google.script.run.withSuccessHandler(ok).withFailureHandler(failed).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);}
+    if(isRead){var key=JSON.stringify([token,fnName,args||[],clientCache||null,syyReadCoordinator().generation||0]);syyScheduleRead(key,dispatch,{valid:valid,reply:reply,started:function(){rpcDispatched=true;}},requestOptions.background);}
+    else try{dispatch(function(res){reply(true,res);},function(error){reply(false,error);});}catch(error){if(done)throw error;fail(error);}
+  }
+  execute();
 }
 
 // Fetch only requested pages; incomplete lists are visibly marked and cannot claim full totals.
@@ -741,11 +784,12 @@ function syyReadArgs(name,args){
 }
 function syyCachePrefix(){var id=syyIdentity();return id&&id.owner?'syy_data_v1:'+encodeURIComponent(id.owner)+':'+id.role+':'+encodeURIComponent(typeof WEB_APP_URL==='string'?WEB_APP_URL:location.origin+location.pathname)+':':null;}
 function syyCacheStorageKey(key){var hash=2166136261;for(var i=0;i<key.length;i++)hash=Math.imul(hash^key.charCodeAt(i),16777619);return syyCachePrefix()+String(hash>>>0);}
-function syyClearReadCache(){syyDiskCache.clear();syyReadCache.clear();syyReadLatest.clear();syyDirtyReadScopes.clear();syyLastCheckedAt=0;syyLastReadSource='';syyReadDirty=false;syyCacheScopes.forEach(function(scope){syyCacheEpochs[scope]=(syyCacheEpochs[scope]||0)+1;});try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(k.startsWith(prefix))sessionStorage.removeItem(k);});}catch(e){}}
+function syyClearReadCache(){syyFenceReadPool();syyDiskCache.clear();syyReadCache.clear();syyReadLatest.clear();syyDirtyReadScopes.clear();syyLastCheckedAt=0;syyLastReadSource='';syyReadDirty=false;syyCacheScopes.forEach(function(scope){syyCacheEpochs[scope]=(syyCacheEpochs[scope]||0)+1;});try{var prefix=syyCachePrefix();if(prefix)Object.keys(sessionStorage).forEach(function(k){if(k.startsWith(prefix))sessionStorage.removeItem(k);});}catch(e){}}
 function syyEnsureCacheIdentity(){var id=syyIdentity(),identity=JSON.stringify([id,typeof AUTH_TOKEN==='string'?AUTH_TOKEN:'']);if(identity!==syyCacheIdentity){syyDiskCache.clear();syyReadCache.clear();syyCacheScopes.forEach(function(s){syyCacheEpochs[s]=(syyCacheEpochs[s]||0)+1;});syyCacheIdentity=identity;syyDiskCache.connect();}return !!(id&&id.owner&&typeof AUTH_TOKEN==='string'&&AUTH_TOKEN&&!window.syyExpiryStarted);}
 function syyCacheEpoch(scopes){return scopes.map(function(s){return syyCacheEpochs[s]||0;}).join('|');}
 function syyInvalidateReadScopes(scopes,notify,preserveRevision){
  scopes=(scopes||[]).filter(function(s){return syyCacheScopes.includes(s);});if(!scopes.length)return;
+ syyFenceReadPool();
  syyDiskCache.invalidate(scopes,notify);
  scopes.forEach(function(s){syyCacheEpochs[s]=(syyCacheEpochs[s]||0)+1;});syyCacheStats.invalidations++;
  syyReadCache.forEach(function(record,key){if(record.scopes.some(function(s){return scopes.includes(s);}))syyReadCache.delete(key);});

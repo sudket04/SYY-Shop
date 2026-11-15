@@ -674,7 +674,7 @@ function withReadLease_(key,read,worker){
    if(claimed)return worker();
    Utilities.sleep(250);
   }
-  throw new Error('กำลังเตรียมข้อมูลสินค้า กรุณารอสักครู่แล้วลองใหม่');
+  var busy=new Error('กำลังเตรียมข้อมูล กรุณารอสักครู่');busy.code='CACHE_BUILDING';throw busy;
  }finally{
   if(claimed)try{withCacheGuard_(function(){var cache=CacheService.getScriptCache(),raw=cache.get(leaseKey);if(raw&&JSON.parse(raw).owner===owner)cache.remove(leaseKey);},function(){});}catch(e){}
  }
@@ -4486,8 +4486,8 @@ function apiGateway(token, fnName, args, userAgent, clientCache) {
 // and never rate-limits stock commits, permissions checks, or document saves.
 var lastReadRequestFailure_ = null;
 function readFailureResponse_(error){
- var code=error&&error.code==='AUTH_UNAVAILABLE'?'AUTH_UNAVAILABLE':'REQUEST_FAILED';
- return {success:false,code:code,retryable:code==='AUTH_UNAVAILABLE',retryAfterMs:code==='AUTH_UNAVAILABLE'?2000:0,message:code==='AUTH_UNAVAILABLE'?error.message:friendlyErrorMessage_(error),restartPage:!!(error&&error.restartPage===true)};
+ var code=error&&['AUTH_UNAVAILABLE','CACHE_BUILDING'].indexOf(error.code)>=0?error.code:'REQUEST_FAILED',retryable=code!=='REQUEST_FAILED';
+ return {success:false,code:code,retryable:retryable,retryAfterMs:retryable?2000:0,message:retryable?error.message:friendlyErrorMessage_(error),restartPage:!!(error&&error.restartPage===true)};
 }
 function readRequestFailure_(){return Object.assign({},lastReadRequestFailure_||{success:false,code:'READ_BUSY',retryable:true,retryAfterMs:1000,message:'ระบบกำลังให้บริการคำขออื่น กรุณาลองอีกครั้ง'});}
 function allowReadRequest_(name,username){

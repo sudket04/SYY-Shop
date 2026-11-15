@@ -94,7 +94,7 @@ async function main(){
     await page.waitForTimeout(100);
     // Wait for initial mock reads instead of assuming they finish within a
     // fixed delay on a busy host. Held-request tests use their own page setup.
-    await page.waitForFunction(()=>typeof syyUxBusy==='undefined'||syyUxBusy===0);
+    await page.waitForFunction(()=>(typeof syyUxBusy==='undefined'||syyUxBusy===0)&&(typeof DASH==='undefined'||(!DASH.loading&&!DASH.catalogPreparing)));
     return page;
   }
   let encountered=0;async function check(name,fn){encountered++;if(encountered<Number(process.env.BROWSER_TEST_START||1)||process.env.BROWSER_TEST_MATCH&&!name.includes(process.env.BROWSER_TEST_MATCH))return;await fn();cases++;console.log('PASS: '+name);}
@@ -168,6 +168,43 @@ async function main(){
     assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);
     assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Loading resilience: Dashboard exposes authenticated stock rows while historical analytics are pending',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{
+      syyClearReadCache();DASH.loaded=false;DASH.catalogPrepared=false;DASH.restoredCatalogSection=null;DASH.catalogPreview=false;
+      apiHold='getDashboardBootstrap';dashLoad();
+    });
+    await p.waitForFunction(()=>DASH.catalogPreview===true&&apiPending.length>0);
+    assert.match(await p.locator('#lastUpdated').innerText(),/สินค้า.*พร้อมแล้ว/);
+    assert.match(await p.locator('#dashHealthBody').innerText(),/Test Part/);assert.match(await p.locator('#dashHealthBody').innerText(),/กำลังโหลดประวัติ/);
+    assert.equal(await p.evaluate(()=>DASH.loaded),false);assert.equal(await p.locator('#dashHealthBody button').first().isEnabled(),true);
+    await p.evaluate(()=>{apiFailure='getDashboardBootstrap';apiPending.splice(0).forEach(fn=>fn());});
+    await p.waitForFunction(()=>!DASH.loading);assert.match(await p.locator('#dashHealthBody').innerText(),/Test Part/);assert.match(await p.locator('#dashHealthBody').innerText(),/โหลดประวัติไม่สำเร็จ/);assert.equal(await p.locator('#homeScreen .sk').count(),0);
+    await p.evaluate(()=>{apiFailure='';apiHold='';dashLoad();});await p.waitForFunction(()=>DASH.loaded&&!DASH.loading);
+    assert.equal(await p.locator('#dashHealthBody').getAttribute('aria-label'),null);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: same-origin menu requests share the shell concurrency pool',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{
+      window.poolReplies=[];google.script.run={withSuccessHandler(ok){return {withFailureHandler(){return {apiGateway(){poolReplies.push(ok);}};}};}};
+      ['getOne','getTwo','getThree'].forEach(fn=>syyCallApiRaw(fn,[],()=>{},()=>{}));
+    });
+    await p.locator('#menu-brands').click();await p.waitForFunction(()=>document.getElementById('iframe-brands').dataset.ready==='true');
+    const child=p.frames().find(f=>new URL(f.url()).searchParams.get('page')==='brands');await child.waitForFunction(()=>syyUxBusy>0);
+    assert.equal(await child.evaluate(()=>apiCalls.length),0);assert.equal(await p.evaluate(()=>syyReadCoordinator().active),3);
+    await p.evaluate(()=>poolReplies.shift()([]));await child.waitForFunction(()=>apiCalls.some(c=>c.fn==='getBrands')&&syyUxBusy===0);
+    await p.evaluate(()=>poolReplies.splice(0).forEach(ok=>ok([])));assert.equal(await p.evaluate(()=>syyReadCoordinator().active),0);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: invalidation never reuses an older in-flight response for a fresh read',async()=>{
+    const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{
+      syyClearReadCache();apiHold='getBrands';window.fencedValues=[];window.fencedFailures=[];
+      callApi('getBrands',[],rows=>fencedValues.push(rows),err=>fencedFailures.push(err));
+    });await p.waitForFunction(()=>apiPending.length===1,null,{timeout:10000});
+    await p.evaluate(()=>{
+      syyInvalidateReadScopes(['Master_Brands'],false);
+      callApi('getBrands',[],rows=>fencedValues.push(rows),err=>fencedFailures.push(err));
+    });await p.waitForFunction(()=>apiPending.length===2,null,{timeout:10000});
+    await p.evaluate(()=>{respond=()=>[{id:'OLD'}];apiPending[0]();});assert.equal(await p.evaluate(()=>fencedValues.length),0);assert.equal(await p.evaluate(()=>fencedFailures.length),1);
+    await p.evaluate(()=>{respond=()=>[{id:'NEW'}];apiPending[1]();});assert.deepEqual(await p.evaluate(()=>fencedValues),[[{id:'NEW'}]]);assert.deepEqual(p.errors,[]);await p.close();
+  });
   await check('Loading resilience: local confirmations work immediately when the dialog CDN is unavailable',async()=>{
     const p=await pageFor('StockIssue.html');await p.evaluate(()=>{delete window.Swal;window.localDecision=null;swyConfirm({title:'ทดสอบการยืนยัน',html:'ยังไม่มีการบันทึกข้อมูล'}).then(value=>localDecision=value);});
     const box=p.getByRole('alertdialog');await box.waitFor({state:'visible'});assert.equal(await p.evaluate(()=>localDecision),null);assert.equal(await box.getByRole('combobox').count(),0);
@@ -190,9 +227,9 @@ async function main(){
     await p.evaluate(()=>{window.dispatched=[];window.completeQueue={};google.script.run={withSuccessHandler(ok){return {withFailureHandler(fail){return {apiGateway(token,fn){dispatched.push(fn);completeQueue[fn]=()=>ok([]);}};}};}};
       ['getA','getB','getC'].forEach(fn=>syyCallApiRaw(fn,[],()=>{},()=>{}));syyCallApiRaw('getBackground',[],()=>{},()=>{},null,{background:true});syyCallApiRaw('getForeground',[],()=>{},()=>{});syyCallApiRaw('saveBrand',[],()=>{},()=>{});
     });
-    assert.deepEqual(await p.evaluate(()=>dispatched),['getA','getB','getC','saveBrand']);assert.equal(await p.evaluate(()=>syyActiveReads),3);
+    assert.deepEqual(await p.evaluate(()=>dispatched),['getA','getB','getC','saveBrand']);assert.equal(await p.evaluate(()=>syyReadCoordinator().active),3);
     await p.evaluate(()=>completeQueue.getA());assert.equal(await p.evaluate(()=>dispatched.at(-1)),'getForeground');
-    await p.evaluate(()=>{completeQueue.getB();completeQueue.getC();completeQueue.getForeground();completeQueue.getBackground();completeQueue.saveBrand();});assert.equal(await p.evaluate(()=>syyActiveReads),0);assert.equal(await p.evaluate(()=>syyReadQueue.length),0);assert.deepEqual(p.errors,[]);await p.close();
+    await p.evaluate(()=>{completeQueue.getB();completeQueue.getC();completeQueue.getForeground();completeQueue.getBackground();completeQueue.saveBrand();});assert.equal(await p.evaluate(()=>syyReadCoordinator().active),0);assert.equal(await p.evaluate(()=>syyReadCoordinator().queue.length),0);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Loading resilience: no routed page needs parser-blocking remote scripts or imported fonts',async()=>{
     for(const file of ['index.html','Master_Products.html','Master_Brands.html','Master_Cars.html','Master_Categories.html','Master_Customers.html','Master_Vendors.html','Master_Zones.html','StockIssue.html','Quotation.html','Purchase_Orders.html','Master_Tax_Invoice.html','Profile.html','Manage_Users.html','login.html']){
@@ -209,22 +246,22 @@ async function main(){
     const invoice=await pageFor('Master_Tax_Invoice.html');await invoice.evaluate(()=>{openViewModal('TX1');downloadInvoiceFile();});await invoice.waitForFunction(()=>!invoicePdfBusy&&alerts.some(x=>x.title==='ไม่สามารถโหลดตัวสร้าง PDF ได้'));assert.equal(await invoice.locator('#viewModal .btn-ghost[onclick="downloadInvoiceFile()"]').isDisabled(),false);assert.equal(await invoice.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);assert.deepEqual(invoice.errors,[]);await invoice.close();
     const profile=await pageFor('Profile.html','admin');await profile.evaluate(()=>renderQrCode('otpauth://totp/local-fixture?secret=FIXTUREONLY'));await profile.waitForFunction(()=>document.getElementById('qrCanvasHolder').textContent.includes('กรุณาใช้รหัสด้านล่าง'));assert.equal(await profile.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue|authStartTotp)/.test(x.fn))),false);assert.deepEqual(profile.errors,[]);await profile.close();
   });
-  await check('Loading resilience: expired queued reads do not dispatch, timeout frees capacity and late callbacks cannot overwrite retry',async()=>{
+  await check('Loading resilience: expired queued reads never dispatch and timed-out transports retain capacity until their actual reply',async()=>{
     const p=await pageFor('Master_Brands.html');await p.clock.install();
     await p.evaluate(()=>{window.dispatchNames=[];window.queueReplies={};window.queueFailures=[];window.queueValues=[];
       google.script.run={withSuccessHandler(ok){return {withFailureHandler(fail){return {apiGateway(token,fn){dispatchNames.push(fn);queueReplies[fn]=()=>ok([fn]);}};}};}};
       ['getHeld1','getHeld2','getHeld3','getExpiredQueue'].forEach(fn=>syyCallApiRaw(fn,[],value=>queueValues.push(value),e=>queueFailures.push(fn)));
     });
-    await p.clock.fastForward(45001);assert.equal(await p.evaluate(()=>syyActiveReads),0);assert.equal(await p.evaluate(()=>dispatchNames.includes('getExpiredQueue')),false);assert.equal(await p.evaluate(()=>queueFailures.length),4);
-    await p.evaluate(()=>{syyCallApiRaw('getExplicitRetry',[],v=>queueValues.push(v),e=>queueFailures.push('retry'));queueReplies.getExplicitRetry();queueReplies.getHeld1();});
-    assert.deepEqual(await p.evaluate(()=>queueValues),[['getExplicitRetry']]);assert.equal(await p.evaluate(()=>syyReadQueue.length),0);await p.clock.resume();assert.deepEqual(p.errors,[]);await p.close();
+    await p.clock.fastForward(45001);assert.equal(await p.evaluate(()=>syyReadCoordinator().active),3);assert.equal(await p.evaluate(()=>dispatchNames.includes('getExpiredQueue')),false);assert.equal(await p.evaluate(()=>queueFailures.length),4);
+    await p.evaluate(()=>{syyCallApiRaw('getExplicitRetry',[],v=>queueValues.push(v),e=>queueFailures.push('retry'));queueReplies.getHeld1();queueReplies.getExplicitRetry();queueReplies.getHeld2();queueReplies.getHeld3();});
+    assert.deepEqual(await p.evaluate(()=>queueValues),[['getExplicitRetry']]);assert.equal(await p.evaluate(()=>syyReadCoordinator().queue.length),0);await p.clock.resume();assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Loading resilience: superseded queued criteria are discarded before issuing an RPC',async()=>{
     const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{window.sentReads=[];window.readReleases={};window.currentCriteria=1;window.skippedRead=null;
       google.script.run={withSuccessHandler(ok){return {withFailureHandler(fail){return {apiGateway(token,fn){sentReads.push(fn);readReleases[fn]=()=>ok([]);}};}};}};
       ['getHoldA','getHoldB','getHoldC'].forEach(fn=>syyCallApiRaw(fn,[],()=>{},()=>{}));
       syyCallApiRaw('getObsolete',[],()=>{},e=>skippedRead=e,null,{mayRun:()=>currentCriteria===1});currentCriteria=2;readReleases.getHoldA();
-    });assert.equal(await p.evaluate(()=>sentReads.includes('getObsolete')),false);assert.equal(await p.evaluate(()=>skippedRead.code),'READ_SUPERSEDED');await p.evaluate(()=>{readReleases.getHoldB();readReleases.getHoldC();});assert.equal(await p.evaluate(()=>syyActiveReads),0);assert.deepEqual(p.errors,[]);await p.close();
+    });assert.equal(await p.evaluate(()=>sentReads.includes('getObsolete')),false);assert.equal(await p.evaluate(()=>skippedRead.code),'READ_SUPERSEDED');await p.evaluate(()=>{readReleases.getHoldB();readReleases.getHoldC();});assert.equal(await p.evaluate(()=>syyReadCoordinator().active),0);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('SweetAlert confirmations have no generated dropdown, retain native input and draft decisions',async()=>{
     const p=await pageFor('Quotation.html');await p.evaluate(()=>{
@@ -825,7 +862,7 @@ async function main(){
     const p=await pageFor('login.html');await p.evaluate(()=>{window.redirectedToken='';redirectToHome=token=>window.redirectedToken=token;showLoginSuccessThenRedirect('fixture-login');});
     assert.equal(await p.evaluate(()=>redirectedToken),'fixture-login');assert.equal(await p.evaluate(()=>alerts.length),0);await p.close();
   });
-  await check('Asynchronous login, OTP and forced-password success enter index inside a restricted sandbox without another click',async()=>{
+  await check('Asynchronous login, OTP and forced-password success never nest the app when GAS requires user activation',async()=>{
     for(const flow of ['login','otp','password']){
       const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));
       const outerUrl='http://127.0.0.1:'+port+'/?fixture=login-sandbox';await p.goto(outerUrl);
@@ -845,9 +882,11 @@ async function main(){
           else{document.getElementById('inpForceNewPassword').value='fixture-new-password';document.getElementById('inpForceConfirmPassword').value='fixture-new-password';doForceChangePassword({preventDefault(){}});}
         },flow);
       }
-      await frame.waitForURL(url=>url.searchParams.get('page')==='home');await frame.locator('#menu-products').waitFor();
-      const landed=new URL(frame.url());assert.equal(landed.searchParams.get('token'),'fixture-session /?&%');assert.equal(landed.searchParams.get('ua'),await frame.evaluate(()=>navigator.userAgent));
-      assert.equal(p.url(),outerUrl);assert.equal(await frame.locator('#loginForm').count(),0);assert.equal(await frame.evaluate(()=>alerts.length),0);assert.deepEqual(p.errors,[]);await p.close();
+      const link=frame.locator('#loginContinue a');await link.waitFor({state:'visible'});
+      assert.equal(p.url(),outerUrl);assert(frame.url().includes('file=login.html'));assert.equal(await frame.locator('#loginFrame').count(),0);
+      const target=new URL(await link.getAttribute('href'));assert.equal(target.searchParams.get('token'),'fixture-session /?&%');assert.equal(await link.getAttribute('target'),'_top');
+      assert.equal(await frame.locator('#inpPassword').inputValue(),'');assert.equal(await frame.evaluate(()=>pendingPassword),'');
+      assert.equal(p.url(),outerUrl);assert.equal(await frame.locator('#menu-products').count(),0);assert.deepEqual(p.errors,[]);await p.close();
     }
   });
   await check('Rejected login and RPC failure remain on login and never enter index',async()=>{
@@ -1322,7 +1361,8 @@ async function main(){
   await check('lazy menu frames show loading, allow explicit retry after timeout and reject the previous frame channel',async()=>{
     const p=await pageFor('index.html');const held=[];await p.route('**/*page=brands*',route=>{held.push(route);});await p.clock.install();await p.locator('#menu-brands').click();await p.waitForFunction(()=>document.getElementById('iframe-brands').syyStatus&&!document.getElementById('iframe-brands').syyStatus.hidden);
     assert.match(await p.locator('#brandsForm .syy-frame-status').innerText(),/กำลังเปิดหน้า แบรนด์สินค้า/);assert.equal(await p.locator('#brandsForm .syy-frame-status button').isVisible(),false);const oldChannel=await p.locator('#iframe-brands').getAttribute('data-channel');
-    await p.clock.fastForward(31000);assert.match(await p.locator('#brandsForm .syy-frame-status').innerText(),/ยังเปิดหน้าไม่สำเร็จ/);assert.equal(held.length,1,'timeout must not start automatic requests');
+    await p.clock.fastForward(10001);const direct=p.locator('#brandsForm .syy-frame-status a');assert.equal(await direct.isVisible(),true);const directUrl=new URL(await direct.getAttribute('href'));assert.equal(directUrl.searchParams.get('page'),'brands');assert.equal(directUrl.searchParams.get('token'),'test-token');assert.equal(directUrl.searchParams.has('channel'),false);assert.equal(directUrl.searchParams.has('parentOrigin'),false);assert.equal(await direct.getAttribute('target'),'_blank');assert.match(await direct.getAttribute('rel'),/noopener/);
+    await p.clock.fastForward(21000);assert.match(await p.locator('#brandsForm .syy-frame-status').innerText(),/ยังเปิดหน้าไม่สำเร็จ/);assert.equal(held.length,1,'timeout must not start automatic requests');
     await p.locator('#brandsForm .syy-frame-status button').click();const newChannel=await p.locator('#iframe-brands').getAttribute('data-channel');assert.notEqual(newChannel,oldChannel);await p.waitForFunction(()=>document.getElementById('iframe-brands').dataset.ready==='false');
     await p.evaluate(oldChannel=>{const f=document.getElementById('iframe-brands');window.dispatchEvent(new MessageEvent('message',{source:f.contentWindow,origin:location.origin,data:{action:'PAGE_READY',channel:oldChannel}}));},oldChannel);assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),true);
     await p.unroute('**/*page=brands*');for(const route of held)await route.continue().catch(()=>{});await p.clock.resume();await p.frameLocator('#iframe-brands').locator('#searchInput').waitFor({state:'visible'});
@@ -1364,24 +1404,25 @@ async function main(){
     await p.evaluate(()=>{respond=()=>({});loadTable();});await p.waitForFunction(()=>!productLoading);assert.match(await p.locator('#productBody').innerText(),/Test Part/);
     await p.evaluate(()=>{respond=()=>({catalogPage:true,page:1,products:[],total:0});loadTable();});await p.waitForFunction(()=>!productLoading);assert.equal(await p.locator('#productBody .view').count(),0);assert.doesNotMatch(await p.locator('#productBody').innerText(),/โหลดไม่สำเร็จ/);assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('Read deadline releases coalesced listeners, never retries automatically and discards a late response after explicit retry',async()=>{
+  await check('Read deadline releases observers while an explicit retry joins the physical request without a duplicate read',async()=>{
     const p=await pageFor('Master_Brands.html');await p.clock.install();await p.evaluate(()=>{
       apiHold='getDeadlineFixture';window.deadlineErrors=0;window.deadlineValues=[];
       for(let i=0;i<2;i++)callApi('getDeadlineFixture',[],x=>deadlineValues.push(x),e=>{if(e.timeout)deadlineErrors++;});
     });await p.clock.fastForward(45001);assert.equal(await p.evaluate(()=>deadlineErrors),2);assert.equal(await p.evaluate(()=>syyPendingReads.size),0);assert.equal(await p.evaluate(()=>syyUxBusy),0);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDeadlineFixture').length),1);
-    await p.evaluate(()=>{respond=()=>({marker:'retry'});callApi('getDeadlineFixture',[],x=>deadlineValues.push(x));apiPending[1]();respond=()=>({marker:'late'});apiPending[0]();});
+    await p.evaluate(()=>{respond=()=>({marker:'retry'});callApi('getDeadlineFixture',[],x=>deadlineValues.push(x));});
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDeadlineFixture').length),1);await p.evaluate(()=>apiPending[0]());
     assert.deepEqual(await p.evaluate(()=>deadlineValues),[{marker:'retry'}]);assert.equal(await p.evaluate(()=>syyCacheStats.byApi.getDeadlineFixture.rpcCount),2);
     await p.evaluate(()=>{apiHold='saveProduct';window.writeSettled=0;callApi('saveProduct',[{docId:'P1'}],()=>writeSettled++,()=>writeSettled++);});await p.clock.fastForward(90000);assert.equal(await p.evaluate(()=>writeSettled),0);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveProduct').length),1);await p.evaluate(()=>apiPending.at(-1)());assert.equal(await p.evaluate(()=>writeSettled),1);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Dashboard skeleton matches ten columns and all panels, table precedes analytics, errors recover and validated first data always renders',async()=>{
-    const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getDashboardBootstrap';}));
+    const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getAllProducts';}));
     await p.goto('http://127.0.0.1:'+port+'/?file=index.html');await p.waitForFunction(()=>apiPending.length===1);
     assert.equal(await p.locator('#dashHealthHead th').count(),10);assert.equal(await p.locator('#dashHealthBody tr:first-child td').count(),10);assert.equal(await p.locator('#dashKpiRow .dash-kpi').count(),4);assert.equal(await p.locator('#dashAlertRow .dash-alert').count(),4);
     for(const id of ['dashChartSvgWrap','dashCatBars','dashFastMovers','dashSlowMovers','dashAging'])assert(await p.locator('#'+id+' .sk').count()>0,id);
     assert.equal(await p.locator('#btnDashExport').isDisabled(),true);assert.match(await p.locator('#dashYearSel').inputValue(),/^20/);
     assert.equal(await p.evaluate(()=>!!(document.getElementById('dashHealthCard').compareDocumentPosition(document.querySelector('.dash-row2'))&Node.DOCUMENT_POSITION_FOLLOWING)),true);
     await p.screenshot({path:path.join(output,'dashboard-loading-2026-10-19.png'),fullPage:true});
-    await p.evaluate(()=>{apiFailure='getDashboardBootstrap';apiPending[0]();});assert.equal(await p.locator('#dashHealthBody td').getAttribute('colspan'),'10');assert.equal(await p.locator('#homeScreen .sk').count(),0);assert.equal(await p.locator('#btnRefresh').isEnabled(),true);
+    await p.evaluate(()=>{apiFailure='getAllProducts';apiPending[0]();});assert.equal(await p.locator('#dashHealthBody td').getAttribute('colspan'),'10');assert.equal(await p.locator('#homeScreen .sk').count(),0);assert.equal(await p.locator('#btnRefresh').isEnabled(),true);
     await p.evaluate(()=>{apiFailure='';apiHold='';const transport=callApi;callApi=(fn,args,ok,fail,opts)=>transport(fn,args,data=>ok(data,{notModified:true}),fail,opts);dashLoad();});await p.waitForFunction(()=>DASH.loaded&&!DASH.loading);
     assert.equal(await p.locator('#dashKpiRow .dash-kpi').count(),4);assert.equal(await p.locator('#homeScreen .sk').count(),0);assert.equal(await p.locator('#btnDashExport').isEnabled(),true);
     for(const [width,cols] of [[1440,4],[900,2],[390,1]]){await p.setViewportSize({width,height:950});assert.equal(await p.locator('#dashKpiRow').evaluate(x=>getComputedStyle(x).gridTemplateColumns.split(' ').length),cols);assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await p.screenshot({path:path.join(output,'dashboard-ready-'+width+'-2026-10-19.png'),fullPage:true});}

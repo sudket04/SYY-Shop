@@ -27,7 +27,7 @@ test('temporary auth infrastructure failure announces unavailable and never clai
  const f=fixture('complete',false,true);f.flush();assert.equal(f.messages[0].data.action,'PAGE_UNAVAILABLE');assert(!f.messages.some(m=>m.data.action==='SESSION_EXPIRED'||m.data.action==='PAGE_READY'));
 });
 test('readiness retries are bounded, stop after a trusted ACK and do not perform any RPC',()=>{
- const f=fixture('complete');f.flush();f.flush(5000);assert.equal(f.messages.length,4);f.flush(10000);assert.equal(f.messages.length,4);
+ const f=fixture('complete');f.flush();f.flush(5000);assert.equal(f.messages.length,4);f.flush(30000);assert.equal(f.messages.length,7);f.flush(60000);assert.equal(f.messages.length,7);
  const a=fixture('complete');a.flush();const source=a.c.window.parent;
  [...a.winEvents.get('message')].forEach(fn=>fn({source,origin:'https://script.google.com',data:{action:'PAGE_ACK',channel:'fixture-channel-123456'}}));a.flush(5000);assert.equal(a.messages.length,1);
  a.c.SYYFrameBridge.dataReady();assert.equal(a.messages.at(-1).data.action,'PAGE_DATA_READY');assert.equal(a.messages.at(-1).data.channel,'fixture-channel-123456');
