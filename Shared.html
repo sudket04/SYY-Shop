@@ -1036,7 +1036,10 @@ function syyDraftFlush(){
 }
 function syyDraftStart(){Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(d.ready||window.syyExpiryStarted)return;
   var early=d.early, saved=syyLocalGet('draft',name), newer=syyLocalGet('draft-early',name);
-  d.ready=true;d.early=null;d.baseline=JSON.stringify(d.adapter.capture());
+  d.ready=true;d.early=null;
+  // Keep the pre-edit baseline when a user typed before data finished loading.
+  // A bootstrap that retained the same input must not mark that input saved.
+  if(!early)d.baseline=JSON.stringify(d.adapter.capture());
   if(d.adapter.blocked&&d.adapter.blocked()){syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);return;}
   if(early&&!newer&&(!saved||JSON.stringify(early)===JSON.stringify(saved))){d.adapter.restore(early);syyDraftFlush();return;}
   if(saved&&(early||newer)){

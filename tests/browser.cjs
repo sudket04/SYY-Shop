@@ -809,6 +809,16 @@ async function main(){
     assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')?.fields.inpNote),'Keep this early note');
     assert.equal(await p.evaluate(()=>apiCalls.some(({fn})=>/^save/.test(fn))),false);await p.close();
   });
+  await check('Loading resilience: quote bootstrap does not turn early unsaved input into the clean baseline',async()=>{
+    const p=await context.newPage();p.errors=[];p.on('pageerror',error=>p.errors.push(error.message));
+    await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getQuotationPageData';}));
+    await p.goto('http://127.0.0.1:'+port+'/?file=Quotation.html');await p.waitForFunction(()=>apiPending.length>0);
+    await p.locator('#inpNote').fill('Unsaved through startup');
+    await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForFunction(()=>syyDrafts.quotation.ready);
+    await p.evaluate(()=>syyShowSessionExpired());
+    assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')?.fields.inpNote),'Unsaved through startup');
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
   await check('Unknown document save disables resubmission while retaining the editable draft',async()=>{
     for(const file of ['Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html']){
       const p=await pageFor(file);await p.evaluate(()=>{
