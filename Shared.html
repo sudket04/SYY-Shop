@@ -492,13 +492,14 @@ function syyDialog(options){
     var confirm=document.createElement('button');confirm.type='button';confirm.className=options.customClass&&options.customClass.confirmButton||'swy-confirm-btn';confirm.textContent=options.confirmButtonText||'ตกลง';
     var cancel=document.createElement('button');cancel.type='button';cancel.className='swy-cancel-btn';cancel.textContent=options.cancelButtonText||'ยกเลิก';
     var finished=false;
-    function finish(accepted){if(finished)return;finished=true;syyDismissFallbackDialog=null;window.removeEventListener('pagehide',dismiss);document.removeEventListener('focusin',trap);overlay.remove();if(previous&&previous.isConnected)previous.focus();resolve({isConfirmed:accepted,isDismissed:!accepted});}
-    function dismiss(){finish(false);}
+    function finish(accepted,reason){if(finished)return;finished=true;syyDismissFallbackDialog=null;window.removeEventListener('pagehide',onPageHide);document.removeEventListener('focusin',trap);overlay.remove();if(previous&&previous.isConnected)previous.focus();resolve({isConfirmed:accepted,isDismissed:!accepted,dismiss:reason});}
+    function dismiss(){finish(false,'close');}
+    function onPageHide(){finish(false,'pagehide');}
     function trap(event){if(!overlay.contains(event.target))(options.showCancelButton?cancel:confirm).focus();}
-    confirm.addEventListener('click',function(){finish(true);});cancel.addEventListener('click',dismiss);
+    confirm.addEventListener('click',function(){finish(true);});cancel.addEventListener('click',function(){finish(false,'cancel');});
     if(options.showCancelButton)actions.appendChild(cancel);actions.appendChild(confirm);panel.append(title,content,actions);overlay.appendChild(panel);document.body.appendChild(overlay);
     overlay.addEventListener('keydown',function(event){event.stopPropagation();if(event.key==='Escape'){event.preventDefault();return;}if(event.key==='Tab'){var buttons=options.showCancelButton?[cancel,confirm]:[confirm];var i=buttons.indexOf(document.activeElement);event.preventDefault();buttons[(i+(event.shiftKey?-1:1)+buttons.length)%buttons.length].focus();}});
-    syyDismissFallbackDialog=dismiss;document.addEventListener('focusin',trap);window.addEventListener('pagehide',dismiss);(options.showCancelButton?cancel:confirm).focus();
+    syyDismissFallbackDialog=dismiss;document.addEventListener('focusin',trap);window.addEventListener('pagehide',onPageHide);(options.showCancelButton?cancel:confirm).focus();
   });});
   syyDialogQueue=result.catch(function(){});return result;
 }
@@ -518,6 +519,9 @@ function swyWarning(title,html){
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',confirmButton:'swy-confirm-btn'},buttonsStyling:false});
 }
 function swyConfirm(o){
+  return syyConfirmResult(o).then(function(r){return r.isConfirmed;});
+}
+function syyConfirmResult(o){
   return syyDialog({
     icon:o.icon||'question',title:o.title,html:o.html||'',showCancelButton:true,
     confirmButtonText:o.confirmText||'ยืนยัน',cancelButtonText:o.cancelText||'ยกเลิก',reverseButtons:true,
@@ -525,7 +529,7 @@ function swyConfirm(o){
     customClass:{popup:'swy-popup',title:'swy-title',htmlContainer:'swy-html',
       confirmButton:'swy-confirm-btn'+(o.danger?' danger':''),cancelButton:'swy-cancel-btn'},
     buttonsStyling:false
-  }).then(function(r){return r.isConfirmed;});
+  });
 }
 
 /* ── เรียก backend: ต้องผ่าน apiGateway เท่านั้น (เช็คสิทธิ์ role + ลง Activity_Log ทุกครั้ง) ──
@@ -943,7 +947,7 @@ var syyFieldSequence=0,syyDrafts={},syyModalBaselines={},syyUxBusy=0,syyUxLoaded
 function syyIdentity(){var owner=document.querySelector('meta[name="syy-owner"]'),role=document.querySelector('meta[name="syy-role"]');return owner&&role?{owner:owner.content,role:role.content}:null;}
 function syyStorageKey(kind,name){var id=syyIdentity();return id&&id.owner?'syy_ux_v1:'+encodeURIComponent(id.owner)+':'+id.role+':'+kind+':'+name:null;}
 function syyLocalGet(kind,name){try{var key=syyStorageKey(kind,name),raw=key&&sessionStorage.getItem(key),record=raw&&JSON.parse(raw);if(record&&record.version===1&&Number.isFinite(record.at)&&Date.now()-record.at<28800000&&record.at<=Date.now()+60000)return record.value;if(key)sessionStorage.removeItem(key);}catch(e){}return null;}
-function syyLocalSet(kind,name,value){try{var key=syyStorageKey(kind,name);if(!key)return false;var raw=JSON.stringify({version:1,at:Date.now(),value:value});if(raw.length>500000)throw Error('large draft');sessionStorage.setItem(key,raw);return true;}catch(e){syyLocalRemove(kind,name);return false;}}
+function syyLocalSet(kind,name,value){try{var key=syyStorageKey(kind,name);if(!key)return false;var raw=JSON.stringify({version:1,at:Date.now(),value:value});if(raw.length>500000)throw Error('large draft');sessionStorage.setItem(key,raw);return true;}catch(e){return false;}}
 function syyLocalRemove(kind,name){try{var key=syyStorageKey(kind,name);if(key)sessionStorage.removeItem(key);}catch(e){}}
 function syyClearAccountState(){syyClearReadCache();var id=syyIdentity();if(!id)return;try{Object.keys(sessionStorage).forEach(function(key){if(key.indexOf('syy_ux_v1:'+encodeURIComponent(id.owner)+':')===0||key.indexOf('syy_data_v1:'+encodeURIComponent(id.owner)+':')===0)sessionStorage.removeItem(key);});}catch(e){}}
 function syyFieldName(field){
@@ -1021,7 +1025,7 @@ function syyCaptureEarlyDrafts(){
   });
 }
 function syyDraftDirty(name){var d=syyDrafts[name];return !!(d&&(d.ready?JSON.stringify(d.adapter.capture())!==d.baseline:d.early));}
-function syyDraftClean(name){var fn={quotation:'saveQuotation',invoice:'saveTaxInvoice',orders:'savePurchaseOrder',product:'saveProduct'}[name];if(fn&&syyUnknownWrites[fn]){delete syyUnknownWrites[fn];var button=document.getElementById(syyWriteButtons[fn]);if(button){button.disabled=false;button.textContent=button.dataset.syyWriteLabel||'บันทึก';delete button.dataset.syyWriteLabel;}}var d=syyDrafts[name];if(d){d.baseline=JSON.stringify(d.adapter.capture());d.early=null;syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);}}
+function syyDraftClean(name){var fn={quotation:'saveQuotation',invoice:'saveTaxInvoice',orders:'savePurchaseOrder',product:'saveProduct'}[name];if(fn&&syyUnknownWrites[fn]){delete syyUnknownWrites[fn];var button=document.getElementById(syyWriteButtons[fn]);if(button){button.disabled=false;button.textContent=button.dataset.syyWriteLabel||'บันทึก';delete button.dataset.syyWriteLabel;}}var d=syyDrafts[name];if(d){d.baseline=JSON.stringify(d.adapter.capture());d.early=null;d.keepSelection=false;d.reoffer=false;syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);}}
 function syyDraftFlush(){
   if(window.syyIntentionalExit)return;var dirty=false,failed=false;
   Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(d.recovering)return;
@@ -1029,13 +1033,14 @@ function syyDraftFlush(){
       if(d.earlyWritten){syyLocalRemove(d.earlyKey,name);d.earlyWritten=false;}
       return;
     }
-    var value=d.ready&&syyDraftDirty(name)?d.adapter.capture():d.early;
+    var value=d.ready&&(d.keepSelection||syyDraftDirty(name))?d.adapter.capture():d.early;
     if(value){
-    var key=d.ready?'draft':d.earlyKey;
+    var key=d.ready?(d.reoffer&&syyLocalGet('draft',name)?'draft-early':'draft'):d.earlyKey;
     dirty=true;var stored=syyLocalSet(key,name,value);failed=failed||!stored;
     if(!d.ready&&stored)d.earlyWritten=true;
+    if(d.keepSelection&&stored){d.keepSelection=false;syyLocalRemove('draft-early',name);}
     if(!stored&&!d.warning){d.warning=true;toast('พื้นที่เก็บร่างไม่พร้อม กรุณาเก็บหน้านี้ไว้จนบันทึกสำเร็จ','warn',6000);}
-  }else if(d.ready)syyLocalRemove('draft',name);});
+  }else if(d.ready&&!d.reoffer)syyLocalRemove('draft',name);});
   var status=document.getElementById('syyDraftStatus');if(status){status.hidden=!dirty;status.textContent=failed?'ยังไม่บันทึก · เก็บร่างไม่สำเร็จ กรุณาเก็บหน้านี้ไว้จนบันทึก':'ยังไม่บันทึก · เก็บร่างในเซสชันเบราว์เซอร์ของบัญชีนี้แล้ว (8 ชั่วโมง)';}
 }
 function syyDraftStart(){Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(d.ready||window.syyExpiryStarted)return;
@@ -1050,17 +1055,31 @@ function syyDraftStart(){Object.keys(syyDrafts).forEach(function(name){var d=syy
     var latest=early||newer;
     syyLocalSet('draft-early',name,latest);
     d.recovering=true;
-    swyConfirm({title:'พบร่างสองฉบับ',html:'เลือกร่างที่ต้องการทำต่อ',confirmText:'ใช้ร่างล่าสุด',cancelText:'ใช้ร่างก่อนหน้า'}).then(function(ok){
-      d.recovering=false;if(window.syyExpiryStarted)return;
-      d.adapter.restore(ok?latest:saved);syyDraftFlush();syyLocalRemove('draft-early',name);
+    syyConfirmResult({title:'พบร่างสองฉบับ',html:'เลือกร่างที่ต้องการทำต่อ',confirmText:'ใช้ร่างล่าสุด',cancelText:'ใช้ร่างก่อนหน้า'}).then(function(result){
+      if(!syyDraftRecoveryAnswered(d,result))return;
+      syyRestoreChosenDraft(d,result.isConfirmed?latest:saved);
     });
     return;
   }
   saved=saved||newer;
   if(!saved)return;
   d.recovering=true;
-  swyConfirm({title:'พบร่างที่ยังไม่บันทึก',html:'กู้คืนร่างในเบราว์เซอร์ของบัญชีนี้? กรุณาตรวจข้อมูลล่าสุดก่อนบันทึก ระบบจะไม่ส่งรายการให้อัตโนมัติ',confirmText:'กู้คืนร่าง',cancelText:'ทิ้งร่าง'}).then(function(ok){d.recovering=false;if(window.syyExpiryStarted)return;if(ok){d.adapter.restore(saved);syyDraftFlush();toast('กู้คืนร่างแล้ว กรุณาตรวจสอบก่อนบันทึก','warn');}else syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);});
+  syyConfirmResult({title:'พบร่างที่ยังไม่บันทึก',html:'กู้คืนร่างในเบราว์เซอร์ของบัญชีนี้? กรุณาตรวจข้อมูลล่าสุดก่อนบันทึก ระบบจะไม่ส่งรายการให้อัตโนมัติ',confirmText:'กู้คืนร่าง',cancelText:'ทิ้งร่าง'}).then(function(result){
+    if(!syyDraftRecoveryAnswered(d,result))return;
+    if(result.isConfirmed){syyRestoreChosenDraft(d,saved);toast('กู้คืนร่างแล้ว กรุณาตรวจสอบก่อนบันทึก','warn');}
+    else {syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);}
+  });
 });}
+function syyDraftRecoveryAnswered(d,result){
+  d.recovering=false;
+  d.reoffer=!!(window.syyExpiryStarted||window.syyIntentionalExit||!result||!result.isConfirmed&&result.dismiss!=='cancel');
+  return !d.reoffer;
+}
+function syyRestoreChosenDraft(d,value){
+  d.adapter.restore(value);
+  d.keepSelection=true;
+  syyDraftFlush();
+}
 function syyGuardDraft(change,name){
   var d=syyDrafts[name],modal=document.getElementById(name);
   var dirty=d?syyDraftDirty(name):modal&&modal.classList.contains('active')&&syyModalBaselines[name]!==JSON.stringify(syyReadFields('#'+name));
@@ -1116,6 +1135,7 @@ syyOnReady(function(){
   window.addEventListener('scroll',function(){clearTimeout(window.syyViewTimer);window.syyViewTimer=setTimeout(syyViewFlush,150);},true);
   window.addEventListener('message',function(event){if(syyTrustedParentMessage(event)&&event.data.action==='CLEAR_LOCAL_STATE'){window.syyIntentionalExit=true;syyClearAccountState();};if(syyTrustedParentMessage(event)&&event.data.action==='SESSION_EXPIRED')syyShowSessionExpired();});
   window.addEventListener('pagehide',syyDraftFlush);window.addEventListener('beforeunload',function(event){syyDraftFlush();if(!window.syyIntentionalExit&&!window.syyExpiryStarted&&Object.keys(syyDrafts).some(syyDraftDirty)){event.preventDefault();event.returnValue='';}});
+  window.addEventListener('pageshow',function(event){if(event.persisted&&!window.syyExpiryStarted){Object.values(syyDrafts).forEach(function(d){if(d.reoffer){d.ready=false;d.reoffer=false;}});syyDraftStart();}});
   setInterval(syyUxStatus,30000);
 });
 </script>

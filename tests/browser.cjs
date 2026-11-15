@@ -770,14 +770,17 @@ async function main(){
   });
   await check('Quote draft restores invalid raw input, negotiated prices and notes without submitting any write',async()=>{
     const p=await pageFor('Quotation.html');p.on('dialog',dialog=>dialog.accept());
+    await p.waitForFunction(()=>syyDrafts.quotation.ready);
     await p.evaluate(()=>{addToBasket('P1');setQty('P1','1.5');setPrice('P1','0');document.getElementById('inpNote').value='Recovered note';document.getElementById('selCustomer').value='C1';document.querySelector('.price-input').value='';syyDraftFlush();});
     assert.equal(await p.evaluate(()=>Object.values(sessionStorage).some(v=>v.includes('test-token'))),false);
-    await p.reload();await p.waitForTimeout(120);assert.deepEqual(await p.evaluate(()=>[basket[0].qty,basket[0].unitPrice]),[1.5,0]);
+    await p.reload();await p.waitForFunction(()=>basket.length===1&&syyDrafts.quotation.ready&&!syyDrafts.quotation.recovering);
+    assert.deepEqual(await p.evaluate(()=>[basket[0].qty,basket[0].unitPrice]),[1.5,0]);
     assert.equal(await p.locator('.price-input').inputValue(),'');assert.equal(await p.locator('#inpNote').inputValue(),'Recovered note');
     assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='saveQuotation').length),0);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Draft storage binds the authenticated account and role, expires after eight hours and excludes credentials',async()=>{
-    const p=await pageFor('Quotation.html');await p.evaluate(()=>{addToBasket('P1');syyDraftFlush();});
+    const p=await pageFor('Quotation.html');await p.waitForFunction(()=>syyDrafts.quotation.ready);
+    await p.evaluate(()=>{addToBasket('P1');syyDraftFlush();});
     assert.equal(await p.evaluate(()=>!!syyLocalGet('draft','quotation')),true);
     await p.evaluate(()=>document.querySelector('meta[name="syy-owner"]').content='other-account');assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')),null);
     await p.evaluate(()=>{document.querySelector('meta[name="syy-owner"]').content='fixture';document.querySelector('meta[name="syy-role"]').content='viewer';});assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')),null);
@@ -811,6 +814,52 @@ async function main(){
     await p.evaluate(()=>{respond=()=>({__authError:true});apiPending[0]();});
     assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')?.fields.inpNote),'Keep this early note');
     assert.equal(await p.evaluate(()=>apiCalls.some(({fn})=>/^save/.test(fn))),false);await p.close();
+  });
+  await check('Draft recovery: fallback navigation preserves both drafts and deletion requires an explicit choice',async()=>{
+    const p=await context.newPage();p.on('dialog',dialog=>dialog.accept());
+    await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getQuotationPageData';}));
+    const quote='http://127.0.0.1:'+port+'/?file=Quotation.html',login='http://127.0.0.1:'+port+'/?file=login.html';
+    const load=async()=>{await p.goto(quote);await p.waitForFunction(()=>apiPending.length>0);};
+    const release=async()=>p.evaluate(()=>{delete window.Swal;apiHold='';apiPending.shift()();});
+    await load();await p.locator('#inpNote').fill('Older draft');
+    const keys=await p.evaluate(()=>{syyDraftFlush();return ['draft','draft-early'].map(kind=>syyStorageKey(kind,'quotation'));});
+    const stored=()=>p.evaluate(keys=>keys.map(key=>JSON.parse(sessionStorage.getItem(key))?.value.fields.inpNote??null),keys);
+    await load();await release();await p.getByRole('alertdialog',{name:'พบร่างที่ยังไม่บันทึก'}).waitFor();
+    await p.goto(login);assert.deepEqual(await stored(),['Older draft',null]);
+    await load();await p.locator('#inpNote').fill('Newer draft');await p.evaluate(()=>syyDraftFlush());await release();
+    await p.getByRole('alertdialog',{name:'พบร่างสองฉบับ'}).waitFor();await p.goto(login);
+    assert.deepEqual(await stored(),['Older draft','Newer draft']);
+    await load();await release();await p.getByRole('alertdialog',{name:'พบร่างสองฉบับ'}).waitFor();
+    await p.evaluate(()=>syyShowSessionExpired());await p.locator('#syySessionExpired').waitFor();
+    assert.deepEqual(await stored(),['Older draft','Newer draft']);await p.goto(login);
+    await load();await release();await p.getByRole('button',{name:'ใช้ร่างก่อนหน้า'}).click();
+    await p.waitForFunction(()=>!syyLocalGet('draft-early','quotation'));assert.deepEqual(await stored(),['Older draft',null]);
+    await load();await release();await p.getByRole('button',{name:'ทิ้งร่าง'}).click();
+    await p.waitForFunction(()=>!syyLocalGet('draft','quotation'));assert.deepEqual(await stored(),[null,null]);
+    assert.equal(await p.evaluate(()=>apiCalls.some(({fn})=>/^save/.test(fn))),false);await p.close();
+  });
+  await check('Draft recovery: SweetAlert dismissal and failed storage preserve the recoverable versions',async()=>{
+    const p=await context.newPage();
+    await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getQuotationPageData';}));
+    await p.goto('http://127.0.0.1:'+port+'/?file=Quotation.html');await p.waitForFunction(()=>apiPending.length>0);
+    await p.evaluate(()=>{
+      syyLocalSet('draft','quotation',{fields:{inpNote:'Older draft'},basket:[]});
+      syyLocalSet('draft-early','quotation',{fields:{inpNote:'Newer draft'},basket:[]});
+      Swal.fire=()=>Promise.resolve({isDismissed:true,dismiss:'close'});
+      apiHold='';apiPending.shift()();
+    });
+    await p.waitForFunction(()=>syyDrafts.quotation.reoffer===true);await p.evaluate(()=>syyDraftFlush());
+    const notes=()=>p.evaluate(()=>['draft','draft-early'].map(kind=>syyLocalGet(kind,'quotation')?.fields.inpNote));
+    assert.deepEqual(await notes(),['Older draft','Newer draft']);
+    await p.evaluate(()=>{
+      const set=Storage.prototype.setItem,key=syyStorageKey('draft','quotation');
+      Storage.prototype.setItem=function(name,value){if(name===key)throw new DOMException('Full','QuotaExceededError');return set.call(this,name,value);};
+      Swal.fire=()=>Promise.resolve({isConfirmed:true});
+      window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));
+    });
+    await p.waitForFunction(()=>syyDrafts.quotation.keepSelection===true);
+    assert.deepEqual(await notes(),['Older draft','Newer draft']);
+    assert.equal(await p.locator('#inpNote').inputValue(),'Newer draft');assert.match(await p.locator('#syyDraftStatus').innerText(),/เก็บร่างไม่สำเร็จ/);await p.close();
   });
   await check('Loading resilience: quote bootstrap does not turn early unsaved input into the clean baseline',async()=>{
     const p=await context.newPage();p.errors=[];p.on('pageerror',error=>p.errors.push(error.message));
