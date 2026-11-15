@@ -1012,18 +1012,6 @@ function saveProduct_(d) {
   return saveRes;
 }
 
-// Reads for edits fail closed: never recreate a deleted record or allocate a new document number.
-function readExistingDocument_(collection, docId) {
-  if(!validDocumentId_(String(docId || ""))) throw new Error("รหัสเอกสารไม่ถูกต้อง");
-  var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-    + "/databases/(default)/documents/" + collection + "/" + encodeURIComponent(docId);
-  var res = UrlFetchApp.fetch(url, { method:"get", headers:getAuthHeader_(), muteHttpExceptions:true });
-  if (res.getResponseCode() !== 200) { var error = new Error("อ่านข้อมูลเดิมไม่สำเร็จ กรุณารีเฟรชก่อนแก้ไขอีกครั้ง"); error.httpStatus = res.getResponseCode(); throw error; }
-  var doc = JSON.parse(res.getContentText());
-  if (!doc.updateTime) throw new Error("ตรวจสอบเวอร์ชันข้อมูลเดิมไม่สำเร็จ กรุณาลองใหม่");
-  return doc;
-}
-
 function getProductRawFields_(docId) {
   if (!validDocumentId_(docId)) return null;
   try {

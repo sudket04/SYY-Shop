@@ -76,61 +76,6 @@ function peekCollectionDocsCache_(collectionName) {
   return readCollectionCache_(collectionName);
 }
 
-function queryByEqualityField_(collectionName, fieldPath, value, limit, operator) {
-  var docs = [];
-  try {
-    var query = {
-      structuredQuery: {
-        from  : [{ collectionId: collectionName }],
-        where : { fieldFilter: { field: { fieldPath: fieldPath }, op: operator||"EQUAL", value: { stringValue: String(value) } } },
-        limit : limit||10
-      }
-    };
-    var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID + "/databases/(default)/documents:runQuery";
-    var res = UrlFetchApp.fetch(url, {
-      method: "post", headers: getAuthHeader_(), payload: JSON.stringify(query), muteHttpExceptions: true
-    });
-    if (res.getResponseCode() !== 200) throw new Error("โหลดข้อมูลไม่สำเร็จ (" + res.getResponseCode() + ")");
-    if (res.getResponseCode() === 200) {
-      (JSON.parse(res.getContentText()) || []).forEach(function(row) {
-        if (row.document) docs.push({ id: row.document.name.split('/').pop(), fields: row.document.fields || {},updateTime:row.document.updateTime||"" });
-      });
-    } else {
-      console.error("queryByEqualityField_ " + collectionName + "." + fieldPath + " HTTP " + res.getResponseCode());
-    }
-  } catch (e) { console.error("queryByEqualityField_ read failed", e); throw e; }
-  return docs;
-}
-
-function fetchAllPagesRaw_(collectionName, firstPageJson) {
-  var docs = [], pageToken = "", guard = 0, json = firstPageJson || null;
-  try {
-    do {
-      if (!json) {
-        var url = "https://firestore.googleapis.com/v1/projects/" + PROJECT_ID
-                + "/databases/(default)/documents/" + collectionName + "?pageSize=1000"
-                + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
-        var res = UrlFetchApp.fetch(url, { method: "get", headers: getAuthHeader_(), muteHttpExceptions: true });
-        if (res.getResponseCode() !== 200) {
-          console.error("fetchAllPagesRaw " + collectionName + " HTTP " + res.getResponseCode());
-          return { ok: false, docs: [] };
-        }
-        json = JSON.parse(res.getContentText());
-      }
-      (json.documents || []).forEach(function(doc) {
-        docs.push({ id: doc.name.split('/').pop(), fields: doc.fields || {}, updateTime:doc.updateTime || "" });
-      });
-      pageToken = json.nextPageToken || "";
-      json = null;
-      guard++;
-    } while (pageToken && guard < 50);
-  } catch (e) {
-    console.error("fetchAllPagesRaw error:", e);
-    return { ok: false, docs: [] };
-  }
-  return { ok: !pageToken, docs: pageToken ? [] : docs };
-}
-
 function fetchCollectionsParallel_(collectionNames) {
   return withReadLease_('collections:'+collectionNames.slice().sort().join(','),function(){
     var result={};for(var i=0;i<collectionNames.length;i++){var value=readCollectionCache_(collectionNames[i]);if(value===null)return null;result[collectionNames[i]]=value;}return result;
