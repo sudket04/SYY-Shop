@@ -1025,11 +1025,15 @@ function syyDraftClean(name){var fn={quotation:'saveQuotation',invoice:'saveTaxI
 function syyDraftFlush(){
   if(window.syyIntentionalExit)return;var dirty=false,failed=false;
   Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(d.recovering)return;
-    if(!d.ready&&!d.early)return;
+    if(!d.ready&&!d.early){
+      if(d.earlyWritten){syyLocalRemove(d.earlyKey,name);d.earlyWritten=false;}
+      return;
+    }
     var value=d.ready&&syyDraftDirty(name)?d.adapter.capture():d.early;
     if(value){
     var key=d.ready?'draft':d.earlyKey;
     dirty=true;var stored=syyLocalSet(key,name,value);failed=failed||!stored;
+    if(!d.ready&&stored)d.earlyWritten=true;
     if(!stored&&!d.warning){d.warning=true;toast('พื้นที่เก็บร่างไม่พร้อม กรุณาเก็บหน้านี้ไว้จนบันทึกสำเร็จ','warn',6000);}
   }else if(d.ready)syyLocalRemove('draft',name);});
   var status=document.getElementById('syyDraftStatus');if(status){status.hidden=!dirty;status.textContent=failed?'ยังไม่บันทึก · เก็บร่างไม่สำเร็จ กรุณาเก็บหน้านี้ไว้จนบันทึก':'ยังไม่บันทึก · เก็บร่างในเซสชันเบราว์เซอร์ของบัญชีนี้แล้ว (8 ชั่วโมง)';}

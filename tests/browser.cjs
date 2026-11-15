@@ -804,6 +804,9 @@ async function main(){
   await check('Loading resilience: early quote input survives expiry while the initial server request is held',async()=>{
     const p=await context.newPage();await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getQuotationPageData';}));
     await p.goto('http://127.0.0.1:'+port+'/?file=Quotation.html');await p.waitForFunction(()=>apiPending.length>0);
+    await p.locator('#inpNote').fill('Discard this text');await p.evaluate(()=>syyDraftFlush());
+    await p.locator('#inpNote').fill('');await p.evaluate(()=>syyDraftFlush());
+    assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')),null);
     await p.locator('#inpNote').fill('Keep this early note');
     await p.evaluate(()=>{respond=()=>({__authError:true});apiPending[0]();});
     assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')?.fields.inpNote),'Keep this early note');
