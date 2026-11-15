@@ -915,39 +915,57 @@
   function dashLoadingState(busy){
     document.getElementById('homeScreen').setAttribute('aria-busy',String(busy));
     document.querySelectorAll('#headActions button:not(#btnRefresh),#headActions select,#dashHealthCard input,#dashHealthCard select,#dashHealthCard button:not(#dashHealthPrev):not(#dashHealthNext)').forEach(function(el){el.disabled=!DASH.loaded;});
+    if(DASH.catalogPreview){
+      document.getElementById('dashSearch').disabled=false;
+      document.querySelectorAll('#dashHealthBody .view').forEach(function(button){button.disabled=false;});
+    }
   }
 
   // Make stock rows usable before the historical analytics finish. These are
   // authenticated current catalog rows, never inferred sales/aging totals.
   function dashCatalogPreview(products,failed){
     DASH.catalogPreview=true;DASH.products=products;allProducts=products;
-    var pending=failed?'โหลดประวัติไม่สำเร็จ':'กำลังโหลด';
+    DASH.catalogPreviewFailed=!!failed;
+    dashRenderCatalogPreview();
+    if(!failed)document.getElementById('lastUpdated').textContent='สินค้า '+products.length.toLocaleString()+' รายการพร้อมแล้ว · กำลังโหลดประวัติและสรุปยอด';
+  }
+  function dashRenderCatalogPreview(){
+    var failed=DASH.catalogPreviewFailed, pending=failed?'โหลดประวัติไม่สำเร็จ':'กำลังโหลด';
+    var query=(DASH.search||'').trim().toLowerCase();
+    if(query!==DASH.previewQuery){DASH.previewQuery=query;DASH.previewPage=1;}
+    var rows=query?DASH.products.filter(function(p){return [p.productCode,p.productName,p.brandName,p.partNumber,p.barcode].join(' ').toLowerCase().includes(query);}):DASH.products;
+    var pages=Math.max(1,Math.ceil(rows.length/50));
+    DASH.previewPage=Math.max(1,Math.min(pages,DASH.previewPage||1));
+    var offset=(DASH.previewPage-1)*50;
     var cells=function(value){return '<td style="padding:10px 14px">'+esc(value)+'</td>';};
-    document.getElementById('dashHealthBody').innerHTML=products.slice(0,50).map(function(p){
+    document.getElementById('dashHealthBody').innerHTML=rows.slice(offset,offset+50).map(function(p){
       return '<tr>'+cells(p.productCode)+cells(p.productName)+cells(p.categoryName||'')+cells(num(p.currentStock))+cells(num(p.minStock))+
         cells(pending)+cells('฿'+Math.round(num(p.currentStock)*num(p.costPrice)).toLocaleString())+cells(pending)+cells(failed?pending:'กำลังโหลดประวัติ')+
         '<td><button class="btn btn-icon view" title="ดูข้อมูล" onclick="openView(\''+escJs(p.productCode)+'\')">🔍</button></td></tr>';
-    }).join('')||emptyStateHtml(DASH_COLS.length,{title:'ยังไม่มีข้อมูลสินค้า'});
-    document.getElementById('lastUpdated').textContent='สินค้า '+products.length.toLocaleString()+' รายการพร้อมแล้ว · กำลังโหลดประวัติและสรุปยอด';
-    document.getElementById('dashHealthTabs').textContent='แสดงสินค้าชุดแรก '+Math.min(50,products.length)+' จาก '+products.length.toLocaleString()+' รายการ · ยังไม่ใช้ตัวกรองประวัติ';
-    document.getElementById('dashHealthBody').setAttribute('aria-label','รายการสินค้าชุดแรก · ยังไม่ใช่ผลกรองหรือสรุปประวัติ');
+    }).join('')||emptyStateHtml(DASH_COLS.length,{title:query?'ไม่พบสินค้าที่ค้นหา':'ยังไม่มีข้อมูลสินค้า'});
+    document.getElementById('dashHealthTabs').textContent='ค้นหาในรายการสินค้าได้ · ตัวกรองจากประวัติยังไม่พร้อม';
+    document.getElementById('dashHealthBody').setAttribute('aria-label','รายการสินค้า · ประวัติและยอดสรุปยังไม่พร้อม');
+    document.getElementById('dashHealthFoot').textContent='พบ '+rows.length.toLocaleString()+' รายการ';
+    document.getElementById('dashHealthPageLabel').textContent=DASH.previewPage+' / '+pages;
+    document.getElementById('dashHealthPrev').disabled=DASH.previewPage<=1;
+    document.getElementById('dashHealthNext').disabled=DASH.previewPage>=pages;
   }
+  function dashCatalogEpoch(){return syyCacheEpoch(syyReadPolicy('getAllProducts',[{compact:true}]).scopes);}
   function dashRequestBootstrap(options,success,failure){
-    if(DASH.loaded||DASH.restoredCatalogSection){callApi('getDashboardBootstrap',[options],success,failure);return;}
-    callApi('getAllProducts',[{compact:true}],function(products){
+    if(DASH.loaded||DASH.restoredCatalogSection&&DASH.catalogEpoch===dashCatalogEpoch()){callApi('getDashboardBootstrap',[options],success,failure);return;}
+    DASH.restoredCatalogSection=null;
+    callApi('getAllProducts',[{compact:true}],function(products,info){
       if(!Array.isArray(products)){failure({message:'รูปแบบข้อมูลสินค้าไม่ถูกต้อง'});return;}
       dashCatalogPreview(products);
-      // Reuse the exact version/age just validated by the gateway. The history
-      // bootstrap rechecks it and returns replacements if it changed meanwhile.
-      syyRestoreCatalog(function(saved){
-        if(saved){DASH.restoredCatalogSection=saved.section;options.catalogSection=saved.section;}
-        callApi('getDashboardBootstrap',[options],success,failure);
-      });
+      dashLoadingState(true);
+      DASH.catalogEpoch=dashCatalogEpoch();
+      DASH.restoredCatalogSection=info&&info.section;
+      options.catalogSection=DASH.restoredCatalogSection;
+      callApi('getDashboardBootstrap',[options],success,failure);
     },failure);
   }
 
   function dashLoad(force){
-    if(!DASH.loaded&&!DASH.catalogPrepared){DASH.catalogPrepareForce=DASH.catalogPrepareForce||force===true;if(DASH.catalogPreparing)return;DASH.catalogPreparing=true;syyRestoreCatalog(function(saved){DASH.catalogPreparing=false;DASH.catalogPrepared=true;if(saved){DASH.products=saved.products;DASH.restoredCatalogSection=saved.section;}dashLoad(!!DASH.catalogPrepareForce);});return;}
     if(DASH.loading){DASH.reloadRequested=true;DASH.forceReload=DASH.forceReload||force===true;return;}
     DASH.loading=true;DASH.nextReconcile=Date.now()+DASH_RECONCILE_MS;
     var btn=document.getElementById('btnRefresh');
@@ -1505,6 +1523,7 @@
   }
 
   function dashRenderHealthTableOnly(){
+    if(DASH.catalogPreview){dashRenderCatalogPreview();return;}
     var all=DASH.health.rows;
     var active=DASH_TABS.filter(function(t){return t.id===DASH.tab;})[0]||DASH_TABS[0];
     document.getElementById('dashTabHint').innerText=active.hint;
@@ -1573,7 +1592,7 @@
     document.getElementById('dashSortLabel').innerText=sortLabelName+(DASH.sortDir==='asc'?' ↑ น้อย→มาก':' ↓ มาก→น้อย');
   }
 
-  function dashChangeHealthPage(step){if(!DASH.health)return;DASH.healthPage+=step;dashRenderHealthTableOnly();document.querySelector('#dashHealthCard .table-wrap').scrollTop=0;}
+  function dashChangeHealthPage(step){if(DASH.catalogPreview)DASH.previewPage+=step;else if(DASH.health)DASH.healthPage+=step;else return;dashRenderHealthTableOnly();document.querySelector('#dashHealthCard .table-wrap').scrollTop=0;}
 
   function dashRenderAll(){
     if(!DASH.health) return;

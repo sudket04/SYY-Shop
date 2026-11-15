@@ -7,6 +7,7 @@ const {chromium}=require('playwright');
 const {setup}=require('./support/services.cjs');
 const {evaluateTemplate}=require('./support/templates.cjs');
 const output=path.resolve(__dirname,'../test-results');fs.mkdirSync(output,{recursive:true});
+const cacheComparison=[];
 const store=setup(),sessions=new Map(),requests=[],reads={},errors=[];
 store.c.readTime=new Date().toISOString();
 for(let i=0;i<10000;i++){
@@ -53,8 +54,9 @@ const server=http.createServer(async(req,res)=>{
    let input='';for await(const part of req)input+=part;
    const request=JSON.parse(input);if(!allowed.has(request.fn))throw Error('Write or unexpected RPC blocked: '+request.fn);
    const started=performance.now(),result=store.c.apiGateway(request.token,request.fn,request.args,request.ua,request.metadata);
-   requests.push({user:request.token,fn:request.fn,options:request.args,elapsedMs:performance.now()-started,notModified:!!result.notModified,success:result.success!==false,message:result.message,rows:result.data?.rows?.length||result.rows?.length});
-   res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(result));return;
+   const payload=JSON.stringify(result);
+   requests.push({user:request.token,fn:request.fn,options:request.args,elapsedMs:performance.now()-started,bytes:Buffer.byteLength(payload),notModified:!!result.notModified,success:result.success!==false,message:result.message,rows:result.data?.rows?.length||result.rows?.length});
+   res.writeHead(200,{'Content-Type':'application/json'}).end(payload);return;
   }
   // The last case delivers an already-known page template after revocation;
   // only the real gateway decides whether its stored data may be reused.
@@ -200,9 +202,43 @@ async function main(){
   assert.equal(await page.evaluate(()=>products.length),0);
  });
  for(const page of pages){assert.deepEqual(page.errors,[]);await page.close();}
+ await check('IndexedDB on/off comparison preserves Dashboard, browse and XLFilter results with bounded document reads',async()=>{
+  sessions.set('staff',{username:'fixture-staff',role:'staff'});
+  for(const enabled of [true,false]){
+   store.cache.clear();
+   const startReads={...reads},startRequests=requests.length;
+   const arm=await browser.newContext();
+   await arm.addInitScript(value=>{window.SYY_HYBRID_CACHE=value;},enabled);
+   await arm.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
+   const page=await arm.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+   async function dashboard(){
+    const start=performance.now();await page.goto(origin+'/?file=index.html&user=staff');
+    await page.waitForFunction(()=>DASH.catalogPreview||DASH.loaded);const usableMs=Math.round(performance.now()-start);
+    await page.waitForFunction(()=>DASH.loaded&&!DASH.loading&&DASH.products.length===10000&&DASH.movements.length===1200);
+    if(enabled)await page.waitForFunction(async()=>Boolean((await syyDiskCache.lookup('getAllProducts[{"compact":true}]'))?.record));
+    assert.equal(await page.evaluate(()=>syyDiskCache.enabled),enabled);
+    return {usableMs,completeMs:Math.round(performance.now()-start)};
+   }
+   const cold=await dashboard(),warm=await dashboard();
+   store.c.clearCollectionCache_('Master_Products');
+   const invalidated=await dashboard();
+   await page.goto(origin+'/?file=Master_Products.html&user=staff');
+   await page.waitForFunction(()=>!productLoading&&productsCache.length===50);
+   await page.locator('#btnNextPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===2);
+   assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');
+   const facets=await page.evaluate(()=>new Promise((resolve,reject)=>callApi('getProductCatalogFacets',[{},'partType'],resolve,reject)));
+   assert.deepEqual(facets.values.sort(),['เทียบ','แท้'].sort());assert.deepEqual(errors,[]);
+   const calls=requests.slice(startRequests),counts=Object.fromEntries(Object.keys(reads).map(key=>[key,reads[key]-(startReads[key]||0)]));
+   cacheComparison.push({indexedDB:enabled,cold,warm,invalidated,requests:calls.length,bytes:calls.reduce((n,call)=>n+call.bytes,0),reads:counts});
+   await arm.close();
+  }
+  const totals=cacheComparison.map(arm=>Object.values(arm.reads).reduce((a,b)=>a+b,0));
+  assert(totals[1]<=10*totals[0]);
+  console.log('Cache A/B (synthetic): '+JSON.stringify(cacheComparison));
+ });
  assert.deepEqual(errors,[]);assert.equal(store.commits.length,0);
  assert(!store.calls.some(x=>['patch','delete'].includes(x.options.method)||x.url.endsWith(':commit')));
- fs.writeFileSync(path.join(output,'backend-browser.json'),JSON.stringify({fixtureOnly:true,products:10000,cases,reads,requests,writes:store.commits.length,sessionValidation:'synthetic; real apiGateway authorization and workers',productionLatencyMeasured:false},null,2));
+ fs.writeFileSync(path.join(output,'backend-browser.json'),JSON.stringify({fixtureOnly:true,products:10000,cases,reads,requests,cacheComparison,writes:store.commits.length,sessionValidation:'synthetic; real apiGateway authorization and workers',productionLatencyMeasured:false},null,2));
  console.log('Passed '+cases+' backend-integrated browser groups; no real network or DB writes.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();server.close();});

@@ -563,36 +563,56 @@ function syyReadCoordinator(){
   return syyReadPool;
 }
 function syyDrainReads(pool){
+  var clock=pool.owner||window;
+  clock.clearTimeout(pool.recoveryTimer);
   while(pool.active<3&&pool.queue.length){
     var index=pool.queue.findIndex(function(item){return !item.background;});
     var task=pool.queue.splice(index<0?0:index,1)[0];task();
   }
+  if(pool.active<3){pool.recoveryUsed=false;return;}
+  if(pool.active!==3||pool.recoveryUsed)return;
+  var next=pool.queue.findIndex(function(item){return !item.background&&item.recovery;});
+  if(next<0)return;
+  var latest=0;
+  pool.pending.forEach(function(entry){if(entry.started)latest=Math.max(latest,entry.startedAt);});
+  var remaining=10000-(clock.Date.now()-latest);
+  if(remaining>0){pool.recoveryTimer=clock.setTimeout(function(){syyDrainReads(pool);},remaining);return;}
+  pool.recoveryUsed=true;
+  if(pool.queue.splice(next,1)[0]()===false){pool.recoveryUsed=false;syyDrainReads(pool);}
 }
 // A fresh read after a write/invalidation must never join an older transport.
 // Advancing the fence does not dispatch requests or release physical slots.
 function syyFenceReadPool(){var pool=syyReadCoordinator();pool.generation=(pool.generation||0)+1;}
 // A browser timeout does not cancel GAS. Keep its physical slot and coalesce
 // retries until the actual reply, including reads from another same-origin page.
-function syyScheduleRead(key,dispatch,listener,background){
+function syyScheduleRead(key,dispatch,listener,background,recovery){
   var pool=syyReadCoordinator(),existing=pool.pending.get(key);
-  if(existing){existing.listeners.push(listener);if(existing.started)listener.started();if(!background)existing.task.background=false;return;}
+  if(existing){existing.listeners.push(listener);if(existing.started)listener.started();if(!background)existing.task.background=false;syyDrainReads(pool);return;}
   var entry={listeners:[listener]};pool.pending.set(key,entry);
   entry.task=function(){
     entry.listeners=entry.listeners.filter(function(item){return item.valid();});
-    if(!entry.listeners.length){pool.pending.delete(key);return;}
-    pool.active++;entry.started=true;entry.listeners.forEach(function(item){item.started();});var finished=false;
+    if(!entry.listeners.length){pool.pending.delete(key);return false;}
     // Release abandoned bookkeeping after the GAS execution ceiling. Never
     // restart the operation here and never apply this watchdog to writes.
     // The shell owns the timer so replacing a child frame cannot orphan slots.
     var clock=pool.owner||window;
+    pool.active++;entry.started=true;entry.startedAt=clock.Date.now();
+    entry.listeners.forEach(function(item){item.started();});var finished=false;
     var watchdog=clock.setTimeout(function(){finish(false,{timeout:true,message:'การเชื่อมต่อไม่ตอบกลับ กรุณาเปิดหน้าใหม่'});},370000);
     function finish(ok,value){
-      if(finished)return;finished=true;clock.clearTimeout(watchdog);pool.pending.delete(key);pool.active--;
+      if(finished)return;finished=true;clock.clearTimeout(watchdog);pool.pending.delete(key);pool.active--;if(pool.active<3)pool.recoveryUsed=false;
       try{entry.listeners.forEach(function(item,i){try{item.reply(ok,ok&&value!==undefined&&i<entry.listeners.length-1?JSON.parse(JSON.stringify(value)):value);}catch(error){setTimeout(function(){throw error;},0);}});}finally{syyDrainReads(pool);}
     }
     try{dispatch(function(value){finish(true,value);},function(error){finish(false,error);});}catch(error){finish(false,error);}
   };
-  entry.task.background=!!background;pool.queue.push(entry.task);syyDrainReads(pool);
+  entry.task.background=!!background;entry.task.recovery=!!recovery;pool.queue.push(entry.task);syyDrainReads(pool);
+}
+function syyCanRecoverRead(name,args){
+  if(['getBrands','getCategories','getProductById','getProductImageBatch'].includes(name))return true;
+  var options=args&&args[0];
+  return (name==='getProductCatalogPage'||name==='getAllProducts'&&options&&options.paged===true)&&
+    options&&options.cursorMode===true&&Number(options.pageSize||50)<=100&&!options.includeMasters&&
+    !options.search&&(!options.filters||!Object.keys(options.filters).length)&&(!options.sortCol||options.sortCol==='productCode');
 }
 function syyReportReadState(ok,error,background){
   if(background||typeof SYYFrameBridge==='undefined')return;
@@ -601,7 +621,7 @@ function syyReportReadState(ok,error,background){
 function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOptions){
   requestOptions=requestOptions||{};
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
-  var done=false,timer=null,retryTimer=null,createdAt=Date.now(),rpcDispatched=false,attempt=0,isRead=/^(get|fetch)/.test(fnName);
+  var done=false,timer=null,retryTimer=null,createdAt=Date.now(),rpcDispatched=false,queueAt=createdAt,queueMs=0,dispatchAt=createdAt,transportMs=0,attempt=0,isRead=/^(get|fetch)/.test(fnName);
   function settled(failed){if(done)return false;done=true;clearTimeout(timer);clearTimeout(retryTimer);syyUxBusy=Math.max(0,syyUxBusy-1);syyUxFailed=!!failed;if(!failed&&isRead)syyUxLoaded=Date.now();syyUxStatus();return true;}
   function fail(error){if(!settled(true))return;error=error||{};if(syyWriteButtons[fnName]&&!(fnName==='saveProduct'&&args&&args[0]&&args[0].docId))syyUnknownWrites[fnName]=true;try{if(onFailure)onFailure({message:syyErrorMessage(error),auth:!!error.auth,code:error.code||'READ_FAILED',dispatched:rpcDispatched,retryable:error.retryable===true,retryAfterMs:Number(error.retryAfterMs)||0,restartPage:error.restartPage===true,timeout:error.timeout===true});else swyError('ดำเนินการไม่สำเร็จ',esc(syyErrorMessage(error)));}finally{syyLockUnknownWrite(fnName);syyDraftFlush();}}
   function valid(){
@@ -611,7 +631,9 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOption
   }
   function expired(){if(!settled(true))return;syyShowSessionExpired();syyPostParent({action:'SESSION_EXPIRED'});document.querySelectorAll('iframe[data-channel]').forEach(function(frame){if(frame.src)syyPostFrame(frame,{action:'SESSION_EXPIRED'});});if(onFailure)onFailure({message:'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',auth:true});}
   if(!token){expired();return;}
-  if(isRead)timer=setTimeout(function(){fail({timeout:true,message:'รอข้อมูลเกิน 45 วินาที กรุณาลองอีกครั้ง'});},45000);
+  if(isRead)timer=setTimeout(function(){
+    fail({timeout:true,code:rpcDispatched?'READ_TIMEOUT':'READ_QUEUE_TIMEOUT',message:rpcDispatched?'เซิร์ฟเวอร์ยังไม่ส่งข้อมูล กรุณาลองอีกครั้ง':'คำขอยังรอคิว กรุณาลองอีกครั้ง'});
+  },45000);
   function reply(ok,res){
     if(done)return;
     if(!ok){fail(res);return;}
@@ -624,12 +646,14 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOption
       if(!attempt&&res.retryable===true&&['CACHE_BUILDING','READ_BUSY','AUTH_UNAVAILABLE'].indexOf(res.code)>=0&&!(clientCache&&clientCache.refresh)&&Date.now()-createdAt+delay<40000){attempt++;retryTimer=setTimeout(execute,delay);return;}
       fail(res);return;
     }
-    settled(res&&res.success===false);if(onSuccess)onSuccess(res);
+    settled(res&&res.success===false);if(onSuccess)onSuccess(res,isRead?{queueMs:queueMs,transportMs:transportMs}:undefined);
   }
   function execute(){
     if(!valid())return;
+    queueAt=Date.now();
+    function started(){rpcDispatched=true;dispatchAt=Date.now();queueMs+=dispatchAt-queueAt;}
     function dispatch(ok,failed){rpcDispatched=true;google.script.run.withSuccessHandler(ok).withFailureHandler(failed).apiGateway(token,fnName,args||[],navigator.userAgent,clientCache);}
-    if(isRead){var key=JSON.stringify([token,fnName,args||[],clientCache||null,syyReadCoordinator().generation||0]);syyScheduleRead(key,dispatch,{valid:valid,reply:reply,started:function(){rpcDispatched=true;}},requestOptions.background);}
+    if(isRead){var key=JSON.stringify([token,fnName,args||[],clientCache||null,syyReadCoordinator().generation||0]);syyScheduleRead(key,dispatch,{valid:valid,reply:function(ok,result){transportMs+=Date.now()-dispatchAt;reply(ok,result);},started:started},requestOptions.background,syyCanRecoverRead(fnName,args)&&!(clientCache&&clientCache.refresh));}
     else try{dispatch(function(res){reply(true,res);},function(error){reply(false,error);});}catch(error){if(done)throw error;fail(error);}
   }
   execute();
@@ -881,7 +905,7 @@ function callApi(fnName,args,onSuccess,onFailure,options){
      callApi(fnName,args,onSuccess,onFailure,Object.assign({},options,{manual:manual,diskReady:true,diskStamp:stamp,validate:true}));
    });return;
  }
- if(record&&!manual&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){var hitSequence=syyReadLatest.get(key+':'+identity);syyCacheStats.hits++;setTimeout(function(){syyEnsureCacheIdentity();if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||hitSequence!==syyReadLatest.get(key+':'+identity)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyLastReadSource='memory';syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)));if(typeof syyReportReadState==='function')syyReportReadState(true,null,options.background);},0);return;}
+ if(record&&!manual&&!syyReadRevalidate&&!options.validate&&Date.now()-record.checkedAt<policy.ttl){var hitSequence=syyReadLatest.get(key+':'+identity);syyCacheStats.hits++;setTimeout(function(){syyEnsureCacheIdentity();if(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||hitSequence!==syyReadLatest.get(key+':'+identity)){if(onFailure)onFailure({message:'ข้อมูลเปลี่ยนแปลง กรุณาโหลดใหม่'});return;}syyLastReadAt=syyUxLoaded=record.loadedAt;syyLastReadSource='memory';syyUxStatus();if(onSuccess)onSuccess(syyDecodeRead(JSON.parse(record.raw)),{section:{version:record.version,loadedAt:record.loadedAt}});if(typeof syyReportReadState==='function')syyReportReadState(true,null,options.background);},0);return;}
  var pendingKey=key+':'+identity+':'+epoch+':'+!!force+':'+!!authoritative+(manual?':manual':''),listeners=syyPendingReads.get(pendingKey);if(listeners){listeners.push({ok:onSuccess,fail:onFailure});return;}
  if(authoritative)syyCacheStats.authoritative++;
  if(manual)syyCacheStats.manual++;
@@ -890,7 +914,8 @@ function callApi(fnName,args,onSuccess,onFailure,options){
  syyReadLatest.delete(fenceKey);syyReadLatest.set(fenceKey,requestSequence);while(syyReadLatest.size>200)syyReadLatest.delete(syyReadLatest.keys().next().value);
  var rpcTiming={};function measure(failed){if(measured)return;measured=true;var m=syyCacheStats.byApi[fnName]||(syyCacheStats.byApi[fnName]={rpcCount:0,errorCount:0,totalMs:0,maxMs:0,lastMs:0,slowCount:0});m.lastMs=Math.max(0,Date.now()-rpcStarted);m.rpcCount++;m.errorCount+=failed?1:0;m.slowCount=(m.slowCount||0)+(m.lastMs>=3000?1:0);m.totalMs+=m.lastMs;m.maxMs=Math.max(m.maxMs,m.lastMs);m.samples=(m.samples||[]).concat([Object.assign({totalMs:m.lastMs,failed:!!failed},rpcTiming)]).slice(-20);var sorted=m.samples.map(function(x){return x.totalMs;}).sort(function(a,b){return a-b;});m.p50Ms=sorted[Math.ceil(sorted.length*.5)-1];m.p95Ms=sorted[Math.ceil(sorted.length*.95)-1];}
  function failed(error){if(error&&error.dispatched===false)syyCacheStats.cancelled=(syyCacheStats.cancelled||0)+1;else measure(true);syyPendingReads.delete(pendingKey);if(error&&error.code!=='READ_SUPERSEDED'&&typeof syyReportReadState==='function')syyReportReadState(false,error,options.background);listeners.forEach(function(x){try{if(x.fail)x.fail(error);else swyError('โหลดข้อมูลไม่สำเร็จ',esc(error.message||''));}catch(e){setTimeout(function(){throw e;},0);}});}
- syyCallApiRaw(fnName,args,function(data){
+ syyCallApiRaw(fnName,args,function(data,transport){
+   if(transport)Object.assign(rpcTiming,transport);
    syyEnsureCacheIdentity();
    if(policy&&(identity!==syyCacheIdentity||epoch!==syyCacheEpoch(policy.scopes)||syyReadLatest.get(fenceKey)!==requestSequence)){failed({message:'ข้อมูลเปลี่ยนแปลงระหว่างโหลด กรุณาโหลดใหม่'});return;}
    var version=null,previous=null,expiresAt=null;if(data&&data.__syyCache===1){if(data.timings)['authMs','operationMs','serverMs'].forEach(function(k){if(Number.isFinite(data.timings[k])&&data.timings[k]>=0)rpcTiming[k]=data.timings[k];});version=data.version;expiresAt=data.expiresAt;if(data.notModified){if(!record){failed({message:'แคชหมดอายุ กรุณาโหลดใหม่'});return;}previous=record;data=JSON.parse(record.raw);syyCacheStats.notModified++;}else data=data.data;}
@@ -908,7 +933,8 @@ function callApi(fnName,args,onSuccess,onFailure,options){
    if(policy&&canCache&&version!==null&&wireProducts)syySeedCatalog(wireProducts,catalogSection,identity,policy.scopes,epoch);
    // Cache records store the wire JSON. Only other listeners need an isolated copy.
    var readSucceeded=!(data&&data.success===false);
-   measure(false);syyPendingReads.delete(pendingKey);syyUxStatus();var rendered=false,renderFailed=false;listeners.forEach(function(x,i){try{if(x.ok)x.ok(policy&&i<listeners.length-1?JSON.parse(JSON.stringify(data)):data,{notModified:!!previous,manual:manual});rendered=true;}catch(e){renderFailed=true;if(typeof syyReportReadState==='function')syyReportReadState(false,{code:'RENDER_FAILED'},options.background);setTimeout(function(){throw e;},0);}});
+   var section=typeof version==='string'?{version:version,loadedAt:syyLastReadAt}:null;
+   measure(false);syyPendingReads.delete(pendingKey);syyUxStatus();var rendered=false,renderFailed=false;listeners.forEach(function(x,i){try{if(x.ok)x.ok(policy&&i<listeners.length-1?JSON.parse(JSON.stringify(data)):data,{notModified:!!previous,manual:manual,section:section});rendered=true;}catch(e){renderFailed=true;if(typeof syyReportReadState==='function')syyReportReadState(false,{code:'RENDER_FAILED'},options.background);setTimeout(function(){throw e;},0);}});
    if(rendered&&!renderFailed&&readSucceeded&&typeof syyReportReadState==='function')syyReportReadState(true,null,options.background);
  },failed,policy&&canCache?{protocol:1,version:record&&record.version,loadedAt:record&&record.loadedAt,expiresAt:record&&record.expiresAt,manual:!!manual,refresh:!!authoritative}:undefined,options);
 }
@@ -985,21 +1011,48 @@ function syyReadFields(root){var values={};document.querySelectorAll(root+' inpu
 function syyWriteFields(values){Object.keys(values||{}).forEach(function(id){var field=document.getElementById(id);if(!field||/password|token|otp|secret|recovery|file/i.test(field.type+' '+id))return;if(field.type==='checkbox')field.checked=!!values[id];else field.value=String(values[id]??'');});if(window.SYYSelect)SYYSelect.refresh(document);}
 function syyDraftRegister(name,adapter){
   var id=syyIdentity();if(!id||!['staff','admin'].includes(id.role))return;
-  syyDrafts[name]={adapter:adapter,ready:false,baseline:'',busy:false,warning:false};
+  syyDrafts[name]={adapter:adapter,ready:false,baseline:JSON.stringify(adapter.capture()),early:null,earlyKey:syyLocalGet('draft',name)?'draft-early':'draft',busy:false,warning:false};
 }
-function syyDraftDirty(name){var d=syyDrafts[name];return !!(d&&d.ready&&JSON.stringify(d.adapter.capture())!==d.baseline);}
-function syyDraftClean(name){var fn={quotation:'saveQuotation',invoice:'saveTaxInvoice',orders:'savePurchaseOrder',product:'saveProduct'}[name];if(fn&&syyUnknownWrites[fn]){delete syyUnknownWrites[fn];var button=document.getElementById(syyWriteButtons[fn]);if(button){button.disabled=false;button.textContent=button.dataset.syyWriteLabel||'บันทึก';delete button.dataset.syyWriteLabel;}}var d=syyDrafts[name];if(d){d.baseline=JSON.stringify(d.adapter.capture());syyLocalRemove('draft',name);}}
+function syyCaptureEarlyDrafts(){
+  Object.values(syyDrafts).forEach(function(d){
+    if(d.ready)return;
+    var value=d.adapter.capture();
+    d.early=JSON.stringify(value)===d.baseline?null:value;
+  });
+}
+function syyDraftDirty(name){var d=syyDrafts[name];return !!(d&&(d.ready?JSON.stringify(d.adapter.capture())!==d.baseline:d.early));}
+function syyDraftClean(name){var fn={quotation:'saveQuotation',invoice:'saveTaxInvoice',orders:'savePurchaseOrder',product:'saveProduct'}[name];if(fn&&syyUnknownWrites[fn]){delete syyUnknownWrites[fn];var button=document.getElementById(syyWriteButtons[fn]);if(button){button.disabled=false;button.textContent=button.dataset.syyWriteLabel||'บันทึก';delete button.dataset.syyWriteLabel;}}var d=syyDrafts[name];if(d){d.baseline=JSON.stringify(d.adapter.capture());d.early=null;syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);}}
 function syyDraftFlush(){
   if(window.syyIntentionalExit)return;var dirty=false,failed=false;
-  Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(!d.ready)return;if(syyDraftDirty(name)){
-    dirty=true;var stored=syyLocalSet('draft',name,d.adapter.capture());failed=failed||!stored;
+  Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(d.recovering)return;
+    if(!d.ready&&!d.early)return;
+    var value=d.ready&&syyDraftDirty(name)?d.adapter.capture():d.early;
+    if(value){
+    var key=d.ready?'draft':d.earlyKey;
+    dirty=true;var stored=syyLocalSet(key,name,value);failed=failed||!stored;
     if(!stored&&!d.warning){d.warning=true;toast('พื้นที่เก็บร่างไม่พร้อม กรุณาเก็บหน้านี้ไว้จนบันทึกสำเร็จ','warn',6000);}
-  }else syyLocalRemove('draft',name);});
+  }else if(d.ready)syyLocalRemove('draft',name);});
   var status=document.getElementById('syyDraftStatus');if(status){status.hidden=!dirty;status.textContent=failed?'ยังไม่บันทึก · เก็บร่างไม่สำเร็จ กรุณาเก็บหน้านี้ไว้จนบันทึก':'ยังไม่บันทึก · เก็บร่างในเซสชันเบราว์เซอร์ของบัญชีนี้แล้ว (8 ชั่วโมง)';}
 }
-function syyDraftStart(){Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(d.ready)return;d.ready=true;d.baseline=JSON.stringify(d.adapter.capture());var saved=syyLocalGet('draft',name);if(!saved)return;
-  if(d.adapter.blocked&&d.adapter.blocked()){syyLocalRemove('draft',name);return;}
-  swyConfirm({title:'พบร่างที่ยังไม่บันทึก',html:'กู้คืนร่างในเบราว์เซอร์ของบัญชีนี้? กรุณาตรวจข้อมูลล่าสุดก่อนบันทึก ระบบจะไม่ส่งรายการให้อัตโนมัติ',confirmText:'กู้คืนร่าง',cancelText:'ทิ้งร่าง'}).then(function(ok){if(ok){d.adapter.restore(saved);toast('กู้คืนร่างแล้ว กรุณาตรวจสอบก่อนบันทึก','warn');}else syyLocalRemove('draft',name);});
+function syyDraftStart(){Object.keys(syyDrafts).forEach(function(name){var d=syyDrafts[name];if(d.ready||window.syyExpiryStarted)return;
+  var early=d.early, saved=syyLocalGet('draft',name), newer=syyLocalGet('draft-early',name);
+  d.ready=true;d.early=null;d.baseline=JSON.stringify(d.adapter.capture());
+  if(d.adapter.blocked&&d.adapter.blocked()){syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);return;}
+  if(early&&!newer&&(!saved||JSON.stringify(early)===JSON.stringify(saved))){d.adapter.restore(early);syyDraftFlush();return;}
+  if(saved&&(early||newer)){
+    var latest=early||newer;
+    syyLocalSet('draft-early',name,latest);
+    d.recovering=true;
+    swyConfirm({title:'พบร่างสองฉบับ',html:'เลือกร่างที่ต้องการทำต่อ',confirmText:'ใช้ร่างล่าสุด',cancelText:'ใช้ร่างก่อนหน้า'}).then(function(ok){
+      d.recovering=false;if(window.syyExpiryStarted)return;
+      d.adapter.restore(ok?latest:saved);syyDraftFlush();syyLocalRemove('draft-early',name);
+    });
+    return;
+  }
+  saved=saved||newer;
+  if(!saved)return;
+  d.recovering=true;
+  swyConfirm({title:'พบร่างที่ยังไม่บันทึก',html:'กู้คืนร่างในเบราว์เซอร์ของบัญชีนี้? กรุณาตรวจข้อมูลล่าสุดก่อนบันทึก ระบบจะไม่ส่งรายการให้อัตโนมัติ',confirmText:'กู้คืนร่าง',cancelText:'ทิ้งร่าง'}).then(function(ok){d.recovering=false;if(window.syyExpiryStarted)return;if(ok){d.adapter.restore(saved);syyDraftFlush();toast('กู้คืนร่างแล้ว กรุณาตรวจสอบก่อนบันทึก','warn');}else syyLocalRemove('draft',name);syyLocalRemove('draft-early',name);});
 });}
 function syyGuardDraft(change,name){
   var d=syyDrafts[name],modal=document.getElementById(name);
@@ -1050,9 +1103,9 @@ syyOnReady(function(){
   syyAccessibleFields(document);document.addEventListener('click',function(event){var label=event.target.closest('label[for]'),field=label&&document.getElementById(label.htmlFor);if(field&&field.classList.contains('syy-select-native')){event.preventDefault();document.getElementById(field.id+'-control')?.focus();}});new MutationObserver(function(records){records.forEach(function(record){record.addedNodes.forEach(function(node){if(node.nodeType===1)syyAccessibleFields(node);});});}).observe(document.body,{childList:true,subtree:true});
   var status=document.createElement('div');status.id='syyDataStatus';status.className='syy-data-status';status.setAttribute('role','status');document.querySelector('.page-head,.page-header')?.insertAdjacentElement('afterend',status);syyUxStatus();
   var draftStatus=document.createElement('div');draftStatus.id='syyDraftStatus';draftStatus.className='syy-data-status';draftStatus.setAttribute('role','status');draftStatus.hidden=true;status.insertAdjacentElement('afterend',draftStatus);
-  document.addEventListener('input',function(event){syyClearInvalid(event.target);clearTimeout(window.syyDraftTimer);window.syyDraftTimer=setTimeout(syyDraftFlush,350);});
+  document.addEventListener('input',function(event){syyClearInvalid(event.target);syyCaptureEarlyDrafts();clearTimeout(window.syyDraftTimer);window.syyDraftTimer=setTimeout(syyDraftFlush,350);});
   function persist(){syyDraftFlush();if(!window.syyIntentionalExit)syyViewFlush();}
-  document.addEventListener('change',function(event){syyClearInvalid(event.target);setTimeout(persist,0);});document.addEventListener('click',function(){setTimeout(persist,0);});
+  document.addEventListener('change',function(event){syyClearInvalid(event.target);syyCaptureEarlyDrafts();setTimeout(persist,0);});document.addEventListener('click',function(){syyCaptureEarlyDrafts();setTimeout(persist,0);});
   window.addEventListener('scroll',function(){clearTimeout(window.syyViewTimer);window.syyViewTimer=setTimeout(syyViewFlush,150);},true);
   window.addEventListener('message',function(event){if(syyTrustedParentMessage(event)&&event.data.action==='CLEAR_LOCAL_STATE'){window.syyIntentionalExit=true;syyClearAccountState();};if(syyTrustedParentMessage(event)&&event.data.action==='SESSION_EXPIRED')syyShowSessionExpired();});
   window.addEventListener('pagehide',syyDraftFlush);window.addEventListener('beforeunload',function(event){syyDraftFlush();if(!window.syyIntentionalExit&&!window.syyExpiryStarted&&Object.keys(syyDrafts).some(syyDraftDirty)){event.preventDefault();event.returnValue='';}});

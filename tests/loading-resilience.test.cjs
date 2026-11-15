@@ -87,6 +87,18 @@ test('queued expired work never dispatches and abandoned transports eventually r
  const f=transportFixture();['getA','getB','getC','getD'].forEach(fn=>f.read(fn));f.tick(45001);assert.equal(f.calls.length,3);assert.equal(f.failures.length,4);f.tick(370000);assert.equal(f.calls.length,3);assert.equal(f.c.syyReadCoordinator().active,0);assert.equal(f.c.syyReadCoordinator().pending.size,0);
 });
 
+test('three stalled requests admit one distinct bounded foreground read while keeping all physical slots',()=>{
+ const f=transportFixture();['getA','getB','getC'].forEach(fn=>f.read(fn));
+ f.read('getDashboardBootstrap');f.read('getBrands');f.read('getBrands');f.read('getCategories',[],{background:true});
+ f.tick(9999);assert.equal(f.calls.length,3);f.tick(1);
+ assert.deepEqual(f.calls.map(call=>call.fn),['getA','getB','getC','getBrands']);
+ assert.equal(f.c.syyReadCoordinator().active,4);
+ f.calls[3].ok([]);f.read('getProductById',['P1']);f.tick(35001);
+ assert.equal(f.calls.length,4);assert.equal(f.results.length,2);
+ assert.equal(f.failures.filter(error=>error.code==='READ_TIMEOUT').length,3);
+ assert.equal(f.failures.filter(error=>error.code==='READ_QUEUE_TIMEOUT').length,2);
+});
+
 test('a shared invalidation fence prevents fresh callers joining transports from before a change',()=>{
  const parent=transportFixture(),child=transportFixture(parent.c);parent.read();child.c.syyFenceReadPool();child.read();assert.equal(parent.calls.length,1);assert.equal(child.calls.length,1);assert.equal(parent.c.syyReadCoordinator().active,2);
  parent.calls[0].ok([{id:'old'}]);assert.equal(parent.c.syyReadCoordinator().pending.size,1);assert.equal(child.results.length,0);child.calls[0].ok([{id:'new'}]);assert.equal(child.results[0][0].id,'new');assert.equal(parent.c.syyReadCoordinator().active,0);

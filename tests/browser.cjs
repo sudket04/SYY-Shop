@@ -171,6 +171,8 @@ async function main(){
   await check('Loading resilience: Dashboard exposes authenticated stock rows while historical analytics are pending',async()=>{
     const p=await pageFor('index.html');await p.evaluate(()=>{
       syyClearReadCache();DASH.loaded=false;DASH.catalogPrepared=false;DASH.restoredCatalogSection=null;DASH.catalogPreview=false;
+      const original=respond;
+      respond=(fn,args)=>fn==='getAllProducts'?{__syyCache:1,version:'preview-version',data:Array.from({length:120},(_,i)=>({...fixtureProduct,productCode:'PV'+i,productName:'Test Part '+i}))}:original(fn,args);
       apiHold='getDashboardBootstrap';dashLoad();
     });
     await p.waitForFunction(()=>DASH.catalogPreview===true&&apiPending.length>0);
@@ -179,7 +181,14 @@ async function main(){
     assert.equal(await p.evaluate(()=>DASH.loaded),false);assert.equal(await p.locator('#dashHealthBody button').first().isEnabled(),true);
     await p.evaluate(()=>{apiFailure='getDashboardBootstrap';apiPending.splice(0).forEach(fn=>fn());});
     await p.waitForFunction(()=>!DASH.loading);assert.match(await p.locator('#dashHealthBody').innerText(),/Test Part/);assert.match(await p.locator('#dashHealthBody').innerText(),/โหลดประวัติไม่สำเร็จ/);assert.equal(await p.locator('#homeScreen .sk').count(),0);
+    const reads=await p.evaluate(()=>apiCalls.length);
+    await p.locator('#dashHealthNext').click();assert.match(await p.locator('#dashHealthBody').innerText(),/PV50/);
+    await p.locator('#dashSearch').fill('PV119');await p.waitForFunction(()=>document.getElementById('dashHealthBody').textContent.includes('PV119'));
+    assert.equal(await p.locator('#dashHealthBody tr').count(),1);assert.equal(await p.evaluate(()=>apiCalls.length),reads);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDashboardBootstrap').at(-1).args[0].catalogSection.version),'preview-version');
+    const catalogReads=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length);
     await p.evaluate(()=>{apiFailure='';apiHold='';dashLoad();});await p.waitForFunction(()=>DASH.loaded&&!DASH.loading);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length),catalogReads);
     assert.equal(await p.locator('#dashHealthBody').getAttribute('aria-label'),null);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Loading resilience: same-origin menu requests share the shell concurrency pool',async()=>{
@@ -192,6 +201,20 @@ async function main(){
     assert.equal(await child.evaluate(()=>apiCalls.length),0);assert.equal(await p.evaluate(()=>syyReadCoordinator().active),3);
     await p.evaluate(()=>poolReplies.shift()([]));await child.waitForFunction(()=>apiCalls.some(c=>c.fn==='getBrands')&&syyUxBusy===0);
     await p.evaluate(()=>poolReplies.splice(0).forEach(ok=>ok([])));assert.equal(await p.evaluate(()=>syyReadCoordinator().active),0);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: oversized catalog keeps its validated version without a stored snapshot',async()=>{
+    const p=await pageFor('index.html');await p.evaluate(()=>{
+      syyClearReadCache();DASH.loaded=false;DASH.restoredCatalogSection=null;
+      const fields=['productCode','productName','partType','partNumber','barcode','barcodeGenerated','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carIds','carModel','costPrice','sellingPrice','currentStock','minStock','status'];
+      const data={catalogFormat:1,fields,rows:Array.from({length:10000},(_,i)=>fields.map((_,j)=>j===0?'BIG'+i:j===1?'Long name '.repeat(36):j===5?false:j===14?[]:j>=16&&j<=19?1:''))};
+      if(JSON.stringify(data).length<=3000000)throw Error('Oversized fixture is too small');
+      respond=fn=>fn==='getAllProducts'?{__syyCache:1,version:'large-version',data}:{products:undefined,movements:[],catalogSection:DASH.restoredCatalogSection};
+      dashLoad();
+    });
+    await p.waitForFunction(()=>DASH.loaded&&!DASH.loading&&DASH.products.length===10000);
+    assert.equal(await p.evaluate(()=>syyReadCache.has('getAllProducts[{"compact":true}]')),false);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getDashboardBootstrap').at(-1).args[0].catalogSection.version),'large-version');
+    assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Loading resilience: invalidation never reuses an older in-flight response for a fresh read',async()=>{
     const p=await pageFor('Master_Brands.html');await p.evaluate(()=>{
@@ -769,7 +792,7 @@ async function main(){
     }
   });
   await check('Auth expiry settles coalesced reads, preserves the draft and sends no automatic write',async()=>{
-    const p=await pageFor('Quotation.html');await p.evaluate(()=>{
+    const p=await pageFor('Quotation.html');await p.waitForFunction(()=>syyDrafts.quotation.ready);await p.evaluate(()=>{
       addToBasket('P1');document.getElementById('inpNote').value='Expiry draft';respond=()=>({__authError:true});apiHold='getAuthFixture';
       Swal.fire=o=>{alerts.push(o);return new Promise(()=>{});};window.expiryFailures=0;callApi('getAuthFixture',[],null,()=>expiryFailures++);callApi('getAuthFixture',[],null,()=>expiryFailures++);
       apiHold='';apiPending.shift()();
@@ -777,6 +800,14 @@ async function main(){
     assert.equal(await p.evaluate(()=>expiryFailures),2);assert.equal(await p.evaluate(()=>syyPendingReads.size),0);
     assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation').fields.inpNote),'Expiry draft');
     assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|issue)/.test(x.fn))),false);assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: early quote input survives expiry while the initial server request is held',async()=>{
+    const p=await context.newPage();await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{apiHold='getQuotationPageData';}));
+    await p.goto('http://127.0.0.1:'+port+'/?file=Quotation.html');await p.waitForFunction(()=>apiPending.length>0);
+    await p.locator('#inpNote').fill('Keep this early note');
+    await p.evaluate(()=>{respond=()=>({__authError:true});apiPending[0]();});
+    assert.equal(await p.evaluate(()=>syyLocalGet('draft','quotation')?.fields.inpNote),'Keep this early note');
+    assert.equal(await p.evaluate(()=>apiCalls.some(({fn})=>/^save/.test(fn))),false);await p.close();
   });
   await check('Unknown document save disables resubmission while retaining the editable draft',async()=>{
     for(const file of ['Quotation.html','Master_Tax_Invoice.html','Purchase_Orders.html']){
