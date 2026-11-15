@@ -1,9 +1,8 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const vm = require('node:vm');
-const path = require('node:path');
-const source = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
+const {readBackendSources} = require('./support/backend-sources.cjs');
+const sources = readBackendSources();
 function response(code, body) { return {getResponseCode:()=>code, getContentText:()=>JSON.stringify(body)}; }
 function setup() {
   const calls = [], docs = new Map();
@@ -28,7 +27,7 @@ function setup() {
       }
       throw new Error('Unexpected call: '+url);
     }}});
-  vm.runInContext(source, c);
+  for(const {name,source} of sources)vm.runInContext(source,c,{filename:name});
   Object.assign(c, {collectionGeneration_:()=>"fixture",getAuthHeader_:()=>({}), clearCollectionCache_:()=>{}, queryByEqualityField_:()=>[], peekCollectionDocsCache_:()=>null,
     fetchCollectionDocsCached_:name=>[...docs].filter(([key])=>key.startsWith(name+"/")).map(([key,doc])=>({id:key.split("/")[1],...doc})),getFirestoreRawList_:()=>[], updateTaxInvoiceYearsMeta_:()=>{}, updateQuotationYearsMeta_:()=>{}, logActivity_:()=>{},
     getProductById_:id=>({id, productCode:id, currentStock:c.parseFirestoreValue_(docs.get('Master_Products/'+id).fields.Current_Stock)}),

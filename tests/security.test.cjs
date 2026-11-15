@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-const sources = ['Code.gs', 'ProductImagesV2.gs', 'PasswordKdf.gs'].map(file => fs.readFileSync(path.join(root, file), 'utf8'));
+const sources = require('./support/backend-sources.cjs').readBackendSources().map(file=>file.source);
 const declared = [...sources.join('\n').matchAll(/^function\s+(\w+)\s*\(/gm)].map(m => m[1]);
 const publicNames = declared.filter(name => !name.endsWith('_'));
 const expectedPublic = ['doGet','apiGateway','apiGatewayV2','authLogin','authForgotPassword','authVerifyResetToken','authResetPassword','authChangePasswordForced'];

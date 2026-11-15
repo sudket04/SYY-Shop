@@ -1,4 +1,5 @@
-const fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto');
+const vm=require('node:vm'),crypto=require('node:crypto');
+const {readBackendSources}=require('./backend-sources.cjs');
 const plain=x=>JSON.parse(JSON.stringify(x)),reply=(code,body)=>({getResponseCode:()=>code,getContentText:()=>JSON.stringify(body)}),iterator=items=>{let i=0;return {hasNext:()=>i<items.length,next:()=>items[i++]};};
 function setup(options={}){
   const docs=new Map(),cache=new Map(),props={AUTH_MASTER_KEY:'test-only-key'},calls=[],commits=[],files=new Map(),folders=new Map(),snapshots=new Map();
@@ -128,7 +129,7 @@ function setup(options={}){
     ScriptApp:{getOAuthToken:()=> 'mock',getService:()=>({getUrl:()=> 'https://example.invalid/shop'})},
     Session:{getEffectiveUser:()=>owner,getActiveUser:()=>owner},MimeType:{PLAIN_TEXT:'text/plain'},MailApp:{sendEmail(){}}
   });
-  for(const file of ['Code.gs','ProductImagesV2.gs','PasswordKdf.gs'])vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'..','..',file),'utf8'),c);
+  for(const {name,source} of readBackendSources())vm.runInContext(source,c,{filename:name});
   c.BACKUP_FOLDER_ID=''; // Fixtures never target the user's actual Drive destination.
   if(options.legacyBackup)vm.runInContext('backupAllDataToBackup_ = '+require('./legacy-backup.cjs').toString(),c);
   c.readTime='2026-10-11T05:10:00.000Z';c.logActivity_=()=>{};
