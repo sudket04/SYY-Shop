@@ -74,6 +74,7 @@
         <div>
           <div class="profile-name" id="profFullName">กำลังโหลด...</div>
           <span class="role-badge" id="profRoleBadge">-</span>
+          <button type="button" class="btn-outline" id="profileRetry" onclick="loadProfile()" hidden>ลองโหลดโปรไฟล์อีกครั้ง</button>
         </div>
       </div>
       <div style="margin-top:14px; font-size:13px; color:#64748b;">
@@ -279,6 +280,8 @@ function callApi(fnName) {
 function esc(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 var myProfile = null;
+var profileLoading = false;
+var profileReadVersion = 0;
 var activityLogCache = [];
 var activityLogLoadedAt = 0, activityLogLoading = false;
 
@@ -303,21 +306,28 @@ function switchTab(name) {
 }
 
 /* ═══ โหลดโปรไฟล์ ═══ */
-function loadProfile() {
+function loadProfile(afterMutation) {
+  if(afterMutation===true)profileReadVersion++;
+  if(profileLoading)return;
+  profileLoading=true;
+  var readVersion=profileReadVersion;
+  var retry=document.getElementById('profileRetry');retry.hidden=true;
   var stopProfile=syyStartLoading(document.querySelector('#panelProfile .card')),stopSecurity=syyStartLoading(document.getElementById('totpStatusBox'));
-  callApi('authGetMyProfile', AUTH_TOKEN)
-    .withSuccessHandler(function (res) {
-      stopProfile();stopSecurity();if (!res.success) {
-        window.top.location.href = WEB_APP_URL + '?page=login';
-        return;
-      }
-      myProfile = res;
-      renderProfile(res);
-    })
-    .withFailureHandler(function () {
-      stopProfile();stopSecurity();document.getElementById('profFullName').innerText = 'โหลดข้อมูลไม่สำเร็จ';
-    })
-    .run();
+  syyCallApiRaw('authGetMyProfile',[],function(res){
+    if(readVersion!==profileReadVersion){finish();return;}
+    if(!res||res.success!==true){failed({message:'ข้อมูลโปรไฟล์ไม่ถูกต้อง'});return;}
+    finish();myProfile=res;renderProfile(res);syyReportReadState(true);
+  },failed,null,{readVersion:readVersion});
+  function finish(){
+    profileLoading=false;stopProfile();stopSecurity();
+    if(readVersion!==profileReadVersion&&!window.syyExpiryStarted)setTimeout(loadProfile,0);
+  }
+  function failed(error){
+    finish();if(error.auth||readVersion!==profileReadVersion)return;
+    syyReportReadState(false,error);retry.hidden=false;
+    if(!myProfile)document.getElementById('profFullName').textContent='โหลดข้อมูลไม่สำเร็จ';
+    else toast('โหลดโปรไฟล์ล่าสุดไม่สำเร็จ · แสดงข้อมูลเดิม','err');
+  }
 }
 
 var ROLE_LABEL = { admin: 'ผู้ดูแลระบบ', staff: 'พนักงาน', viewer: 'ผู้ดูอย่างเดียว' };
@@ -515,7 +525,7 @@ function doConfirmTotpSetup() {
       if (res.success) {
         closeTotpSetupModal();
         showRecoveryCodes(res.recoveryCodes);
-        loadProfile();   // รีเฟรชสถานะให้ตรงกับความจริง
+        loadProfile(true);   // รีเฟรชสถานะให้ตรงกับความจริง
       } else {
         alertEl.className = 'alert error show';
         alertEl.innerText = res.message;
@@ -566,7 +576,7 @@ function doDisableTotp() {
       btn.innerText = 'ปิดการใช้งาน';
       if (res.success) {
         closeDisableTotpModal();
-        loadProfile();
+        loadProfile(true);
       } else {
         alertEl.className = 'alert error show';
         alertEl.innerText = res.message;
@@ -590,19 +600,18 @@ function loadActivityLog() {
   var tbody = document.getElementById('logTableBody');
   tbody.innerHTML = skeletonRows(6,5);
 
-  callApi('getActivityLog', 200)
-    .withSuccessHandler(function (data) {
+  syyCallApiRaw('getActivityLog',[200],function (data) {
       activityLogLoading=false;
       if(!Array.isArray(data)){failed({message:data&&data.message||'ข้อมูลประวัติไม่ถูกต้อง'});return;}
       activityLogCache = data;activityLogLoadedAt=Date.now();
-      renderLogTable();
-    })
-    .withFailureHandler(failed)
-    .run();
+      renderLogTable();syyReportReadState(true);
+    },failed);
   function failed(err){
     activityLogLoading=false;
+    if(err.auth)return;
+    syyReportReadState(false,err);
     if(activityLogLoadedAt){renderLogTable();toast('โหลดประวัติล่าสุดไม่สำเร็จ · แสดงข้อมูลเดิม: '+syyErrorMessage(err),'err');}
-    else tbody.innerHTML='<tr class="empty-row"><td colspan="6">โหลดไม่สำเร็จ: '+esc(syyErrorMessage(err))+'</td></tr>';
+    else tbody.innerHTML=emptyStateHtml(6,{title:'โหลดประวัติไม่สำเร็จ',sub:syyErrorMessage(err),actions:[{label:'ลองโหลดประวัติอีกครั้ง',primary:true,onclick:'loadActivityLog()'}]});
   }
 }
 

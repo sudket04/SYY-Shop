@@ -168,6 +168,95 @@ async function main(){
     assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);
     assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Loading resilience: a first data failure reveals the actual page and its retry when readiness messages are lost',async()=>{
+    const p=await pageFor('index.html');
+    await p.evaluate(()=>window.addEventListener('message',event=>{if(event.data?.action==='PAGE_READY')event.stopImmediatePropagation();},{capture:true}));
+    await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{if(new URL(location.href).searchParams.get('page')==='brands')apiFailure='getBrands';}));
+    await p.locator('#menu-brands').click();
+    const child=p.frameLocator('#iframe-brands');
+    await child.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).waitFor({timeout:5000});
+    assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);
+    assert.equal(await p.evaluate(()=>syyPageDiagnostics.at(-1).state),'data-error');
+    const frame=p.frames().find(frame=>new URL(frame.url()).searchParams.get('page')==='brands');
+    await frame.evaluate(()=>{apiFailure='';respond=()=>[{id:'B1',Name:'Recovered brand'}];});
+    await child.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).click();
+    await child.getByText('Recovered brand',{exact:true}).waitFor();
+    await p.waitForFunction(()=>syyPageDiagnostics.at(-1).state==='data-ready');
+    assert.equal(await frame.evaluate(()=>apiCalls.filter(item=>item.fn==='getBrands').length),2);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: a trusted first data error reveals an unopened frame immediately',async()=>{
+    const p=await pageFor('index.html');
+    await p.route('**/*page=brands*',()=>{});await p.locator('#menu-brands').click();
+    assert.equal(await p.locator('#iframe-brands').getAttribute('data-ready'),'false');
+    await p.evaluate(()=>{
+      const frame=document.getElementById('iframe-brands');
+      window.dispatchEvent(new MessageEvent('message',{source:frame.contentWindow,origin:location.origin,data:{action:'PAGE_DATA_ERROR',channel:frame.dataset.channel,code:'READ_FAILED',elapsedMs:1300}}));
+    });
+    assert.equal(await p.locator('#iframe-brands').getAttribute('data-ready'),'true');
+    assert.equal(await p.evaluate(()=>syyPageDiagnostics.at(-1).state),'data-error');
+    assert.equal(await p.locator('#brandsForm .syy-frame-status').isVisible(),false);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
+  await check('Loading resilience: all pages open when storage is denied and the browser lacks randomUUID',async()=>{
+    const restricted=await browser.newContext();
+    await restricted.route('**/*',route=>new URL(route.request().url()).origin==='http://127.0.0.1:'+port?route.continue():route.abort());
+    await restricted.addInitScript(()=>{
+      for(const name of ['localStorage','sessionStorage','indexedDB'])Object.defineProperty(window,name,{configurable:true,get(){throw new DOMException('Storage denied','SecurityError');}});
+      Object.defineProperty(crypto,'randomUUID',{configurable:true,value:undefined});
+    });
+    for(const file of ['index.html','Master_Products.html','StockIssue.html','Purchase_Orders.html','Quotation.html','Master_Tax_Invoice.html','Master_Brands.html','Master_Categories.html','Master_Vendors.html','Master_Customers.html','Master_Zones.html','Master_Cars.html','Profile.html','Manage_Users.html','login.html']){
+      const p=await restricted.newPage(),errors=[];p.on('pageerror',error=>errors.push(error.message));
+      await p.goto('http://127.0.0.1:'+port+'/?file='+file+'&role=admin');
+      if(file==='login.html')await p.locator('#loginForm').waitFor({timeout:5000});
+      else await p.waitForFunction(()=>window.apiCalls?.length>0&&(typeof syyUxBusy==='undefined'||syyUxBusy===0)&&(typeof usersLoading==='undefined'||!usersLoading),null,{timeout:5000}).catch(error=>{throw Error(file+' '+errors.join(' · ')+' '+error.message);});
+      if(file==='index.html'){
+        await p.waitForFunction(()=>DASH.loaded,null,{timeout:5000});await p.locator('#menu-brands').click();
+        await p.waitForFunction(()=>document.getElementById('iframe-brands').dataset.ready==='true',null,{timeout:5000});
+        assert.match(await p.locator('#iframe-brands').getAttribute('data-channel'),/^[a-f0-9]{32}$/);
+        await p.frameLocator('#iframe-brands').locator('#searchInput').waitFor({state:'visible'});
+      }
+      assert.deepEqual(errors,[],file);await p.close();
+    }
+    await restricted.close();
+  });
+  await check('Loading resilience: Profile and Users stop hanging on timeout and a retry reuses the pending read',async()=>{
+    for(const [file,method,retry] of [['Profile.html','authGetMyProfile','ลองโหลดโปรไฟล์อีกครั้ง'],['Manage_Users.html','getAllUsers','ลองโหลดบัญชีอีกครั้ง']]){
+      const p=await context.newPage(),errors=[];p.on('pageerror',error=>errors.push(error.message));await p.clock.install();
+      await p.addInitScript(method=>document.addEventListener('DOMContentLoaded',()=>{apiHold=method;}),method);
+      await p.goto('http://127.0.0.1:'+port+'/?file='+file+'&role=admin');await p.waitForFunction(()=>apiPending.length===1);
+      await p.clock.fastForward(45001);
+      const retryButton=p.getByRole('button',{name:retry,exact:true});await retryButton.waitFor({state:'visible',timeout:5000});
+      assert.equal(await p.locator('.syy-loading-overlay .sk,#userBody .sk').count(),0,file);
+      await retryButton.click();assert.equal(await p.evaluate(method=>apiCalls.filter(item=>item.fn===method).length,method),1,file);
+      await p.evaluate(()=>{apiHold='';apiPending.shift()();});await retryButton.waitFor({state:'hidden'});
+      if(file==='Profile.html'){
+        await p.getByText('Staff',{exact:true}).waitFor();
+        await p.evaluate(()=>{apiHold='authGetMyProfile';loadProfile();loadProfile(true);});
+        await p.waitForFunction(()=>apiPending.length===1);
+        await p.clock.fastForward(45001);
+        await p.waitForFunction(()=>apiPending.length===2);
+        await p.evaluate(()=>{respond=()=>({success:true,username:'staff',fullName:'Updated Staff',role:'staff',totpEnabled:true});apiPending.pop()();});
+        await p.getByText('Updated Staff',{exact:true}).waitFor();
+        await p.evaluate(()=>{respond=()=>({success:true,username:'staff',fullName:'Old Staff',role:'staff',totpEnabled:false});apiPending.shift()();});
+        assert.equal(await p.locator('#profFullName').textContent(),'Updated Staff');
+      }
+      else {
+        await p.waitForFunction(()=>usersLoaded&&!usersLoading);
+        await p.evaluate(()=>{apiHold='getAllUsers';loadTable();loadTable(true);});
+        await p.waitForFunction(()=>apiPending.length===2);
+        await p.evaluate(()=>{respond=()=>[{id:'U1',username:'updated',role:'admin',status:'Active'}];apiPending.pop()();});
+        await p.waitForFunction(()=>usersCache[0]?.username==='updated');
+        await p.evaluate(()=>{respond=()=>[{id:'U1',username:'old',role:'admin',status:'Active'}];apiPending.shift()();});
+        assert.equal(await p.evaluate(()=>usersCache[0].username),'updated');
+        await p.evaluate(()=>{apiHold='';respond=()=>({__authError:true,success:false});loadTable();});
+        const login=p.getByRole('link',{name:'เข้าสู่ระบบใหม่'});await login.waitFor({state:'visible'});
+        assert.equal(new URL(await login.getAttribute('href')).search,'?page=login');
+        assert.equal(await p.locator('#userBody tr').count(),0);
+      }
+      assert.deepEqual(errors,[],file);await p.close();
+    }
+  });
   await check('Loading resilience: Dashboard exposes authenticated stock rows while historical analytics are pending',async()=>{
     const p=await pageFor('index.html');await p.evaluate(()=>{
       syyClearReadCache();DASH.loaded=false;DASH.catalogPrepared=false;DASH.restoredCatalogSection=null;DASH.catalogPreview=false;
@@ -1080,8 +1169,9 @@ async function main(){
   });
   await check('Year, status and server-search scope survive reload with no background Load All',async()=>{
     const p=await pageFor('Quotation.html');p.on('dialog',dialog=>dialog.accept());
+    await p.waitForFunction(()=>syyViews.quotation?.ready);
     await p.evaluate(()=>{syyLocalSet('view','quotation-year',2568);setListFilter('ร่าง');syyViewFlush();syyLocalSet('view','quotations',{search:{number:'ARCHIVE',from:'2025-01-01',to:'2025-12-31'}});});
-    await p.reload();await p.waitForTimeout(150);assert.equal(await p.evaluate(()=>currentPageYear),2568);assert.equal(await p.evaluate(()=>listStatusFilter),'ร่าง');
+    await p.reload();await p.waitForFunction(()=>syyViews.quotation?.ready);assert.equal(await p.evaluate(()=>currentPageYear),2568);assert.equal(await p.evaluate(()=>listStatusFilter),'ร่าง');
     const searchCall=await p.evaluate(()=>apiCalls.find(x=>x.fn==='getQuotationListData'));assert.equal(searchCall.args[1].search.number,'ARCHIVE');assert.equal(searchCall.args[1].pageSize,50);
     assert.deepEqual(p.errors,[]);await p.close();
   });
@@ -1806,7 +1896,15 @@ async function main(){
     const routes=[['Master_Brands.html','getBrands','loadTable()'],['Master_Categories.html','getCategories','loadTable()'],['Master_Vendors.html','getVendorsFull','loadTable()'],['Master_Customers.html','getCustomersFull','loadTable()'],['Master_Zones.html','getZonesFull','loadTable()'],['Master_Cars.html','getCarsFull','loadTable()'],['Master_Products.html','getAllProducts','loadTable(true)'],['StockIssue.html','getAllProducts','loadProducts()'],['Quotation.html','getQuotationPageData','loadPageData(null,null,null,true)'],['Master_Tax_Invoice.html','getTaxInvoicePageData','loadAll()'],['Purchase_Orders.html','getPurchaseOrderPageData','loadAll()'],['index.html','getDashboardBootstrap','dashLoad(true)']];
     for(const [file,api,start] of routes){const p=await pageFor(file);for(const fail of [false,true]){await p.evaluate(({api,start})=>{apiHold=api;syyReadFresh=true;(0,eval)(start);syyReadFresh=false;},{api,start});await p.waitForFunction(()=>apiPending.length>0,{},{timeout:8000}).catch(async error=>{throw Error(file+' '+api+' '+fail+' '+JSON.stringify(await p.evaluate(()=>apiCalls.map(x=>x.fn)))+' '+error.message);});assert(await p.locator('.syy-loading-overlay .sk').count()>0,file);await p.evaluate(({api,fail})=>{apiFailure=fail?api:'';apiHold='';apiPending.splice(0).forEach(fn=>fn());},{api,fail});await p.waitForFunction(()=>document.querySelectorAll('.syy-loading-overlay').length===0);await p.waitForFunction(()=>!syyFreshState||!syyFreshState.busy);}assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|delete|commit|issue)/.test(x.fn))),false,file);assert.deepEqual(p.errors,[],file);await p.close();}
     const profile=await pageFor('Profile.html');await profile.evaluate(()=>{apiHold='authGetMyProfile';loadProfile();});assert(await profile.locator('.syy-loading-overlay .sk').count()>0);await profile.evaluate(()=>{apiHold='';apiPending.shift()();});assert.equal(await profile.locator('.syy-loading-overlay').count(),0);await profile.evaluate(()=>{apiHold='getActivityLog';loadActivityLog();});assert(await profile.locator('#logTableBody .sk').count()>0);await profile.evaluate(()=>{apiHold='';apiPending.shift()();});assert.equal(await profile.locator('#logTableBody .sk').count(),0);assert.deepEqual(profile.errors,[]);await profile.close();
-    const users=await pageFor('Manage_Users.html','admin');await users.evaluate(()=>{apiHold='getAllUsers';loadTable();});assert(await users.locator('#userBody .sk').count()>0);await users.evaluate(()=>{apiHold='';apiPending.shift()();});assert.equal(await users.locator('#userBody .sk').count(),0);assert.deepEqual(users.errors,[]);await users.close();
+    const users=await pageFor('Manage_Users.html','admin');await users.waitForFunction(()=>usersLoaded&&!usersLoading);
+    await users.evaluate(()=>{const prior=respond;respond=(fn,args)=>fn==='getAllUsers'?[{id:'U1',username:'retained-user',role:'admin',status:'Active'}]:prior(fn,args);loadTable();});
+    await users.getByText('retained-user',{exact:true}).waitFor();
+    await users.evaluate(()=>{apiHold='getAllUsers';loadTable();});
+    await users.locator('#recordCount .sk').waitFor();
+    assert(await users.getByText('retained-user',{exact:true}).isVisible());
+    await users.evaluate(()=>{apiHold='';apiPending.shift()();});
+    await users.locator('#recordCount .sk').waitFor({state:'detached'});
+    assert.deepEqual(users.errors,[]);await users.close();
   });
   await check('Loading UX overlapping reads retain one skeleton, preserve existing DOM and do not issue a request',async()=>{
     const p=await pageFor('Master_Products.html');const result=await p.evaluate(async()=>{const before=apiCalls.length,body=document.getElementById('productBody'),row=body.firstElementChild,stopA=syyStartLoading(body),stopB=syyStartLoading(body);stopA();const retained=document.querySelectorAll('.syy-loading-overlay').length===1&&row.inert===false&&body.inert;stopB();const restored=body.firstElementChild===row&&!body.inert;const box=document.createElement('div');document.body.appendChild(box);const finish=syyStartLoading(box);box.innerHTML='<button>cached</button>';await new Promise(resolve=>setTimeout(resolve,0));const survived=!!box.querySelector('.syy-loading-overlay');finish();const enabled=!box.querySelector('button').inert;box.remove();return {retained,restored,survived,enabled,reads:apiCalls.length-before};});assert.deepEqual(result,{retained:true,restored:true,survived:true,enabled:true,reads:0});assert.deepEqual(p.errors,[]);await p.close();

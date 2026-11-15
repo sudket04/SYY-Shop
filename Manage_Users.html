@@ -88,6 +88,7 @@
     }
 
     .record-count { font-size: 12px; color: #64748b; font-weight: 600; }
+    .record-count .sk { display:inline-block; width:56px; margin-inline-start:8px; }
 
     .table-container { 
       max-height: 65vh; 
@@ -398,7 +399,7 @@
 
   <div class="card">
     <div class="card-toolbar">
-      <span class="record-count" id="recordCount">กำลังโหลด...</span>
+      <span class="record-count" id="recordCount" role="status">กำลังโหลด...</span>
     </div>
     <div class="xlf-filter-summary" id="xlfSummary">
       <span id="xlfSummaryText"></span>
@@ -719,6 +720,10 @@ var AUTH_TOKEN_MU   = "<?= authToken ?>";
 var CURRENT_USER_MU = "<?= userName ?>";   // ใช้เทียบว่าแถวไหนคือบัญชีตัวเอง
 
 var usersCache        = [];
+var usersLoaded       = false;
+var usersLoading      = false;
+var usersReadPending  = null;
+var usersGeneration   = 0;
 var editingDocId       = null;
 var targetToggleDocId  = null;
 var targetToggleStatus = null;
@@ -729,28 +734,75 @@ syyOnReady(function(){ loadTable(); });
 // ★ เรียกทุกฟังก์ชันผ่าน apiGateway เพราะต้องเช็ค role admin ที่ backend
 function manageErrorMessage(err){var message=err&&err.message||'';return message&&message.length<=250?message:'การเชื่อมต่อขัดข้อง กรุณาลองใหม่';}
 function callGatewayApi(fnName, args, onSuccess, onFailure) {
-  function failed(error){if(typeof SYYFrameBridge!=='undefined')SYYFrameBridge.dataError(error&&error.code||'READ_FAILED');if(onFailure)onFailure(error);else alert('เกิดข้อผิดพลาด: '+manageErrorMessage(error));}
+  function failed(error){if(fnName!=='getAllUsers'&&typeof SYYFrameBridge!=='undefined')SYYFrameBridge.dataError(error&&error.code||'READ_FAILED');if(onFailure)onFailure(error);else alert('เกิดข้อผิดพลาด: '+manageErrorMessage(error));}
   google.script.run
     .withSuccessHandler(function(result){
       if(result&&result.__authError&&typeof SYYFrameBridge!=='undefined')SYYFrameBridge.post({action:'SESSION_EXPIRED'});
       if(result&&result.success===false&&(/^(get|fetch)/.test(fnName)||result.__authError||result.code==='AUTH_UNAVAILABLE')){failed(result);return;}
-      onSuccess(result);if(!(result&&result.success===false)&&typeof SYYFrameBridge!=='undefined')SYYFrameBridge.dataReady();
+      onSuccess(result);if(fnName!=='getAllUsers'&&!(result&&result.success===false)&&typeof SYYFrameBridge!=='undefined')SYYFrameBridge.dataReady();
     })
     .withFailureHandler(failed)
     .apiGateway(AUTH_TOKEN_MU, fnName, args || [], navigator.userAgent);
 }
 
-function loadTable() {
-  var tbody = document.getElementById('userBody');
-  tbody.innerHTML = Array.from({length:5},function(){return '<tr>'+Array.from({length:7},function(){return '<td><span class="sk" aria-hidden="true"></span></td>';}).join('')+'</tr>';}).join('');
-  document.getElementById('recordCount').innerText = 'กำลังโหลด...';
+function readUsers(onSuccess,onFailure){
+  // A retry can observe the existing request after the UI timeout, without
+  // launching a second account scan while Apps Script may still be running.
+  if(!usersReadPending){
+    var request=new Promise(function(resolve,reject){
+      var watchdog=setTimeout(function(){reject({code:'READ_TIMEOUT',message:'การเชื่อมต่อไม่ตอบกลับ'});},370000);
+      function finish(settle,value){clearTimeout(watchdog);settle(value);}
+      try{callGatewayApi('getAllUsers',[],function(data){finish(resolve,data);},function(error){finish(reject,error);});}
+      catch(error){finish(reject,error);}
+    }).finally(function(){if(usersReadPending===request)usersReadPending=null;});
+    usersReadPending=request;
+  }
+  var finished=false;
+  var timeout=setTimeout(function(){if(!finished){finished=true;onFailure({code:'READ_TIMEOUT',message:'เซิร์ฟเวอร์ยังไม่ส่งข้อมูล กรุณาลองอีกครั้ง'});}},45000);
+  function finish(handler,value){if(finished)return;finished=true;clearTimeout(timeout);handler(value);}
+  usersReadPending.then(function(data){finish(onSuccess,data);},function(error){finish(onFailure,error);});
+}
 
-  callGatewayApi('getAllUsers', [], function(data) {
-    usersCache = data || [];
+function loadTable(afterMutation) {
+  if(afterMutation===true){usersGeneration++;usersReadPending=null;}
+  else if(usersLoading)return;
+  var generation=usersGeneration;
+  usersLoading=true;
+  var tbody = document.getElementById('userBody');
+  if(!usersLoaded)tbody.innerHTML = Array.from({length:5},function(){return '<tr>'+Array.from({length:7},function(){return '<td><span class="sk" aria-hidden="true"></span></td>';}).join('')+'</tr>';}).join('');
+  var count=document.getElementById('recordCount');
+  count.textContent='กำลังโหลด...';
+  if(usersLoaded){
+    var skeleton=document.createElement('span');skeleton.className='sk';skeleton.setAttribute('aria-hidden','true');count.appendChild(skeleton);
+  }
+
+  readUsers(function(data) {
+    if(generation!==usersGeneration)return;
+    usersLoading=false;
+    if(!Array.isArray(data)){failed({code:'READ_FAILED',message:'รูปแบบข้อมูลบัญชีผู้ใช้ไม่ถูกต้อง'});return;}
+    usersCache = data;usersLoaded=true;
     renderUserRows();
-  }, function(err) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">โหลดไม่สำเร็จ: ' + escHtml(manageErrorMessage(err)) + '</td></tr>';
-  });
+    SYYFrameBridge.dataReady();
+  },failed);
+  function failed(err){
+    if(generation!==usersGeneration)return;
+    usersLoading=false;
+    if(err&&err.__authError){
+      usersLoaded=false;usersCache=[];tbody.replaceChildren();
+      count.textContent='เซสชันหมดอายุ ';var login=document.createElement('a');
+      var loginUrl=new URL(document.querySelector('meta[name="syy-app-url"]').content,location.href);loginUrl.search='?page=login';loginUrl.hash='';
+      login.href=loginUrl.href;login.target='_top';login.textContent='เข้าสู่ระบบใหม่';count.appendChild(login);return;
+    }
+    SYYFrameBridge.dataError(err&&err.code||'READ_FAILED');
+    count.textContent=usersLoaded?'รีเฟรชไม่สำเร็จ · แสดงข้อมูลเดิม':'โหลดข้อมูลไม่สำเร็จ';
+    var retry=document.createElement('button');retry.type='button';retry.className='btn-cancel';
+    retry.textContent='ลองโหลดบัญชีอีกครั้ง';retry.addEventListener('click',function(){loadTable();});
+    if(usersLoaded)count.append(' ',retry);
+    else{
+      tbody.replaceChildren();var row=tbody.insertRow();row.className='empty-row';
+      var cell=row.insertCell();cell.colSpan=7;cell.append(manageErrorMessage(err),' ',retry);
+    }
+  }
 }
 
 var ROLE_LABEL = { admin: 'Admin', staff: 'Staff', viewer: 'Viewer' };
@@ -892,7 +944,7 @@ function handleSubmit(e) {
     if (res.success) {
       alertEl.className = 'modal-alert success';
       alertEl.innerText = '' + res.message + (res.tempPassword ? ' (รหัสผ่านชั่วคราว: ' + res.tempPassword + ')' : '');
-      loadTable();
+      loadTable(true);
       setTimeout(function() { closeUserModal(); }, 1500);
     } else {
       alertEl.className = 'modal-alert error';
@@ -952,7 +1004,7 @@ function execToggleStatus() {
     closeToggleModal();
     if (res.success) {
       alert('' + res.message);
-      loadTable();
+      loadTable(true);
     } else {
       alert('' + res.message);
     }
@@ -993,7 +1045,7 @@ function execResetPassword() {
     closeResetPwModal();
     if (res.success) {
       alert('' + res.message);
-      loadTable();
+      loadTable(true);
     } else {
       alert('' + res.message);
     }

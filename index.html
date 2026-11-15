@@ -546,13 +546,12 @@
     document.getElementById('userName').innerText   = USER_NAME || 'ผู้ใช้งาน';
     document.getElementById('userRole').innerText   = USER_ROLE || '';
     document.getElementById('userAvatar').innerText = (USER_NAME||'?').trim().charAt(0).toUpperCase();
-    if(localStorage.getItem('syy_sidebar')==='mini') document.getElementById('sidebar').classList.add('mini');
+    if(syyReadUiPreference('syy_sidebar')==='mini') document.getElementById('sidebar').classList.add('mini');
     renderMenu();
     renderMobileNav();
     var poPicker=document.getElementById('docPickerOrders');
     if(poPicker) poPicker.style.display=['admin','staff'].indexOf(USER_ROLE)>-1?'flex':'none';
     hydrateIcons();
-    document.querySelectorAll('iframe[data-src]').forEach(function(frame){frame.dataset.channel=crypto.randomUUID();frame.dataset.src+='&channel='+encodeURIComponent(frame.dataset.channel)+'&parentOrigin='+encodeURIComponent(location.origin);});
     syyInitNavigation();
   });
 
@@ -655,15 +654,15 @@
     var d = e.data || {};
     var readyFrame=Array.from(document.querySelectorAll('iframe[data-channel]')).find(function(f){return f.dataset.channel===d.channel;});
     if(readyFrame&&['PAGE_READY','PAGE_UNAVAILABLE','SESSION_EXPIRED'].indexOf(d.action)>=0)syyPostFrame(readyFrame,{action:'PAGE_ACK'});
-    if(d.action==='PAGE_DATA_ERROR'){if(readyFrame)syyFrameTrace(readyFrame,'data-error',d.code);return;}
     if(d.action==='PAGE_UNAVAILABLE'){if(readyFrame&&readyFrame.syyDelayed)readyFrame.syyDelayed('AUTH_UNAVAILABLE');return;}
-    if(/_READY$/.test(d.action)&&readyFrame&&readyFrame.dataset.ready!=='true'){
+    if((/_READY$/.test(d.action)||d.action==='PAGE_DATA_ERROR')&&readyFrame&&readyFrame.dataset.ready!=='true'){
       syyFrameOpened(readyFrame);
-      // Successful rendering also proves readiness if the initial signal was lost.
-      if(d.action==='PAGE_DATA_READY')syyPostFrame(readyFrame,{action:'PAGE_ACK'});
+      // Show the child page's own error and retry even if its first handshake was lost.
+      if(d.action==='PAGE_DATA_READY'||d.action==='PAGE_DATA_ERROR')syyPostFrame(readyFrame,{action:'PAGE_ACK'});
       if(readyFrame.parentElement?.classList.contains('active'))syyPostFrame(readyFrame,{action:'PAGE_ACTIVATED'});
     }
     if(d.action==='PAGE_DATA_READY'){if(readyFrame)syyFrameTrace(readyFrame,'data-ready');return;}
+    if(d.action==='PAGE_DATA_ERROR'){if(readyFrame)syyFrameTrace(readyFrame,'data-error',d.code);return;}
     if(d.action==='CACHE_INVALIDATED'){syyInvalidateReadScopes(d.scopes,false);broadcastDataDelta(d,d.channel);}
     else if(d.action==='PRODUCT_DELTA'){syyInvalidateReadScopes(['Master_Products','Product_Images'],false);applyDashboardProductDelta(d.product,d.deleted);broadcastDataDelta(d,d.channel); }
     else if(d.action==='STOCK_DELTA'){syyInvalidateReadScopes(['Master_Products','Stock_Movements'],false);forwardStockDeltaToProducts(d.productStocks,d.channel); }
@@ -755,7 +754,7 @@
   function toggleSidebar(){
     var sb=document.getElementById('sidebar');
     sb.classList.toggle('mini');
-    localStorage.setItem('syy_sidebar', sb.classList.contains('mini')?'mini':'full');
+    syyWriteUiPreference('syy_sidebar',sb.classList.contains('mini')?'mini':'full');
   }
 
   var syyPageDiagnostics=[];
@@ -771,10 +770,22 @@
     clearTimeout(frame.syyOpenTimer);clearTimeout(frame.syySlowTimer);frame.dataset.ready='true';frame.classList.remove('syy-frame-pending');
     if(frame.syyStatus)frame.syyStatus.hidden=true;
   }
+  function syyNewFrameChannel(){
+    if(typeof crypto==='undefined')return '';
+    try{if(typeof crypto.randomUUID==='function')return crypto.randomUUID();}catch(e){}
+    try{
+      var bytes=crypto.getRandomValues(new Uint8Array(16));
+      return Array.from(bytes,function(value){return value.toString(16).padStart(2,'0');}).join('');
+    }catch(e){return '';}
+  }
   function syyOpenFrame(frame,retry){
     if(!frame||!frame.dataset.src)return;
-    if(retry){
-      var next=new URL(frame.dataset.src,location.href);frame.dataset.channel=crypto.randomUUID();next.searchParams.set('channel',frame.dataset.channel);frame.dataset.src=next.href;
+    if(retry||!frame.dataset.channel){
+      var next=new URL(frame.dataset.src,location.href);
+      frame.dataset.channel=syyNewFrameChannel();
+      if(frame.dataset.channel){next.searchParams.set('channel',frame.dataset.channel);next.searchParams.set('parentOrigin',location.origin);}
+      else{next.searchParams.delete('channel');next.searchParams.delete('parentOrigin');}
+      frame.dataset.src=next.href;
       delete frame.syyReceiver;delete frame.syyOrigin;
       if(frame.id==='iframe-stockissue')stockIssueReady=false;if(frame.id==='iframe-products')productsReady=false;if(frame.id==='iframe-taxinvoice')taxInvoiceReady=false;
     }
@@ -792,6 +803,7 @@
     var direct=new URL(frame.dataset.src,location.href);direct.searchParams.delete('channel');direct.searchParams.delete('parentOrigin');status.syyDirect.href=direct.href;status.syyDirect.hidden=true;
     status.hidden=false;status.syyRetry.hidden=true;status.syySkeleton.hidden=false;status.syyTitle.textContent='กำลังเปิดหน้า '+(LABEL_OF[frame.id.replace('iframe-','')]||'');status.syyMessage.textContent='กรุณารอสักครู่…';
     function delayed(code){if(frame.dataset.ready==='true')return;clearTimeout(frame.syyOpenTimer);clearTimeout(frame.syySlowTimer);var unavailable=code==='AUTH_UNAVAILABLE';syyFrameTrace(frame,'open-error',code);status.syyTitle.textContent=unavailable?'ยังตรวจสอบการเชื่อมต่อไม่ได้':'ยังเปิดหน้าไม่สำเร็จ';status.syyMessage.textContent=unavailable?'ระบบตรวจบัญชีไม่พร้อมชั่วคราว กรุณาลองเปิดหน้าอีกครั้ง':'เปิดผ่านเมนูไม่สำเร็จ ลองเปิดหน้าโดยตรง หรือลองเมนูนี้อีกครั้ง';status.syyRetry.hidden=false;status.syyDirect.hidden=false;status.syySkeleton.hidden=true;}
+    if(!frame.dataset.channel){delayed('FRAME_CHANNEL_UNAVAILABLE');return;}
     frame.syyDelayed=delayed;frame.onerror=function(){delayed('FRAME_ERROR');};frame.syyOpenTimer=setTimeout(function(){delayed('FRAME_TIMEOUT');},30000);
     frame.onload=function(){if(frame.syyTrace)frame.syyTrace.frameLoadMs=Math.max(0,Math.round(performance.now()-frame.syyTrace.started));};
     frame.syySlowTimer=setTimeout(function(){if(frame.dataset.ready!=='true'){status.syyMessage.textContent='กำลังรอเปิดหน้า สามารถเปิดหน้านี้โดยตรงได้';status.syyDirect.hidden=false;}},10000);

@@ -432,14 +432,16 @@ function btnDone(el){
 }
 
 /* ── ความหนาแน่นแถว (จำค่าไว้ต่อเบราว์เซอร์) ── */
+function syyReadUiPreference(key){try{return localStorage.getItem(key);}catch(e){return null;}}
+function syyWriteUiPreference(key,value){try{localStorage.setItem(key,value);}catch(e){}}
 function initDensity(){
-  var d=localStorage.getItem('syy_density')||'normal';
+  var d=syyReadUiPreference('syy_density')==='compact'?'compact':'normal';
   document.body.setAttribute('data-density',d);
 }
 function toggleDensity(){
   var d=document.body.getAttribute('data-density')==='compact'?'normal':'compact';
   document.body.setAttribute('data-density',d);
-  localStorage.setItem('syy_density',d);
+  syyWriteUiPreference('syy_density',d);
   toast(d==='compact'?'แสดงแบบแน่น':'แสดงแบบสบายตา');
 }
 
@@ -636,7 +638,7 @@ function syyReportReadState(ok,error,background){
 function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOptions){
   requestOptions=requestOptions||{};
   var token=typeof AUTH_TOKEN!=='undefined'?AUTH_TOKEN:'';syyUxBusy++;syyUxStatus();
-  var done=false,timer=null,retryTimer=null,createdAt=Date.now(),rpcDispatched=false,queueAt=createdAt,queueMs=0,dispatchAt=createdAt,transportMs=0,attempt=0,isRead=/^(get|fetch)/.test(fnName);
+  var done=false,timer=null,retryTimer=null,createdAt=Date.now(),rpcDispatched=false,queueAt=createdAt,queueMs=0,dispatchAt=createdAt,transportMs=0,attempt=0,isRead=/^(get|fetch)/.test(fnName)||fnName==='authGetMyProfile';
   var phase='queue',traceId='';
   function timing(){
     var now=Date.now();
@@ -674,7 +676,7 @@ function syyCallApiRaw(fnName,args,onSuccess,onFailure,clientCache,requestOption
     queueAt=Date.now();phase='queue';
     function started(id){traceId=id;rpcDispatched=true;dispatchAt=Date.now();queueMs+=dispatchAt-queueAt;phase='transport';}
     function dispatch(ok,failed,id){rpcDispatched=true;var metadata=id?Object.assign({},clientCache,{traceId:id}):clientCache;google.script.run.withSuccessHandler(ok).withFailureHandler(failed).apiGateway(token,fnName,args||[],navigator.userAgent,metadata);}
-    if(isRead){var key=JSON.stringify([token,fnName,args||[],clientCache||null,syyReadCoordinator().generation||0]);syyScheduleRead(key,dispatch,{valid:valid,reply:function(ok,result){transportMs+=Date.now()-dispatchAt;phase='response';reply(ok,result);},started:started},requestOptions.background,syyCanRecoverRead(fnName,args)&&!(clientCache&&clientCache.refresh),fnName);}
+    if(isRead){var key=JSON.stringify([token,fnName,args||[],clientCache||null,syyReadCoordinator().generation||0,requestOptions.readVersion||0]);syyScheduleRead(key,dispatch,{valid:valid,reply:function(ok,result){transportMs+=Date.now()-dispatchAt;phase='response';reply(ok,result);},started:started},requestOptions.background,syyCanRecoverRead(fnName,args)&&!(clientCache&&clientCache.refresh),fnName);}
     else try{dispatch(function(res){reply(true,res);},function(error){reply(false,error);});}catch(error){if(done)throw error;fail(error);}
   }
   execute();
@@ -729,7 +731,8 @@ var syyReadLatest=new Map(),syyDirtyReadScopes=new Set(),syyReadSequence=0,syyLa
 // Session/permission fingerprints isolate commercial values; never persist
 // credentials, contacts, documents or transaction lists.
 var syyDiskCache=(function(){
- var opening=null,scopePromise=null,scopeIdentity='',scopeRun=0,activeScope='',channel=null,lookups=new Map(),enabled=typeof indexedDB!=='undefined'&&typeof crypto!=='undefined'&&crypto.subtle&&typeof TextEncoder!=='undefined'&&window.SYY_HYBRID_CACHE!==false;
+ var opening=null,scopePromise=null,scopeIdentity='',scopeRun=0,activeScope='',channel=null,lookups=new Map(),enabled=false;
+ try{enabled=typeof indexedDB!=='undefined'&&typeof crypto!=='undefined'&&!!crypto.subtle&&typeof TextEncoder!=='undefined'&&window.SYY_HYBRID_CACHE!==false;}catch(e){}
  var stats={hits:0,misses:0,errors:0,writes:0,evictions:0,bytes:0,entries:0};
  function eligible(key,raw){
    if(key==='getAllProducts[{"compact":true}]'){
