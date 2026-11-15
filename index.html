@@ -933,7 +933,11 @@
     var failed=DASH.catalogPreviewFailed, pending=failed?'โหลดประวัติไม่สำเร็จ':'กำลังโหลด';
     var query=(DASH.search||'').trim().toLowerCase();
     if(query!==DASH.previewQuery){DASH.previewQuery=query;DASH.previewPage=1;}
-    var rows=query?DASH.products.filter(function(p){return [p.productCode,p.productName,p.brandName,p.partNumber,p.barcode].join(' ').toLowerCase().includes(query);}):DASH.products;
+    if(DASH.previewSource!==DASH.products){
+      DASH.previewSource=DASH.products;
+      DASH.previewRows=DASH.products.slice().sort(function(a,b){return num(b.currentStock)*num(b.costPrice)-num(a.currentStock)*num(a.costPrice);});
+    }
+    var rows=query?DASH.previewRows.filter(function(p){return dashProductMatches(p,query);}):DASH.previewRows;
     var pages=Math.max(1,Math.ceil(rows.length/50));
     DASH.previewPage=Math.max(1,Math.min(pages,DASH.previewPage||1));
     var offset=(DASH.previewPage-1)*50;
@@ -943,7 +947,7 @@
         cells(pending)+cells('฿'+Math.round(num(p.currentStock)*num(p.costPrice)).toLocaleString())+cells(pending)+cells(failed?pending:'กำลังโหลดประวัติ')+
         '<td><button class="btn btn-icon view" title="ดูข้อมูล" onclick="openView(\''+escJs(p.productCode)+'\')">🔍</button></td></tr>';
     }).join('')||emptyStateHtml(DASH_COLS.length,{title:query?'ไม่พบสินค้าที่ค้นหา':'ยังไม่มีข้อมูลสินค้า'});
-    document.getElementById('dashHealthTabs').textContent='ค้นหาในรายการสินค้าได้ · ตัวกรองจากประวัติยังไม่พร้อม';
+    document.getElementById('dashHealthTabs').textContent='สินค้าทั้งหมด · ตัวกรองจากประวัติยังไม่พร้อม';
     document.getElementById('dashHealthBody').setAttribute('aria-label','รายการสินค้า · ประวัติและยอดสรุปยังไม่พร้อม');
     document.getElementById('dashHealthFoot').textContent='พบ '+rows.length.toLocaleString()+' รายการ';
     document.getElementById('dashHealthPageLabel').textContent=DASH.previewPage+' / '+pages;
@@ -983,7 +987,16 @@
       data = data||{};
       if(requestedYear!==DASH.year){DASH.reloadRequested=false;dashLoad();return;}
       DASH.loadedYear=requestedYear;DASH.rangeStart=data.rangeStart;DASH.healthRangeStart=data.healthRangeStart;
-      DASH.catalogPreview=false;document.getElementById('dashHealthBody').removeAttribute('aria-label');
+      if(DASH.catalogPreview&&DASH.previewInteracted){
+        // Search input can change just before the debounce runs.
+        clearTimeout(dashSearchTimer);
+        DASH.search=document.getElementById('dashSearch').value;
+        DASH.tab='all';
+        DASH.healthPage=DASH.previewQuery===DASH.search.trim().toLowerCase()?DASH.previewPage:1;
+        DASH.healthCriteria=dashHealthCriteria();
+      }
+      DASH.catalogPreview=false;DASH.previewInteracted=false;DASH.previewSource=null;DASH.previewRows=null;
+      document.getElementById('dashHealthBody').removeAttribute('aria-label');
       if(data.products)DASH.products=data.products;
       if(data.catalogSection)DASH.catalogSection=data.catalogSection;
       DASH.catalogVersion=data.catalogVersion;
@@ -1501,6 +1514,7 @@
   }
   var dashSearchTimer=null;
   function dashOnSearchInput(){
+    if(DASH.catalogPreview)DASH.previewInteracted=true;
     clearTimeout(dashSearchTimer);
     dashSearchTimer=setTimeout(function(){
       DASH.search=document.getElementById('dashSearch').value;
@@ -1522,6 +1536,12 @@
     }).join('');
   }
 
+  function dashProductMatches(product,query){
+    return [product.productCode,product.productName,product.brandName,product.partNumber,product.barcode].join(' ').toLowerCase().includes(query);
+  }
+  function dashHealthCriteria(){
+    return JSON.stringify([DASH.tab,DASH.deadRule,DASH.search,DASH.fCat,DASH.fBrand,DASH.fPart,DASH.sortKey,DASH.sortDir]);
+  }
   function dashRenderHealthTableOnly(){
     if(DASH.catalogPreview){dashRenderCatalogPreview();return;}
     var all=DASH.health.rows;
@@ -1530,7 +1550,7 @@
 
     var list=dashBucket(active.id,all);
     var q=(DASH.search||'').trim().toLowerCase();
-    if(q) list=list.filter(function(r){ return (r.code+' '+r.p.productName+' '+(r.p.brandName||'')+' '+(r.p.partNumber||'')+' '+(r.p.barcode||'')).toLowerCase().indexOf(q)>-1; });
+    if(q) list=list.filter(function(r){return dashProductMatches(r.p,q);});
     if(DASH.fCat)   list=list.filter(function(r){return r.p.categoryName===DASH.fCat;});
     if(DASH.fBrand) list=list.filter(function(r){return r.p.brandName===DASH.fBrand;});
     if(DASH.fPart)  list=list.filter(function(r){return r.p.partType===DASH.fPart;});
@@ -1548,7 +1568,7 @@
     });
     DASH._codes = sorted.map(function(r){return r.code;});
     DASH._sortedRows = sorted;
-    var criteria=JSON.stringify([DASH.tab,DASH.deadRule,DASH.search,DASH.fCat,DASH.fBrand,DASH.fPart,DASH.sortKey,DASH.sortDir]);
+    var criteria=dashHealthCriteria();
     if(criteria!==DASH.healthCriteria){DASH.healthCriteria=criteria;DASH.healthPage=1;}
     var pages=Math.max(1,Math.ceil(sorted.length/50));DASH.healthPage=Math.max(1,Math.min(pages,DASH.healthPage));
     var offset=(DASH.healthPage-1)*50;
@@ -1592,7 +1612,7 @@
     document.getElementById('dashSortLabel').innerText=sortLabelName+(DASH.sortDir==='asc'?' ↑ น้อย→มาก':' ↓ มาก→น้อย');
   }
 
-  function dashChangeHealthPage(step){if(DASH.catalogPreview)DASH.previewPage+=step;else if(DASH.health)DASH.healthPage+=step;else return;dashRenderHealthTableOnly();document.querySelector('#dashHealthCard .table-wrap').scrollTop=0;}
+  function dashChangeHealthPage(step){if(DASH.catalogPreview){DASH.previewInteracted=true;DASH.previewPage+=step;}else if(DASH.health)DASH.healthPage+=step;else return;dashRenderHealthTableOnly();document.querySelector('#dashHealthCard .table-wrap').scrollTop=0;}
 
   function dashRenderAll(){
     if(!DASH.health) return;

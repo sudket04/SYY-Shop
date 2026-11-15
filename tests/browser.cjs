@@ -191,6 +191,31 @@ async function main(){
     assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length),catalogReads);
     assert.equal(await p.locator('#dashHealthBody').getAttribute('aria-label'),null);assert.deepEqual(p.errors,[]);await p.close();
   });
+  await check('Loading resilience: Dashboard retains preview search scope and page when history arrives',async()=>{
+    const p=await pageFor('index.html');
+    async function holdHistory(){
+      await p.evaluate(()=>{
+        syyClearReadCache();DASH.loaded=false;DASH.tab='low';DASH.search='';DASH.previewPage=1;DASH.previewQuery='';DASH.restoredCatalogSection=null;
+        document.getElementById('dashSearch').value='';
+        const products=Array.from({length:120},(_,i)=>({...fixtureProduct,productCode:'AUDIT'+i,productName:'Audit stock',currentStock:200,minStock:1}));
+        respond=fn=>fn==='getAllProducts'?products:{products,movements:[]};apiHold='getDashboardBootstrap';dashLoad();
+      });
+      await p.waitForFunction(()=>DASH.catalogPreview&&apiPending.length===1);
+    }
+    await holdHistory();
+    await p.locator('#dashSearch').fill('AUDIT119');
+    await p.evaluate(()=>{apiHold='';apiPending.shift()();});
+    await p.waitForFunction(()=>DASH.loaded&&!DASH.loading);
+    assert.equal(await p.locator('#dashSearch').inputValue(),'AUDIT119');assert.match(await p.locator('#dashHealthBody').innerText(),/AUDIT119/);
+    assert.equal(await p.evaluate(()=>DASH.tab),'all');
+    const calls=await p.evaluate(()=>apiCalls.length);
+    await p.locator('#dashHealthTabs button').first().click();assert.match(await p.locator('#dashHealthBody').innerText(),/ไม่พบรายการในเกณฑ์นี้/);
+    assert.equal(await p.evaluate(()=>apiCalls.length),calls);
+    await holdHistory();await p.locator('#dashHealthNext').click();await p.locator('#dashHealthNext').click();
+    await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForFunction(()=>DASH.loaded&&!DASH.loading);
+    assert.equal(await p.locator('#dashHealthPageLabel').innerText(),'3 / 3');assert.match(await p.locator('#dashHealthBody').innerText(),/AUDIT100/);
+    assert.deepEqual(p.errors,[]);await p.close();
+  });
   await check('Loading resilience: same-origin menu requests share the shell concurrency pool',async()=>{
     const p=await pageFor('index.html');await p.evaluate(()=>{
       window.poolReplies=[];google.script.run={withSuccessHandler(ok){return {withFailureHandler(){return {apiGateway(){poolReplies.push(ok);}};}};}};
