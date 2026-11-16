@@ -83,49 +83,43 @@ async function main(){
  }
  async function check(name,fn){await fn();cases++;console.log('PASS: '+name);}
  const pages=[];
- await check('five Viewer pages share one cold query and render 50 of 10,000 products with zero image metadata reads and no editor permissions',async()=>{
+ await check('five Viewer pages share one cold catalog and render 50 of 10,000 products with zero image metadata reads and no editor permissions',async()=>{
   for(let i=0;i<5;i++){
    const page=await pageFor('Master_Products.html','viewer'+i);pages.push(page);
-   await page.waitForFunction(()=>!productLoading&&productsCache.length===50);
+   await page.waitForFunction(()=>!productLoading&&productsCache.length===10000);
    assert.match(await page.locator('#productBody').innerText(),/อะไหล่ 0/);
    assert.equal(await page.locator('#productBody img').count(),0);
    assert.equal(await page.locator('#productBody .edit,#productBody .del').count(),0);
    assert.equal(await page.evaluate(()=>productsCache.some(x=>'Extra_Secret' in x)),false);
   }
-  assert.equal(reads.Master_Products,51);assert.equal(reads.Product_Images||0,0);
+  assert.equal(reads.Master_Products,10000);assert.equal(reads.Product_Images||0,0);
   assert.deepEqual(errors,[]);
  });
- await check('real signed cursor stays on page two, returns to cached page one and survives an image-only version change',async()=>{
+ await check('local paging stays instant across previously visited pages and an image-only version change',async()=>{
   const page=pages[0];await page.locator('#btnNextPage').click();
   await page.waitForFunction(()=>!productLoading&&currentPage===2);
   assert.equal(reads.Product_Images||0,0);
-  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');
+  assert.equal(await page.evaluate(()=>visibleProductRows()[0].productCode),'P00050');
   const count=reads.Master_Products,imageCount=reads.Product_Images;store.c.clearCollectionCache_('Product_Images');
   await page.locator('#btnPrevPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===1);
   await page.locator('#btnNextPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===2);
-  assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');assert.equal(reads.Master_Products,count);assert.equal(reads.Product_Images,imageCount);
+  assert.equal(await page.evaluate(()=>visibleProductRows()[0].productCode),'P00050');assert.equal(reads.Master_Products,count);assert.equal(reads.Product_Images,imageCount);
   await page.screenshot({path:path.join(output,'backend-viewer-page-two.png')});
  });
- await check('exact SKU and barcode find the final product without reading the full 10,000-item catalog',async()=>{
-  const page=pages[1], before=reads.Master_Products, images=reads.Product_Images||0;
+ await check('exact SKU and barcode find the final product without additional catalog reads',async()=>{
+  const page=pages[1], before=reads.Master_Products, images=reads.Product_Images||0, calls=requests.length;
   for(const [mode,input] of [['sku','P09999'],['barcode','BC9999']]){
-   const response=page.waitForResponse(result=>{
-    const request=result.request();
-    if(!result.url().endsWith('/rpc')||request.method()!=='POST')return false;
-    const options=request.postDataJSON().args?.[0];
-    return options?.searchMode===mode&&options.search===input;
-   });
    await page.locator('#productSearchMode').selectOption(mode);
    await page.locator('#tableSearchInput').fill(input);
-   await response;
-   await page.waitForFunction(()=>!productLoading&&productsCache.length===1&&productsCache[0].productCode==='P09999');
+   await page.waitForFunction(()=>filteredProducts.length===1&&filteredProducts[0].productCode==='P09999');
   }
-  assert.equal(reads.Master_Products-before,2);
+  assert.equal(reads.Master_Products,before);
   assert.equal(reads.Product_Images||0,images);
+  assert.equal(requests.length,calls);
  });
  await check('unchanged search finds the final product and full-catalog facets stay global while table images remain absent',async()=>{
   const page=pages[0];await page.locator('#tableSearchInput').fill('BC9999');await page.evaluate(()=>onSearchInput());
-  await page.waitForFunction(()=>!productLoading&&productsCache.length===1&&productsCache[0].productCode==='P09999');
+  await page.waitForFunction(()=>!productLoading&&filteredProducts.length===1&&visibleProductRows()[0].productCode==='P09999');
   const facet=await page.evaluate(()=>new Promise((resolve,reject)=>callApi('getProductCatalogFacets',[{includeImages:false},'partType'],resolve,reject)));
   assert.deepEqual(facet.values.sort(),['เทียบ','แท้'].sort());assert((reads.Product_Images||0)<=201);
   assert.equal(await page.locator('#productBody img').count(),0);
@@ -232,9 +226,9 @@ async function main(){
    store.c.clearCollectionCache_('Master_Products');
    const invalidated=await dashboard();
    await page.goto(origin+'/?file=Master_Products.html&user=staff');
-   await page.waitForFunction(()=>!productLoading&&productsCache.length===50);
+   await page.waitForFunction(()=>!productLoading&&productsCache.length===10000);
    await page.locator('#btnNextPage').click();await page.waitForFunction(()=>!productLoading&&currentPage===2);
-   assert.equal(await page.evaluate(()=>productsCache[0].productCode),'P00050');
+   assert.equal(await page.evaluate(()=>visibleProductRows()[0].productCode),'P00050');
    const facets=await page.evaluate(()=>new Promise((resolve,reject)=>callApi('getProductCatalogFacets',[{},'partType'],resolve,reject)));
    assert.deepEqual(facets.values.sort(),['เทียบ','แท้'].sort());assert.deepEqual(errors,[]);
    const calls=requests.slice(startRequests),counts=Object.fromEntries(Object.keys(reads).map(key=>[key,reads[key]-(startReads[key]||0)]));

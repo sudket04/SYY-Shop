@@ -94,7 +94,7 @@ async function main(){
     await page.waitForTimeout(100);
     // Wait for initial mock reads instead of assuming they finish within a
     // fixed delay on a busy host. Held-request tests use their own page setup.
-    await page.waitForFunction(()=>(typeof syyUxBusy==='undefined'||syyUxBusy===0)&&(typeof DASH==='undefined'||(!DASH.loading&&!DASH.catalogPreparing)));
+    await page.waitForFunction(()=>(typeof syyUxBusy==='undefined'||syyUxBusy===0)&&(typeof DASH==='undefined'||(!DASH.loading&&!DASH.catalogPreparing))&&(typeof productInitialized==='undefined'||productInitialized&&!productLoading));
     return page;
   }
   let encountered=0;async function check(name,fn){encountered++;if(encountered<Number(process.env.BROWSER_TEST_START||1)||process.env.BROWSER_TEST_MATCH&&!name.includes(process.env.BROWSER_TEST_MATCH))return;await fn();cases++;console.log('PASS: '+name);}
@@ -1201,7 +1201,7 @@ async function main(){
     assert.equal(await p.locator('#printArea tbody tr').count(),40);for(const page of await p.locator('#printArea .a4-page').all())assert((await page.evaluate(el=>el.scrollHeight))<=1130);
     await p.addStyleTag({content:'.page-head,.page-header{visibility:hidden!important}'});await p.locator('#printArea .a4-page').first().screenshot({path:path.join(output,'quote-thai-print.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('10,000-row backend pages preserve Viewer search, global facets, pagination, export and retry',async()=>{
+  await check('10,000-row catalog preserves Viewer search, global facets, local pagination, export and retry',async()=>{
     const {setup,plain}=require('./support/services.cjs'),s=setup();
     for(let i=0;i<10000;i++)s.put('Master_Products/P'+String(i).padStart(5,'0'),{Product_Name:'อะไหล่ '+i,Part_Type:i%2?'แท้':'เทียบ',Barcode:'BC'+i,Current_Stock:10,Min_Stock:2,Cost_Price:i,Selling_Price:i+10});
     const p=await pageFor('Master_Products.html','viewer');
@@ -1220,33 +1220,34 @@ async function main(){
       };
       syyViewPreference('products:size',100);pageSize=100;currentPage=1;XLF.clearAll('products');document.getElementById('tableSearchInput').value='';loadTable(true);
     });
-    await p.waitForFunction(()=>productRemote&&productRemote.cursorMode===true);
+    await p.waitForFunction(()=>productsCache.length===10000&&!productLoading);
     assert.equal(await p.locator('#productBody tr').count(),100);
-    assert.match(await p.locator('#paginationInfo').innerText(),/1 - 100/);assert.match(await p.locator('#recordCountToolbar').innerText(),/โหลดแล้ว/);
-    await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>productsCache[0].productCode),'P00100');
-    await p.locator('#tableSearchInput').fill('BC9999');await p.waitForFunction(()=>productRemote.total===1);assert.match(await p.locator('#productBody').innerText(),/อะไหล่ 9999/);
+    assert.match(await p.locator('#paginationInfo').innerText(),/1 - 100/);assert.match(await p.locator('#recordCountToolbar').innerText(),/10000/); const baselineCalls=await p.evaluate(()=>apiCalls.length);
+    await p.locator('#btnNextPage').click();assert.equal(await p.evaluate(()=>visibleProductRows()[0].productCode),'P00100');await p.locator('#btnPrevPage').click();assert.equal(await p.evaluate(()=>visibleProductRows()[0].productCode),'P00000');
+    await p.locator('#tableSearchInput').fill('BC9999');await p.waitForFunction(()=>filteredProducts.length===1);assert.match(await p.locator('#productBody').innerText(),/อะไหล่ 9999/);
     await p.locator('[data-xlf-col="productName"]').click();await p.waitForSelector('.xlf-popover');
     assert.equal(await p.locator('.xlf-item').count(),200);
     await p.locator('.xlf-search').fill('อะไหล่ 9998');assert.equal(await p.locator('.xlf-item').count(),1);await p.evaluate(()=>XLF.closePopover());
     // Export every match, including rows not loaded in the table, with the real cursor implementation.
-    await p.locator('#tableSearchInput').fill('อะไหล่ 99');await p.waitForFunction(()=>productRemote.total===111);
-    await p.waitForFunction(()=>productsCache.length===100);
+    await p.locator('#tableSearchInput').fill('อะไหล่ 99');await p.waitForFunction(()=>filteredProducts.length===111); assert.equal(await p.evaluate(()=>apiCalls.length),baselineCalls);
     const download=p.waitForEvent('download');await p.evaluate(()=>exportAllProductFields());const file=await download;
     const csv=fs.readFileSync(await file.path(),'utf8');assert.equal(csv.trim().split('\r\n').length,112);assert.match(csv,/P09999/);
     assert.equal(await p.evaluate(()=>apiCalls.some(x=>/^(save|delete|issue)/.test(x.fn))),false);
     await p.evaluate(()=>{apiFailure='getAllProducts';loadTable(true);});await p.waitForFunction(()=>document.getElementById('toastWrap')?.innerText.includes('ข้อมูลเดิม'));assert.match(await p.locator('#productBody').innerText(),/อะไหล่/);
-    await p.evaluate(()=>{apiFailure='';loadTable(true);});await p.waitForFunction(()=>productRemote.total===111&&document.querySelectorAll('#productBody tr').length===100);
+    await p.evaluate(()=>{apiFailure='';loadTable(true);});await p.waitForFunction(()=>filteredProducts.length===111&&document.querySelectorAll('#productBody tr').length===100);
     await p.screenshot({path:path.join(output,'catalog-10000-viewer.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('10,000 POS matches mount only 60 rows; keyboard crosses windows and barcode selects the final product',async()=>{
+  await check('10,000 POS matches start at 100 rows and append on scroll or keyboard without catalog reads',async()=>{
     const p=await pageFor('StockIssue.html');
     await p.evaluate(()=>{
       products=Array.from({length:10000},(_,i)=>Object.assign({},fixtureProduct,{id:'P'+i,productCode:'P'+i,barcode:'BC'+i,productName:'สินค้า '+String(i).padStart(5,'0'),_imageLoaded:true}));
       selIdx=0;renderResults();
     });
-    assert.equal(await p.locator('#resultList .res-row').count(),60);assert.equal(await p.evaluate(()=>results.length),10000);
-    await p.evaluate(()=>{selIdx=59;moveSel(1);});assert.equal(await p.evaluate(()=>resultWindowStart),60);assert.equal(await p.locator('#resultList .sel').count(),1);
-    await p.evaluate(()=>moveSel(-1));assert.equal(await p.evaluate(()=>resultWindowStart),0);
+    assert.equal(await p.locator('#resultList .res-row').count(),100);assert.equal(await p.evaluate(()=>results.length),10000);const reads=await p.evaluate(()=>apiCalls.filter(c=>c.fn==='getAllProducts').length);
+    await p.evaluate(()=>{window.firstPosRow=document.querySelector('#resultList .res-row');const list=document.getElementById('resultList');list.scrollTop=list.scrollHeight;});await p.waitForFunction(()=>resultRenderedCount>=200);
+    assert(await p.evaluate(()=>firstPosRow===document.querySelector('#resultList .res-row')));assert.equal(await p.locator('#resultCount button').count(),0);
+    await p.evaluate(()=>{selIdx=resultRenderedCount-1;moveSel(1);});assert(await p.evaluate(()=>resultRenderedCount>selIdx));
+    assert.equal(await p.evaluate(()=>apiCalls.filter(c=>c.fn==='getAllProducts').length),reads);
     await p.locator('#searchInput').fill('BC9999');await p.locator('#searchInput').press('Enter');assert.equal(await p.evaluate(()=>basket[0].productCode),'P9999');
     await p.screenshot({path:path.join(output,'catalog-10000-pos.png')});assert.deepEqual(p.errors,[]);await p.close();
   });
@@ -1266,23 +1267,14 @@ async function main(){
     await p.evaluate(()=>{respond=()=>({catalogFormat:1,fields:['productCode'],rows:[['RECOVERED']]});callApi('getAllProducts',[],rows=>window.recoveredCatalog=rows);});
     await p.waitForFunction(()=>window.recoveredCatalog);assert.equal(await p.evaluate(()=>recoveredCatalog[0].id),'RECOVERED');assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('XLFilter opens immediately, closes pending loads without extra RPC, caches complete facets and retries errors',async()=>{
+  await check('XLFilter reads choices from the loaded catalog and never calls catalog facets',async()=>{
     const p=await pageFor('Master_Products.html');
-    await p.evaluate(()=>{
-      syyClearReadCache();pageSize=25;
-      respond=(fn,args)=>({__syyCache:1,version:'catalog-version',data:fn==='getAllProducts'?{catalogPage:true,products:[fixtureProduct],masters:{brands:[],categories:[],vendors:[],zones:[],cars:[]},page:1,total:1,unfilteredTotal:1,facets:{partType:{values:['แท้','เทียบ'],numeric:false}},facetVersion:'facet-version'}:fn==='getProductCatalogFacets'?{values:['Honda','Ford'],numeric:false}:[]});
-      loadTable(true);
-    });
-    await p.waitForFunction(()=>productRemote&&syyReadCache.size>0);
-    const before=await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length);
-    await p.locator('#productThead [data-xlf-col="partType"]').click();await p.waitForSelector('.xlf-item');assert.equal(await p.locator('.xlf-item').count(),2);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length),before);
-    await p.keyboard.press('Escape');await p.evaluate(()=>{apiHold='getProductCatalogFacets';});
-    const brand=p.locator('#productThead [data-xlf-col="brandName"]');await brand.click();await p.waitForSelector('.xlf-popover[aria-busy="true"]');assert.match(await p.locator('.xlf-popover').innerText(),/กำลังโหลด/);
-    await brand.click();assert.equal(await p.locator('.xlf-popover').count(),0);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length),before+1);
-    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(done=>done());});await p.waitForTimeout(30);assert.equal(await p.locator('.xlf-popover').count(),0);
-    await brand.click();await p.waitForSelector('.xlf-item');assert.equal(await p.locator('.xlf-item').count(),2);await brand.click();await brand.click();await p.waitForSelector('.xlf-item');assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductCatalogFacets').length),before+1);
-    await p.keyboard.press('Escape');await p.evaluate(()=>{syyInvalidateReadScopes(['Master_Products'],false);apiFailure='getProductCatalogFacets';});await brand.click();await p.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).waitFor();
-    await p.evaluate(()=>{apiFailure='';});await p.getByRole('button',{name:'ลองอีกครั้ง',exact:true}).click();await p.waitForSelector('.xlf-item');assert.deepEqual(p.errors,[]);await p.close();
+    const before=await p.evaluate(()=>apiCalls.length);
+    await p.locator('#productThead [data-xlf-col="partType"]').click();
+    await p.waitForSelector('.xlf-item');
+    assert.equal(await p.locator('.xlf-popover[aria-busy="true"]').count(),0);
+    assert.equal(await p.evaluate(()=>apiCalls.length),before);
+    assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('business cache makes ten real browser reads one RPC and explicit refresh bypasses reuse',async()=>{
     const p=await pageFor('Master_Brands.html');
@@ -1453,26 +1445,24 @@ async function main(){
       const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>new Promise((ok,fail)=>callApi('getBrands',[],ok,fail)));assert.equal(await p.evaluate(()=>apiCalls.length),before);assert.deepEqual(errors,[]);await p.close();
     }
   });
-  await check('cursor UI reuses visited pages, preserves the active page during refresh/expiry/failure and retains rows while loading',async()=>{
-    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{
-      window.fixtureBrowseFailure='';respond=(fn,args)=>{
-        if(fn==='getAllProducts'||fn==='getProductCatalogPage'){
-          const o=args[0];if(o.cursor&&fixtureBrowseFailure==='expired')return {success:false,restartPage:true,message:'รายการสินค้าเปลี่ยนแปลงหรือหมดอายุ กรุณารีเฟรชเพื่อเริ่มหน้าแรก'};
-          if(o.cursor&&fixtureBrowseFailure==='network')return {success:false,message:'network unavailable'};
-          return {__syyCache:1,version:'browse-v1',data:{catalogPage:true,cursorMode:true,products:Array.from({length:50},(_,i)=>({...fixtureProduct,id:'P'+(o.page*100+i),productCode:'P'+(o.page*100+i)})),page:o.page,pageSize:50,total:null,unfilteredTotal:null,readTime:new Date().toISOString(),hasMore:o.page<3,nextCursor:o.page<3?'cursor-'+(o.page+1):'',...(o.includeMasters?{masters:{brands:[],categories:[],vendors:[],zones:[],cars:[]}}:{})}};
-        }return [];
-      };pageSize=50;loadTable(true);
-    });await p.waitForFunction(()=>productRemote&&productRemote.cursorMode);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);await p.evaluate(()=>prevPage());await p.waitForFunction(()=>productRemote.page===1);
-    const before=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>apiCalls.length),before);
-    await p.evaluate(()=>{fixtureBrowseFailure='network';nextPage();});await p.waitForFunction(()=>document.getElementById('toastWrap')?.innerText.includes('ข้อมูลเดิม'));assert.equal(await p.evaluate(()=>currentPage),2);
-    const expiredBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>{fixtureBrowseFailure='expired';nextPage();});await p.waitForTimeout(50);assert.equal(await p.evaluate(()=>productRemote.page),2);assert.equal(await p.evaluate(()=>apiCalls.length),expiredBefore+1);
-    await p.evaluate(()=>{fixtureBrowseFailure='';apiHold='getProductCatalogPage';syyFreshState.active=true;syyFreshState.dirty=true;syyReadFresh=true;loadTable();syyReadFresh=false;});
-    assert.equal(await p.locator('#productBody tr').count(),50);assert.equal(await p.locator('#productBody').getAttribute('aria-busy'),'true');assert.equal(await p.evaluate(()=>currentPage),2);assert.equal(await p.locator('#btnNextPage').isDisabled(),true);
-    const during=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>syyFreshState.refresh());assert.equal(await p.evaluate(()=>apiCalls.length),during);
-    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>productRemote.page),2);assert.match(await p.locator('#pageIndicator').innerText(),/หน้า 2/);
-    const deltaBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>applyStockDeltaToProductPage([{productCode:productsCache[0].productCode,currentStock:44}]));await p.waitForTimeout(20);assert.equal(await p.evaluate(()=>apiCalls.length),deltaBefore);assert.equal(await p.evaluate(()=>productsCache[0].currentStock),44);
-    const editBefore=await p.evaluate(()=>apiCalls.length);await p.evaluate(()=>{upsertProductLocal({...productsCache[0],productName:'Changed A'});upsertProductLocal({...productsCache[1],productName:'Changed B'});});await p.waitForTimeout(300);assert.equal(await p.evaluate(()=>apiCalls.length),editBefore);assert.equal(await p.evaluate(()=>currentPage),2);assert.equal(await p.evaluate(()=>syyFreshState.dirty),true);
-    await p.screenshot({path:path.join(output,'pagination-stable-page-2.png')});assert.deepEqual(p.errors,[]);await p.close();
+  await check('local pagination preserves page two during refresh and retains rows on failure',async()=>{
+    const p=await pageFor('Master_Products.html');
+    await p.evaluate(()=>{respond=()=>Array.from({length:150},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i}));loadTable(true);});
+    await p.waitForFunction(()=>!productLoading&&productsCache.length===150);
+    const before=await p.evaluate(()=>apiCalls.length);
+    await p.evaluate(()=>{nextPage();prevPage();nextPage();});
+    assert.equal(await p.evaluate(()=>currentPage),2);
+    assert.equal(await p.evaluate(()=>apiCalls.length),before);
+    await p.evaluate(()=>{apiHold='getAllProducts';loadTable();});
+    await p.waitForFunction(()=>apiPending.length===1);
+    assert.equal(await p.locator('#productBody tr').count(),50);
+    await p.evaluate(()=>{apiFailure='getAllProducts';apiHold='';apiPending.shift()();});
+    await p.waitForFunction(()=>!productLoading);
+    assert.match(await p.locator('#pageIndicator').innerText(),/หน้า 2/);
+    assert.equal(await p.evaluate(()=>visibleProductRows()[0].productCode),'P50');
+    await p.evaluate(()=>{apiFailure='';applyStockDeltaToProductPage([{productCode:'P50',currentStock:44}]);});
+    assert.equal(await p.evaluate(()=>visibleProductRows()[0].currentStock),44);
+    assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('IndexedDB evicts corrupt/expired records and bounds storage across sessions without blocking business reads',async()=>{
     const p=await hybridPage();await p.waitForFunction(()=>cache.length===1);
@@ -1518,27 +1508,29 @@ async function main(){
     }
     const p=await pageFor('Master_Brands.html');const before=await p.evaluate(()=>apiCalls.length);await p.locator('button').filter({hasText:'รีเฟรช'}).click();await p.waitForFunction(n=>apiCalls.length>n,before);assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('ordinary product pages persist within the permission scope, restore only after validation and invalidate independently of brands',async()=>{
+  await check('whole product catalog persists within the permission scope and validates before display',async()=>{
     const scoped=await browser.newContext({viewport:{width:1365,height:950}});await scoped.route('https://**/*',r=>r.abort());
     await scoped.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{
       const before=respond;window.productWorkers=0;respond=(fn,args,meta)=>{
-        if((fn==='getAllProducts'&&args[0]?.paged)||fn==='getProductCatalogPage'){
-          if(meta?.version==='product-disk-v1')return {__syyCache:1,notModified:true,version:'product-disk-v1',expiresAt:Date.now()+30000};
-          productWorkers++;const o=args[0];return {__syyCache:1,version:'product-disk-v1',expiresAt:Date.now()+30000,data:{catalogPage:true,cursorMode:true,products:Array.from({length:50},(_,i)=>({...fixtureProduct,id:'P'+(o.page*100+i),productCode:'P'+(o.page*100+i)})),page:o.page,pageSize:50,total:null,unfilteredTotal:null,readTime:new Date().toISOString(),hasMore:o.page<3,nextCursor:'next-'+(o.page+1),...(o.includeMasters?{masters:{brands:[],categories:[],vendors:[],zones:[],cars:[]}}:{})}};
-        }
-        if(fn==='getBrands')return {__syyCache:1,version:'brand-v1',data:[{id:'B1',Name:'Retained'}]};return before(fn,args,meta);
+        if(fn!=='getAllProducts')return before(fn,args,meta);
+        if(meta?.version==='product-disk-v1')return {__syyCache:1,notModified:true,version:'product-disk-v1',expiresAt:Date.now()+30000};
+        productWorkers++;
+        const fields=['productCode','productName','partType','partNumber','barcode','barcodeGenerated','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carIds','carModel','costPrice','sellingPrice','currentStock','minStock','status','hasImage'];
+        const rows=Array.from({length:150},(_,i)=>['P'+i,'Product '+i,'','','',false,'','','','','','','','',[],'',0,10,1,0,'Active',i===0]);
+        return {__syyCache:1,version:'product-disk-v1',expiresAt:Date.now()+30000,data:{catalogFormat:1,fields,rows}};
       };if(location.search.includes('hold=1'))apiHold='getAllProducts';
     }));
     const p=await pageFor('Master_Products.html','staff',scoped);await p.waitForFunction(()=>syyDiskCache.stats.writes>0);
-    const firstKey=await p.evaluate(()=>Array.from(syyReadCache.keys()).find(k=>k.startsWith('getAllProducts')));assert((await p.evaluate(k=>syyDiskCache.lookup(k),firstKey)).record);
-    await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2&&syyDiskCache.stats.writes>=2);
-    await p.goto('http://127.0.0.1:'+port+'/?file=Master_Products.html&role=staff&hold=1');await p.waitForFunction(()=>apiPending.length===1);assert.equal(await p.evaluate(()=>productsCache.length),0);assert.equal(await p.evaluate(()=>apiRequests[0].metadata.version),'product-disk-v1');
-    await p.evaluate(()=>{apiHold='';apiPending.splice(0).forEach(fn=>fn());});await p.waitForFunction(()=>productRemote?.page===1);await p.evaluate(()=>nextPage());await p.waitForFunction(()=>productRemote.page===2);assert.equal(await p.evaluate(()=>productWorkers),0);assert((await p.evaluate(()=>syyCacheStats.notModified))>=2);
-    const kept=await p.evaluate(async()=>{
-      await new Promise((ok,fail)=>callApi('getBrands',[],ok,fail));await new Promise(resolve=>setTimeout(resolve,30));const brand=await syyDiskCache.lookup('getBrands[]');
-      const key=Array.from(syyReadCache.keys()).find(k=>k.startsWith('getProductCatalogPage')&&JSON.parse(syyReadCache.get(k).raw).page===2),old=await syyDiskCache.lookup(key);if(!old.record)throw Error('Expected persisted page two');syyInvalidateReadScopes(['Master_Products'],false);await syyDiskCache.put(key,old.record,old);
-      const a=await syyDiskCache.lookup('getBrands[]'),b=await syyDiskCache.lookup(key);return {brandKept:!!a.record,productRemoved:!b.record,credentialsAbsent:!JSON.stringify(brand).includes('test-token')};
-    });assert.deepEqual(kept,{brandKept:true,productRemoved:true,credentialsAbsent:true});assert.deepEqual(p.errors,[]);await scoped.close();
+    const key=await p.evaluate(()=>Array.from(syyReadCache.keys()).find(k=>k.startsWith('getAllProducts')));
+    assert((await p.evaluate(k=>syyDiskCache.lookup(k),key)).record);
+    await p.goto('http://127.0.0.1:'+port+'/?file=Master_Products.html&role=staff&hold=1');await p.waitForFunction(()=>apiPending.length===1);
+    assert.equal(await p.evaluate(()=>productsCache.length),0);
+    assert.equal(await p.evaluate(()=>apiRequests[0].metadata.version),'product-disk-v1');
+    await p.evaluate(()=>{apiHold='';apiPending.shift()();});await p.waitForFunction(()=>productsCache.length===150);
+    await p.evaluate(()=>nextPage());assert.equal(await p.evaluate(()=>visibleProductRows()[0].productCode),'P50');
+    assert.equal(await p.evaluate(()=>productWorkers),0);
+    const removed=await p.evaluate(async key=>{const old=await syyDiskCache.lookup(key);syyInvalidateReadScopes(['Master_Products'],false);await syyDiskCache.put(key,old.record,old);return !(await syyDiskCache.lookup(key)).record;},key);
+    assert.equal(removed,true);assert.deepEqual(p.errors,[]);await scoped.close();
   });
   await check('notifications, dirty activation and cross-module changes never start data requests on any loaded business page',async()=>{
     for(const file of ['Master_Products.html','Master_Brands.html','StockIssue.html','Purchase_Orders.html','Quotation.html','Master_Tax_Invoice.html','index.html']){
@@ -1568,14 +1560,14 @@ async function main(){
     });await p.waitForFunction(()=>!syyFreshState.busy);await p.evaluate(()=>{addToBasket('P1');basket[0].unitPrice=123;renderBasket();});await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.evaluate(()=>syyLastReadSource),'validated-cache');assert.equal(await p.evaluate(()=>basket[0].unitPrice),123);
     await p.evaluate(()=>apiFailure='getAllProducts');await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.match(await p.locator('#resultList').innerText(),/Test Part/);assert.equal(await p.evaluate(()=>basket[0].unitPrice),123);assert.equal(await p.locator('#btnRefreshProducts').isDisabled(),false);assert.match(await p.locator('#toastWrap').innerText(),/ข้อมูลเดิม/);assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('POS refresh preserves category, selected window and DOM for unchanged data; changed and removed categories reconcile safely',async()=>{
+  await check('POS refresh preserves category, expanded results and DOM for unchanged data; changed and removed categories reconcile safely',async()=>{
     const p=await pageFor('StockIssue.html');await p.evaluate(()=>{
-      const old=respond;window.posVersion='v1';window.posRows=Array.from({length:81},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i,productName:'Part '+String(i).padStart(3,'0'),categoryName:i===80?'Oil':'Brakes'}));
+      const old=respond;window.posVersion='v1';window.posRows=Array.from({length:131},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i,productName:'Part '+String(i).padStart(3,'0'),categoryName:i===130?'Oil':'Brakes'}));
       respond=(fn,args,meta)=>fn==='getAllProducts'?{__syyCache:1,version:posVersion,...(meta?.version===posVersion?{notModified:true}:{data:posRows})}:fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'',imageUrls:[]}])):old(fn,args,meta);loadProducts();
     });await p.waitForFunction(()=>!syyFreshState.busy);await p.selectOption('#filterCategory','Brakes');
-    await p.evaluate(()=>{changeResultWindow(1);window.retainedRow=document.querySelector('#resultList .res-row');document.getElementById('resultList').scrollTop=120;window.retainedScroll=document.getElementById('resultList').scrollTop;});
+    await p.evaluate(()=>{appendResultRows(200);window.retainedRow=document.querySelector('#resultList .res-row');document.getElementById('resultList').scrollTop=120;window.retainedScroll=document.getElementById('resultList').scrollTop;});
     await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);
-    assert.equal(await p.locator('#filterCategory').inputValue(),'Brakes');assert.equal(await p.evaluate(()=>resultWindowStart),60);assert(await p.evaluate(()=>retainedRow===document.querySelector('#resultList .res-row')));assert(await p.evaluate(()=>document.getElementById('resultList').scrollTop===retainedScroll));
+    assert.equal(await p.locator('#filterCategory').inputValue(),'Brakes');assert.equal(await p.evaluate(()=>resultRenderedCount),130);assert(await p.evaluate(()=>retainedRow===document.querySelector('#resultList .res-row')));assert(await p.evaluate(()=>document.getElementById('resultList').scrollTop===retainedScroll));
     await p.evaluate(()=>{posVersion='v2';posRows[60].currentStock=99;});await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.locator('#filterCategory').inputValue(),'Brakes');assert.equal(await p.evaluate(()=>products.find(x=>x.productCode==='P60').currentStock),99);
     await p.evaluate(()=>{posVersion='v3';posRows=posRows.filter(x=>x.categoryName==='Oil');});await p.locator('#btnRefreshProducts').click();await p.waitForFunction(()=>!syyFreshState.busy);assert.equal(await p.locator('#filterCategory').inputValue(),'');assert.equal(await p.evaluate(()=>results.length),1);assert.deepEqual(p.errors,[]);await p.close();
   });
@@ -1605,17 +1597,18 @@ async function main(){
     for(const id of ['profile','manageusers']){await p.evaluate(id=>switchPage(id),id);await p.waitForFunction(id=>document.getElementById('iframe-'+id).dataset.ready==='true',id);assert.equal(await p.locator('#'+id+'Form .syy-frame-status').isVisible(),false);assert.equal(await p.locator('#iframe-'+id).isVisible(),true);}
     assert.deepEqual(p.errors,[]);await p.close();
   });
-  await check('Products keep first-load skeleton during search and only publish the newest criteria response',async()=>{
+  await check('Products keep first-load skeleton and apply the latest search to one complete response',async()=>{
     const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));
     await p.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{
-      apiHold='getAllProducts';const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{catalogPage:true,page:1,pageSize:50,total:1,unfilteredTotal:1,products:[{...fixtureProduct,productName:args[0].search?'Newest search result':'Old initial result'}]}:old(fn,args);
+      apiHold='getAllProducts';const old=respond;respond=(fn,args)=>fn==='getAllProducts'?[{...fixtureProduct,productName:'Old initial result'},{...fixtureProduct,productCode:'P2',id:'P2',productName:'Newest search result'}]:old(fn,args);
     }));
     await p.goto('http://127.0.0.1:'+port+'/?file=Master_Products.html');await p.waitForFunction(()=>apiPending.length===1);
-    assert.equal(await p.evaluate(()=>apiCalls[0].args[0].includeMasters),false);assert.equal(await p.evaluate(()=>apiCalls.some(x=>x.fn==='getAllMasterDropdowns')),false);
-    await p.locator('#tableSearchInput').fill('Newest');assert(await p.locator('#productBody .sk').count()>0);await p.waitForFunction(()=>apiPending.length===2);
-    await p.evaluate(()=>apiPending[1]());await p.waitForFunction(()=>document.getElementById('productBody').textContent.includes('Newest search result'));
-    await p.evaluate(()=>apiPending[0]());assert.doesNotMatch(await p.locator('#productBody').innerText(),/Old initial/);assert.equal(await p.locator('#productBody').getAttribute('aria-busy'),'false');
-    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length),2);assert.deepEqual(p.errors,[]);await p.close();
+    assert.equal(await p.evaluate(()=>apiCalls[0].args[0].compact),true);
+    await p.locator('#tableSearchInput').fill('Newest');assert(await p.locator('#productBody .sk').count()>0);
+    await p.evaluate(()=>apiPending.shift()());await p.waitForFunction(()=>document.getElementById('productBody').textContent.includes('Newest search result'));
+    assert.doesNotMatch(await p.locator('#productBody').innerText(),/Old initial/);
+    assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllProducts').length),1);
+    assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Products render before a slow window asset loads, and edit dropdown failures cannot hide rows or open an incomplete form',async()=>{
     const p=await context.newPage();p.errors=[];p.on('pageerror',e=>p.errors.push(e.message));let heldAsset;
@@ -1629,11 +1622,11 @@ async function main(){
     assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getAllMasterDropdowns').length),2);await heldAsset.fulfill({status:204,body:''});await p.waitForLoadState();assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Malformed product responses show retry, preserve valid old rows and a valid empty result remains distinct',async()=>{
-    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{}:old(fn,args);productRemote=null;productsCache=[];loadTable();});
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>{const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{}:old(fn,args);productCatalogLoaded=false;productsCache=[];loadTable();});
     await p.waitForFunction(()=>document.getElementById('productBody').textContent.includes('รูปแบบข้อมูลสินค้าไม่ถูกต้อง'));assert.match(await p.locator('#recordCount').innerText(),/โหลดไม่สำเร็จ/);
-    await p.evaluate(()=>{respond=()=>({catalogPage:true,page:1,products:[fixtureProduct],total:1});loadTable();});await p.locator('#productBody .view').waitFor();
+    await p.evaluate(()=>{respond=()=>[fixtureProduct];loadTable();});await p.locator('#productBody .view').waitFor();
     await p.evaluate(()=>{respond=()=>({});loadTable();});await p.waitForFunction(()=>!productLoading);assert.match(await p.locator('#productBody').innerText(),/Test Part/);
-    await p.evaluate(()=>{respond=()=>({catalogPage:true,page:1,products:[],total:0});loadTable();});await p.waitForFunction(()=>!productLoading);assert.equal(await p.locator('#productBody .view').count(),0);assert.doesNotMatch(await p.locator('#productBody').innerText(),/โหลดไม่สำเร็จ/);assert.deepEqual(p.errors,[]);await p.close();
+    await p.evaluate(()=>{respond=()=>[];loadTable();});await p.waitForFunction(()=>!productLoading);assert.equal(await p.locator('#productBody .view').count(),0);assert.doesNotMatch(await p.locator('#productBody').innerText(),/โหลดไม่สำเร็จ/);assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Read deadline releases observers while an explicit retry joins the physical request without a duplicate read',async()=>{
     const p=await pageFor('Master_Brands.html');await p.clock.install();await p.evaluate(()=>{
@@ -1704,7 +1697,7 @@ async function main(){
   });
   await check('Product image badges need no table metadata RPC; detail verifies legacy rows and edit reuses metadata',async()=>{
     const p=await pageFor('Master_Products.html');await p.evaluate(()=>{productsCache.forEach(p=>{p.imageDataLoaded=false;p.imageUrl='';p.imageUrls=[];});window.imageReads=0;const old=respond;respond=(fn,args,meta)=>{if(fn==='getProductImageBatch'){imageReads++;return {P1:{imageUrl:'https://example.invalid/detail.jpg',imageUrls:['https://example.invalid/detail.jpg'],imageUpdateTime:'image-v1',primaryImageIndex:0}};}return old(fn,args,meta);};apiHold='getProductImageBatch';filterAndRenderTable(true);});
-    assert.equal(await p.locator('#productBody img').count(),0);assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getAllProducts').args[0].includeImages),false);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),0);
+    assert.equal(await p.locator('#productBody img').count(),0);assert.equal(await p.evaluate(()=>apiCalls.find(x=>x.fn==='getAllProducts').args[0].compact),true);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),0);
     const badge=p.locator('#productBody .product-image-badge');
     for(const status of [true,false,null]){
       await p.evaluate(value=>{productsCache[0].hasImage=value;filterAndRenderTable(true);},status);
@@ -1878,8 +1871,8 @@ async function main(){
   });
   await check('Loading UX products default to 50 rows without prefetch; detail and edit coalesce targeted metadata',async()=>{
     const p=await pageFor('Master_Products.html');await p.route('https://images.invalid/**',route=>route.fulfill({status:200,contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#e8f3ff"/><path d="M60 80h120v90H60z" fill="#005088"/></svg>'}));await p.evaluate(()=>{
-      productImageCache.clear();productsCache=[];productRemote=null;apiHold='getProductImageBatch';
-      const old=respond;respond=(fn,args)=>fn==='getAllProducts'?{catalogPage:true,cursorMode:true,page:1,pageSize:args[0].pageSize,total:50,unfilteredTotal:50,hasMore:false,products:Array.from({length:args[0].pageSize},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i,productName:'Part '+i,barcode:'',imageDataLoaded:false,imageUrl:'',imageUrls:[]}))}:fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'https://images.invalid/'+id+'.jpg',imageUrls:['https://images.invalid/'+id+'.jpg'],primaryImageIndex:0,imageUpdateTime:'image-v1'}])):old(fn,args);
+      productImageCache.clear();productsCache=[];productCatalogLoaded=false;apiHold='getProductImageBatch';
+      const old=respond;respond=(fn,args)=>fn==='getAllProducts'?Array.from({length:50},(_,i)=>({...fixtureProduct,id:'P'+i,productCode:'P'+i,productName:'Part '+i,barcode:'',imageDataLoaded:false,imageUrl:'',imageUrls:[]})):fn==='getProductImageBatch'?Object.fromEntries(args[0].map(id=>[id,{imageUrl:'https://images.invalid/'+id+'.jpg',imageUrls:['https://images.invalid/'+id+'.jpg'],primaryImageIndex:0,imageUpdateTime:'image-v1'}])):old(fn,args);
       syyReadFresh=true;loadTable(true);syyReadFresh=false;
     });await p.waitForFunction(()=>!productLoading);assert.equal(await p.locator('#productBody tr').count(),50);assert.equal(await p.locator('#productPageSize').inputValue(),'50');assert.equal(await p.evaluate(()=>pageSize),50);assert.equal(await p.evaluate(()=>apiCalls.filter(x=>x.fn==='getProductImageBatch').length),0);
     await p.evaluate(()=>openViewModal('P0'));await p.locator('#viewProductModal.active').waitFor();assert.equal(await p.locator('#viewProductName').innerText(),'Part 0');assert(await p.locator('#viewImgBox .sk').count()>0);

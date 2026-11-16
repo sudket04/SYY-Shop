@@ -6,7 +6,7 @@ function catalogGetAllProducts_(options) {
     if(options.includeMasters)page.masters=getAllMasterDropdowns_();
     return page;
   }
-  if(options && options.compact)return packProductCatalog_(getProductCatalogRows_());
+  if(options && options.compact)return packProductCatalog_(getProductCatalogRows_(),options.includeImageStatus===true);
   var products = [];
   try {
     var masters = fetchCollectionsParallel_(

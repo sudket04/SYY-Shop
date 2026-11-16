@@ -735,10 +735,11 @@ var syyDiskCache=(function(){
  try{enabled=typeof indexedDB!=='undefined'&&typeof crypto!=='undefined'&&!!crypto.subtle&&typeof TextEncoder!=='undefined'&&window.SYY_HYBRID_CACHE!==false;}catch(e){}
  var stats={hits:0,misses:0,errors:0,writes:0,evictions:0,bytes:0,entries:0};
  function eligible(key,raw){
-   if(key==='getAllProducts[{"compact":true}]'){
+   if(key==='getAllProducts[{"compact":true}]'||key==='getAllProducts[{"compact":true,"includeImageStatus":true}]'){
      if(raw===undefined)return true;
      try{var c=JSON.parse(raw),fields=['productCode','productName','partType','partNumber','barcode','barcodeGenerated','brandId','brandName','categoryId','categoryName','vendorId','vendorName','zoneId','zoneName','carIds','carModel','costPrice','sellingPrice','currentStock','minStock','status'];
-       return raw.length<=3000000&&c.catalogFormat===1&&Array.isArray(c.fields)&&JSON.stringify(c.fields)===JSON.stringify(fields)&&Object.keys(c).every(function(k){return ['catalogFormat','fields','rows'].includes(k);})&&Array.isArray(c.rows)&&c.rows.length<=10000&&c.rows.every(function(row){return Array.isArray(row)&&row.length===fields.length&&row.every(function(value,i){return i===5?typeof value==='boolean':i===14?Array.isArray(value)&&value.length<=100&&value.every(function(x){return typeof x==='string'&&x.length<=1000;}):i>=16&&i<=19?Number.isFinite(value):typeof value==='string'&&value.length<=12000;});});
+       if(key.includes('includeImageStatus'))fields.push('hasImage');
+       return raw.length<=3000000&&c.catalogFormat===1&&Array.isArray(c.fields)&&JSON.stringify(c.fields)===JSON.stringify(fields)&&Object.keys(c).every(function(k){return ['catalogFormat','fields','rows'].includes(k);})&&Array.isArray(c.rows)&&c.rows.length<=10000&&c.rows.every(function(row){return Array.isArray(row)&&row.length===fields.length&&row.every(function(value,i){return i===5?typeof value==='boolean':i===21?value===null||typeof value==='boolean':i===14?Array.isArray(value)&&value.length<=100&&value.every(function(x){return typeof x==='string'&&x.length<=1000;}):i>=16&&i<=19?Number.isFinite(value):typeof value==='string'&&value.length<=12000;});});
      }catch(e){return false;}
    }
    var fields=key==='getBrands[]'||key==='getCategories[]'?['id','Name','name','updateTime']:null;
