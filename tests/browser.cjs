@@ -695,7 +695,7 @@ async function main(){
     assert.equal(await p.evaluate(()=>productsCache[0].zoneName),'A — ชั้น 2 (Rack R1 · ระดับ 3)');assert.deepEqual(p.errors,[]);await p.close();
   });
   await check('Product image draft staging, move, primary, delete and cancel make no server calls',async()=>{
-    const p=await pageFor('Master_Products.html');await p.evaluate(()=>openEditModal('P1'));await p.locator('#productModal.active').waitFor();await p.evaluate(()=>{window.callsBefore=apiCalls.length;stageProductImageNow('AA','data:image/jpeg;base64,AA',0);stageProductImageNow('BB','data:image/jpeg;base64,BB',1);setPrimaryProductImageNow(1);moveProductImageNow(1,0);deleteProductImageNow(1);});await p.waitForTimeout(30);
+    const p=await pageFor('Master_Products.html');await p.evaluate(()=>openEditModal('P1'));await p.locator('#productModal.active').waitFor();await p.waitForFunction(()=>productImagesReady);await p.evaluate(()=>{window.callsBefore=apiCalls.length;stageProductImageNow('AA','data:image/jpeg;base64,AA',0);stageProductImageNow('BB','data:image/jpeg;base64,BB',1);setPrimaryProductImageNow(1);moveProductImageNow(1,0);deleteProductImageNow(1);});await p.waitForTimeout(30);
     assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>callsBefore));
     assert.equal(await p.evaluate(()=>productImageDraftDirty),true);await p.evaluate(()=>closeProductModal());
     assert.equal(await p.evaluate(()=>apiCalls.length),await p.evaluate(()=>callsBefore));assert.deepEqual(p.errors,[]);await p.close();
