@@ -37,6 +37,8 @@
   .product-image-badge{margin-left:5px;padding:1px 6px;min-height:24px;border:1px solid #86bf9c;border-radius:999px;background:#dcfce7;color:#166534;font:inherit;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
   .product-image-badge:hover{background:#bbf7d0}
   .product-image-badge:focus-visible{outline:2px solid #166534;outline-offset:2px}
+  .product-barcode-badge{margin-left:5px;padding:1px 6px;border-radius:999px;background:#e5effc;color:#1e3a66;font-size:11px;font-weight:600;white-space:nowrap}
+  .product-barcode-badge.generated{background:#ede9fe;color:#5b21b6}
   .product-image-viewer-status{color:#fff;text-align:center;padding:16px}
   .product-cost-cell{color:var(--muted)}
   .product-selling-cell{font-size:16px;font-weight:700;color:var(--primary)}
@@ -797,6 +799,8 @@
         if(!Array.isArray(rows)||!rows.every(function(row){return row&&typeof row==='object'&&!Array.isArray(row)&&typeof (row.productCode||row.id)==='string'&&['productName','partNumber','barcode','brandName','categoryName','carModel'].every(function(k){return row[k]==null||typeof row[k]==='string';});})){
           syyInvalidateReadScopes(['Master_Products'],false);throw Error('รูปแบบข้อมูลสินค้าไม่ถูกต้อง กรุณาลองอีกครั้ง');
         }
+        // The compact catalog carries photo status, while gallery data loads on demand.
+        rows.forEach(function(row){if(row.imageDataLoaded===undefined)row.imageDataLoaded=false;});
         productsCache=rows;productCatalogLoaded=true;
         productLoading=false;tbody.setAttribute('aria-busy','false');syyDataLoaded();
         var renderStarted=performance.now();filterAndRenderTable();syyRecordViewTiming('products',started,renderStarted,productsCache.length);
@@ -914,11 +918,8 @@
         ? '<button type="button" title="คลิกเพื่อขยายรูป" aria-label="ขยายรูปสินค้า" onclick="openTableProductImageLightbox(\'' + escJs(codeKey) + '\')" style="border:0;background:transparent;padding:0;cursor:zoom-in"><img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" style="width:36px;height:36px;object-fit:contain;background:#fff;border-radius:6px;border:1px solid var(--line)" onerror="prodImgFallback(this)"></button>'
         : '<span style="font-size:16px;color:var(--faint)">📦</span>';
 
-      var barcodeBadge = !item.barcode
-        ? '<span title="ยังไม่มีบาร์โค้ด — เปิด &quot;ดูรายละเอียด&quot; เพื่อสร้าง" style="opacity:.35;font-size:12px;margin-left:5px">🏷️</span>'
-        : (item.barcodeGenerated
-            ? '<span title="บาร์โค้ดที่ระบบสร้าง: ' + esc(item.barcode) + '" style="color:#7c3aed;font-size:12px;margin-left:5px">🏷️</span>'
-            : '<span title="บาร์โค้ดจริง: ' + esc(item.barcode) + '" style="color:#166534;font-size:12px;margin-left:5px">🏷️</span>');
+      var barcode=String(item.barcode||'').trim();
+      var barcodeBadge=barcode?'<span class="product-barcode-badge'+(item.barcodeGenerated?' generated':'')+'" title="'+(item.barcodeGenerated?'บาร์โค้ดที่ระบบสร้าง':'บาร์โค้ดจากผู้ผลิต')+': '+esc(barcode)+'">มีบาร์โค้ด</span>':'';
 
       var image = productImageCache.get(codeKey);
       var hasImage = image && image.stamp===imageStamp && Date.now()-image.at<120000 ? image.hasImage : item.hasImage;
@@ -1420,7 +1421,7 @@
   function cachedProductImages(item){
     var id=item.id||item.productCode,entry=productImageCache.get(id);
     if(entry&&(entry.stamp!==productImageStamp()||Date.now()-entry.at>=120000)){productImageCache.delete(id);item.imageDataLoaded=false;return false;}
-    if(entry){Object.assign(item,entry.data,{imageDataLoaded:true});return true;}
+    if(entry){Object.assign(item,entry.data,{imageDataLoaded:true,hasImage:entry.hasImage});return true;}
     return item.imageDataLoaded!==false;
   }
   function requestProductImages(items,onDone,onError){
@@ -1438,7 +1439,7 @@
           var hasImage = !!image.imageUrl || image.imageUrls.some(Boolean);
           productImageCache.delete(p.id);productImageCache.set(p.id,{stamp:stamp,at:Date.now(),data:safeImage,hasImage:hasImage});while(productImageCache.size>300)productImageCache.delete(productImageCache.keys().next().value);
           var current=productsCache.find(function(row){return (row.id||row.productCode)===p.id;});
-          if(current){Object.assign(current,safeImage,{imageDataLoaded:true});refreshBadge=true;}
+          if(current){Object.assign(current,safeImage,{imageDataLoaded:true,hasImage:hasImage});refreshBadge=true;}
           p.waiters.forEach(function(w){if(w.ok)w.ok(current||Object.assign({id:p.id},safeImage));});
         });
         if(refreshBadge)renderCurrentProductPage();

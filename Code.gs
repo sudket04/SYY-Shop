@@ -190,6 +190,11 @@ function productImageStatus_(fields) {
   return status && typeof status.booleanValue === 'boolean' ? status.booleanValue : null;
 }
 
+function productBarcodeGenerated_(fields) {
+  var value = parseFirestoreValue_(fields.Barcode_Generated);
+  return value === true || value === "true";
+}
+
 // Gallery callers hold the script lock. A missing product is allowed only for orphan cleanup.
 function persistProductImageDoc_(productCode, fields, expectedUpdateTime, product) {
   if (expectedUpdateTime === undefined) throw new Error('ต้องระบุเวอร์ชันข้อมูลรูปสินค้า');
@@ -997,7 +1002,7 @@ function saveProduct_(d) {
   dataObject.Barcode_Generated = "false";
   if (existingFields) {
     var existingBarcode   = String(parseFirestoreValue_(existingFields.Barcode) || "").trim();
-    var existingGenerated = parseFirestoreValue_(existingFields.Barcode_Generated) === "true";
+    var existingGenerated = productBarcodeGenerated_(existingFields);
     if (existingGenerated && existingBarcode && existingBarcode === dataObject.Barcode) {
       dataObject.Barcode_Generated = "true";
     }
@@ -1040,7 +1045,7 @@ function generateProductBarcode_(productCode) {
     if (!fields) return { success: false, message: "ไม่พบสินค้านี้ในระบบ — อาจถูกลบไปแล้ว" };
 
     var existing  = String(parseFirestoreValue_(fields.Barcode) || "").trim();
-    var generated = parseFirestoreValue_(fields.Barcode_Generated) === "true";
+    var generated = productBarcodeGenerated_(fields);
 
     if (existing && generated) {
       return { success: true, message: "สินค้านี้มีบาร์โค้ดที่สร้างไว้แล้ว", barcode: existing, generated: true };

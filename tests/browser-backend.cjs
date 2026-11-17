@@ -13,8 +13,8 @@ const store=setup(),sessions=new Map(),requests=[],reads={},errors=[];
 store.c.readTime=new Date().toISOString();
 for(let i=0;i<10000;i++){
  const id='P'+String(i).padStart(5,'0');
- store.put('Master_Products/'+id,{Product_Name:'อะไหล่ '+i,Brand_ID:'B1',Category_ID:'C1',Part_Type:i%2?'แท้':'เทียบ',Part_Number:'PN'+i,Barcode:'BC'+i,Current_Stock:10,Min_Stock:2,Cost_Price:100,Selling_Price:200,Extra_Secret:'never expose'});
- store.put('Product_Images/'+id,{Image_Url:'https://images.invalid/'+id+'.jpg'});
+ store.put('Master_Products/'+id,{Product_Name:'อะไหล่ '+i,Brand_ID:'B1',Category_ID:'C1',Part_Type:i%2?'แท้':'เทียบ',Part_Number:'PN'+i,Barcode:i===1?'   ':'BC'+i,Current_Stock:10,Min_Stock:2,Cost_Price:100,Selling_Price:200,Extra_Secret:'never expose',...(i===0?{Has_Image:true,Barcode_Generated:true}:i===1?{Has_Image:false}:i===2?{Barcode_Generated:'true'}:{})});
+ if(i!==1)store.put('Product_Images/'+id,{Image_Url:'https://images.invalid/'+id+'.jpg'});
 }
 store.put('Master_Brands/B1',{Brand_Name:'แบรนด์ไทย'});store.put('Master_Categories/C1',{Category_Name:'อะไหล่'});
 store.put('Master_Customers/C1',{Customer_Name:'ผู้ซื้อ',Customer_Type:'ลูกค้าทั่วไป',Branch:'สำนักงานใหญ่'});
@@ -123,6 +123,22 @@ async function main(){
   const facet=await page.evaluate(()=>new Promise((resolve,reject)=>callApi('getProductCatalogFacets',[{includeImages:false},'partType'],resolve,reject)));
   assert.deepEqual(facet.values.sort(),['เทียบ','แท้'].sort());assert((reads.Product_Images||0)<=201);
   assert.equal(await page.locator('#productBody img').count(),0);
+ });
+ await check('compact product catalog shows correct badges and photo opens on demand',async()=>{
+  const page=pages[2], row=id=>page.locator('#productBody tr[data-row-key="'+id+'"]');
+  const before=requests.filter(x=>x.fn==='getProductImageBatch').length;
+  await row('P00000').getByRole('button',{name:/มีรูป/}).waitFor();
+  assert.equal(await row('P00000').locator('.product-barcode-badge.generated').innerText(),'มีบาร์โค้ด');
+  assert.equal(await row('P00001').locator('.product-barcode-badge,.product-image-badge').count(),0);
+  assert.equal(await row('P00002').locator('.product-barcode-badge.generated').count(),1);
+  assert.equal(await row('P00003').locator('.product-barcode-badge.generated').count(),0);
+  assert.equal(await row('P00003').locator('.product-image-badge').count(),0);
+  assert.equal(requests.filter(x=>x.fn==='getProductImageBatch').length,before);
+  await page.route('https://images.invalid/**',r=>r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40"/></svg>'}));
+  await row('P00000').getByRole('button',{name:/มีรูป/}).click();
+  await page.waitForFunction(()=>document.getElementById('productImageViewerImg').naturalWidth>0);
+  assert.equal(requests.filter(x=>x.fn==='getProductImageBatch').length,before+1);
+  await page.keyboard.press('Escape');
  });
  await check('Tax list avoids catalog until editor; POS reuses the validated stored catalog and keyboard reaches the final row',async()=>{
   const tax=await pageFor('Master_Tax_Invoice.html');pages.push(tax);

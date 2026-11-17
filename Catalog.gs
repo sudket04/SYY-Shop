@@ -179,7 +179,7 @@ function validIsoTimestamp_(value){return typeof value==='string'&&/^\d{4}-\d\d-
 function mapProductPageDocs_(docs,masters,imageMap){
   var brands=buildMapFromDocs_(masters.Master_Brands,'Brand_Name'),categories=buildMapFromDocs_(masters.Master_Categories,'Category_Name'),vendors=buildMapFromDocs_(masters.Master_Vendors,'Vendor_name'),zones=buildZoneMapFromDocs_(masters.Master_Zones),cars=buildCarMapFromDocs_(masters.Master_Cars);
   return docs.map(function(doc){var f=doc.fields,brand=parseFirestoreValue_(f.Brand_ID)||'',category=parseFirestoreValue_(f.Category_ID)||'',vendor=parseFirestoreValue_(f.Default_Vendor_ID)||'',zone=parseFirestoreValue_(f.Zone_ID)||'',carIds=parseFirestoreValue_(f.Car_IDs);if(!carIds||!carIds.length)carIds=[parseFirestoreValue_(f.Car_ID)].filter(Boolean);if(!Array.isArray(carIds))carIds=[carIds];
-    var row={id:doc.id,productCode:doc.id,productName:parseFirestoreValue_(f.Product_Name)||'',partType:parseFirestoreValue_(f.Part_Type)||'',partNumber:String(parseFirestoreValue_(f.Part_Number)||''),barcode:String(parseFirestoreValue_(f.Barcode)||''),barcodeGenerated:parseFirestoreValue_(f.Barcode_Generated)==='true',brandId:brand,brandName:brands[brand]||brand,categoryId:category,categoryName:categories[category]||category,vendorId:vendor,vendorName:vendors[vendor]||vendor,zoneId:zone,zoneName:zone==='PENDING'?'รอดำเนินการ':zones[zone]||zone,carIds:carIds,carModel:carIds.map(function(id){return cars[id]||id;}).filter(Boolean).join(', '),costPrice:parseFloat(parseFirestoreValue_(f.Cost_Price))||0,sellingPrice:parseFloat(parseFirestoreValue_(f.Selling_Price))||0,currentStock:parseFloat(parseFirestoreValue_(f.Current_Stock))||0,minStock:parseFloat(parseFirestoreValue_(f.Min_Stock))||0,status:parseFirestoreValue_(f.Status)||'Active'};
+    var row={id:doc.id,productCode:doc.id,productName:parseFirestoreValue_(f.Product_Name)||'',partType:parseFirestoreValue_(f.Part_Type)||'',partNumber:String(parseFirestoreValue_(f.Part_Number)||''),barcode:String(parseFirestoreValue_(f.Barcode)||'').trim(),barcodeGenerated:productBarcodeGenerated_(f),brandId:brand,brandName:brands[brand]||brand,categoryId:category,categoryName:categories[category]||category,vendorId:vendor,vendorName:vendors[vendor]||vendor,zoneId:zone,zoneName:zone==='PENDING'?'รอดำเนินการ':zones[zone]||zone,carIds:carIds,carModel:carIds.map(function(id){return cars[id]||id;}).filter(Boolean).join(', '),costPrice:parseFloat(parseFirestoreValue_(f.Cost_Price))||0,sellingPrice:parseFloat(parseFirestoreValue_(f.Selling_Price))||0,currentStock:parseFloat(parseFirestoreValue_(f.Current_Stock))||0,minStock:parseFloat(parseFirestoreValue_(f.Min_Stock))||0,status:parseFirestoreValue_(f.Status)||'Active'};
     var image=imageMap&&imageMap[doc.id]||{};if(typeof image==='string')image={primary:image,urls:image?[image]:[],primaryIndex:0};
     var urls=Array.isArray(image.urls)?image.urls.slice(0,3):[],primary=parseInt(image.primaryIndex,10)||0;
     return Object.assign(row,{hasImage:productImageStatus_(f),imageUrl:image.primary||urls[primary]||urls[0]||'',imageUrls:urls,primaryImageIndex:primary,imageUpdateTime:image.updateTime||''});
@@ -254,8 +254,8 @@ function catalogGetProductById_(productCode) {
         productName  : parseFirestoreValue_(f.Product_Name)        || "",
         partType     : parseFirestoreValue_(f.Part_Type)           || "",
         partNumber   : String(parseFirestoreValue_(f.Part_Number) || ""),
-        barcode      : String(parseFirestoreValue_(f.Barcode) || ""),
-        barcodeGenerated : parseFirestoreValue_(f.Barcode_Generated) === "true",
+        barcode      : String(parseFirestoreValue_(f.Barcode) || "").trim(),
+        barcodeGenerated : productBarcodeGenerated_(f),
         hasImage     : imgState.urls.length > 0,
         imageUrl     : imgState.urls[imgState.primaryIndex] || imgState.urls[0] || "",
         imageUrls    : imgState.urls.slice(0, 3),

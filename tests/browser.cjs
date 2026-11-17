@@ -1289,7 +1289,7 @@ async function main(){
     for(const role of ['viewer','staff','admin'])for(const width of [1365,640,390,320]){
       const touch=width<=640?await browser.newContext({hasTouch:true,viewport:{width,height:900}}):null;if(touch)await touch.route('https://**/*',r=>r.abort());
       const p=await pageFor('Master_Products.html',role,touch||context);await p.setViewportSize({width,height:900});
-      await p.evaluate(()=>{var image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="skyblue"/></svg>');productsCache[0].imageUrl=image;productsCache[0].imageUrls=[image,image];document.body.style.overflow='auto';openTableProductImageLightbox('P1');});
+      await p.evaluate(()=>{var image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="skyblue"/></svg>');productsCache[0].imageUrl=image;productsCache[0].imageUrls=[image,image];productsCache[0].imageDataLoaded=true;document.body.style.overflow='auto';openTableProductImageLightbox('P1');});
       const viewer=p.locator('#productImageViewer'),close=viewer.locator('[aria-label="ปิด"]');
       await close.click();assert.equal(await viewer.isVisible(),false);assert.equal(await p.evaluate(()=>document.body.style.overflow),'auto');
       await p.evaluate(()=>openViewModal('P1'));const opener=p.locator('#viewImgBox .view-product-gallery-main');
