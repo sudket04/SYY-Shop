@@ -39,6 +39,9 @@
   .product-image-badge:focus-visible{outline:2px solid #166534;outline-offset:2px}
   .product-barcode-badge{margin-left:5px;padding:1px 6px;border-radius:999px;background:#e5effc;color:#1e3a66;font-size:11px;font-weight:600;white-space:nowrap}
   .product-barcode-badge.generated{background:#ede9fe;color:#5b21b6}
+  .product-presence-filters{display:flex;flex-wrap:wrap;gap:6px}
+  .product-presence-filters label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+  .product-presence-filters label:has(input:checked){background:var(--primary-soft);color:var(--primary);border-color:var(--primary)}
   .product-image-viewer-status{color:#fff;text-align:center;padding:16px}
   .product-cost-cell{color:var(--muted)}
   .product-selling-cell{font-size:16px;font-weight:700;color:var(--primary)}
@@ -422,6 +425,10 @@
                oninput="onSearchInput()">
       </div>
       <div class="toolbar-right">
+        <div class="product-presence-filters" role="group" aria-label="กรองสินค้าตามข้อมูลที่มี">
+          <label class="btn btn-ghost"><input type="checkbox" id="filterHasBarcode" onchange="applyProductPresence()">มีบาร์โค้ด</label>
+          <label class="btn btn-ghost"><input type="checkbox" id="filterHasImage" onchange="applyProductPresence()">มีรูป</label>
+        </div>
         <span class="count" id="recordCount">กำลังโหลด...</span>
         <div class="column-picker">
           <button type="button" class="btn btn-ghost" id="btnColumns" aria-haspopup="dialog" aria-expanded="false" onclick="toggleColumnPicker(event)">คอลัมน์</button>
@@ -438,7 +445,7 @@
 
     <div class="xlf-filter-summary" id="xlfSummary">
       <span id="xlfSummaryText"></span>
-      <button type="button" onclick="XLF.clearAll('products'); filterAndRenderTable();">ล้างตัวกรองทั้งหมด</button>
+      <button type="button" onclick="clearProductFilters()">ล้างตัวกรองทั้งหมด</button>
     </div>
 
     <!-- Table Container Wide View -->
@@ -820,6 +827,19 @@
     productSearchTimer=setTimeout(filterAndRenderTable,100);
   }
 
+  function applyProductPresence(){
+    currentPage=1;clearProductSelection();filterAndRenderTable();
+  }
+  function clearProductFilters(clearSearch){
+    document.getElementById('filterHasBarcode').checked=false;
+    document.getElementById('filterHasImage').checked=false;
+    if(clearSearch)document.getElementById('tableSearchInput').value='';
+    XLF.clearAll('products');applyProductPresence();
+  }
+  function productHasImage(item,stamp,now){
+    var entry=productImageCache.get(item.id||item.productCode);
+    return (entry&&entry.stamp===stamp&&now-entry.at<120000?entry.hasImage:item.hasImage)===true;
+  }
   function filterAndRenderTable() {
     if(productLoading&&!productCatalogLoaded)return;
     var search = (document.getElementById('tableSearchInput').value || '').trim();
@@ -841,6 +861,14 @@
       });
     }
 
+    var hasBarcode=document.getElementById('filterHasBarcode').checked,hasImage=document.getElementById('filterHasImage').checked;
+    if(hasBarcode||hasImage){
+      var stamp=productImageStamp(),now=Date.now();
+      searched=searched.filter(function(item){
+        return (!hasBarcode||String(item.barcode||'').trim())&&
+               (!hasImage||productHasImage(item,stamp,now));
+      });
+    }
     // ★ ผ่านตัวกรอง/เรียงคอลัมน์แบบ Excel ก่อนแบ่งหน้า (filter/sort ต้องทำก่อน paginate เสมอ)
     filteredProducts = XLF.apply('products', searched, [
       { col: 'productCode' }, { col: 'productName' }, { col: 'partType' }, { col: 'partNumber' },
@@ -857,7 +885,7 @@
     if(productSelectionStale())clearProductSelection();
     var search=document.getElementById('tableSearchInput').value.trim();
     var summaryEl = document.getElementById('xlfSummary');
-    if (XLF.anyActiveFilter('products')) {
+    if (XLF.anyActiveFilter('products')||document.getElementById('filterHasBarcode').checked||document.getElementById('filterHasImage').checked) {
       summaryEl.classList.add('show');
       document.getElementById('xlfSummaryText').innerText =
         'กรองอยู่ ' + filteredProducts.length + ' จาก ' + productsCache.length + ' รายการ';
@@ -873,7 +901,7 @@
     if (total === 0) {
       tbody.innerHTML = (search || productsCache.length)
         ? emptyStateHtml(visibleProductColumns.length,{title:'ไม่พบสินค้าที่ตรงกับตัวกรอง',sub:'ลองลดคำค้นหรือล้างตัวกรอง',
-            actions:[{label:'ล้างตัวกรอง',onclick:'XLF.clearAll(\'products\');document.getElementById(\'tableSearchInput\').value=\'\';onSearchInput();'}].concat(PRODUCT_CAN_EDIT?[{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]:[])})
+            actions:[{label:'ล้างตัวกรอง',onclick:'clearProductFilters(true)'}].concat(PRODUCT_CAN_EDIT?[{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]:[])})
         : emptyStateHtml(visibleProductColumns.length,{icon:'🛒',title:'ยังไม่มีข้อมูลสินค้า',sub:PRODUCT_CAN_EDIT?'เพิ่มรายการแรกเพื่อเริ่มใช้งาน':'ยังไม่มีสินค้าให้แสดง กรุณาติดต่อผู้ดูแล',
             actions:PRODUCT_CAN_EDIT?[{label:'+ เพิ่มสินค้า',primary:true,onclick:'openAddModal()'}]:[]});
       updatePaginationControls(0, 0, 0);
@@ -888,7 +916,7 @@
     var endIdx   = Math.min(startIdx + pageSize, total);
     var pageItems = filteredProducts.slice(startIdx, endIdx);
 
-    var imageStamp = productImageStamp();
+    var imageStamp = productImageStamp(),imageNow=Date.now();
     var rowsHtml = pageItems.map(function(item, index) {
       var rowNum = startIdx + index + 1;
 
@@ -921,9 +949,7 @@
       var barcode=String(item.barcode||'').trim();
       var barcodeBadge=barcode?'<span class="product-barcode-badge'+(item.barcodeGenerated?' generated':'')+'" title="'+(item.barcodeGenerated?'บาร์โค้ดที่ระบบสร้าง':'บาร์โค้ดจากผู้ผลิต')+': '+esc(barcode)+'">มีบาร์โค้ด</span>':'';
 
-      var image = productImageCache.get(codeKey);
-      var hasImage = image && image.stamp===imageStamp && Date.now()-image.at<120000 ? image.hasImage : item.hasImage;
-      var imageBadge = hasImage===true ? '<button type="button" class="product-image-badge" data-syy-action="image" data-syy-id="'+esc(codeKey)+'" aria-label="มีรูป · ดูรูปสินค้า '+esc(codeKey)+'">มีรูป</button>' : '';
+      var imageBadge = productHasImage(item,imageStamp,imageNow) ? '<button type="button" class="product-image-badge" data-syy-action="image" data-syy-id="'+esc(codeKey)+'" aria-label="มีรูป · ดูรูปสินค้า '+esc(codeKey)+'">มีรูป</button>' : '';
       var ctx={item:item,rowNum:rowNum,modelTxt:modelTxt,partTypeTxt:partTypeTxt,codeKey:codeKey,imgCell:imgCell,barcodeBadge:barcodeBadge,imageBadge:imageBadge};
       return '<tr data-row-key="'+esc(codeKey)+'">'+getVisibleProductColumnDefs().map(function(col){return renderProductCell(col,ctx);}).join('')+'</tr>';
     }).join('');
@@ -1442,7 +1468,7 @@
           if(current){Object.assign(current,safeImage,{imageDataLoaded:true,hasImage:hasImage});refreshBadge=true;}
           p.waiters.forEach(function(w){if(w.ok)w.ok(current||Object.assign({id:p.id},safeImage));});
         });
-        if(refreshBadge)renderCurrentProductPage();
+        if(refreshBadge){if(document.getElementById('filterHasImage').checked)filterAndRenderTable();else renderCurrentProductPage();}
       },failed,{background:!batch.some(function(p){return p.waiters.length>0;}),mayRun:function(){return stamp===productImageStamp()&&batch.some(function(p){return p.waiters.length||productsCache.some(function(row){return (row.id||row.productCode)===p.id;});});}});
       function failed(error){batch.forEach(function(p){if(productImageRequests[p.id]!==p)return;delete productImageRequests[p.id];p.waiters.forEach(function(w){if(w.fail)w.fail(error);});});}
     })(fresh.slice(i,i+100));
